@@ -26,11 +26,9 @@ url: "https://github.com/IoannisPerachoritis-hub/TRACE"
 repository-code: "https://github.com/IoannisPerachoritis-hub/TRACE"
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.19632572
-    description: "Zenodo archive (concept DOI — always resolves to latest version)"
+    value: 10.5281/zenodo.19678860
   - type: doi
     value: 10.5281/zenodo.19677539
-    description: "Zenodo archive (input VCFs + phenotypes)"
 keywords:
   - GWAS
   - mixed models

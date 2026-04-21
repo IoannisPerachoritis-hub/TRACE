@@ -6,7 +6,7 @@ TRACE takes a VCF and a phenotype file and returns annotated candidate loci. One
 
 ---
 
-[![DOI](https://zenodo.org/badge/1213561772.svg)](https://doi.org/10.5281/zenodo.19632572)
+[![DOI](https://zenodo.org/badge/1216861905.svg)](https://doi.org/10.5281/zenodo.19678860)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 ---
