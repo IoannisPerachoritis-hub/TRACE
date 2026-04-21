@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trace-gwas"
+version = "1.0.0"
+description = "TRACE: Integrated GWAS, LD analysis, and candidate gene evaluation for crop breeding panels"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Ioannis Perachoritis"},
+]
+keywords = ["gwas", "genomics", "trace", "solanaceae", "fine-mapping"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # Numerical core: bound tightly to prevent silent behavioural changes
+    "numpy>=1.26,<3",
+    "pandas>=2.2,<3",
+    "scipy>=1.13,<2",
+    "scikit-learn>=1.5,<2",
+    "statsmodels>=0.14,<1",
+    "fastlmm>=0.6.12,<1",
+    "pysnptools>=0.5.14,<1",
+    "numba>=0.60,<1",
+    # Plotting / IO: looser pins acceptable
+    "matplotlib>=3.9,<4",
+    "seaborn>=0.13,<1",
+    "plotly>=5.18,<7",
+    "kaleido>=0.2.1",
+    "streamlit>=1.38,<2",
+    "scikit-allel>=1.3.13,<2",
+    "bed-reader>=1.0,<2",
+    "joblib>=1.3,<2",
+    "h5py>=3.10,<4",
+    "dask>=2024.1",
+    "pyarrow>=14.0,<22",
+    "Jinja2>=3.1,<4",
+    "requests>=2.31,<3",
+    "PyYAML>=6.0,<7",
+    "tqdm>=4.60,<5",
+    "click>=8.0,<9",
+    "colorama>=0.4,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/IoannisPerachoritis-hub/TRACE"
+Repository = "https://github.com/IoannisPerachoritis-hub/TRACE"
+
+[project.optional-dependencies]
+dev = ["pytest>=6.0"]
+
+[project.scripts]
+trace-gwas = "cli:main"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E401",  # multiple imports on one line
+    "E402",  # module-level import not at top (Streamlit/sys.path pattern)
+    "E501",  # line too long
+    "E701",  # multiple statements on one line (colon)
+    "E702",  # multiple statements on one line (semicolon)
+    "E711",  # comparison to None (numpy element-wise)
+    "E712",  # comparison to True/False (numpy/pytest)
+    "E741",  # ambiguous variable name
+    "F541",  # f-string without placeholders
+    "F841",  # local variable assigned but never used
+    "W292",  # no newline at end of file
+]
+
+[tool.ruff.lint.per-file-ignores]
+"pages/*" = ["F401", "F811"]
+"benchmarks/*" = ["F401", "F811"]
+"examples/*" = ["F401"]
+"utils/mapping_methods.py" = ["F401", "F811"]
+
+[tool.setuptools.packages.find]
+include = ["gwas*", "utils*", "pages*"]
+
+[tool.setuptools]
+py-modules = ["cli", "annotation", "app"]
+
+[tool.setuptools.package-data]
+"*" = ["*.csv", "*.tsv", "*.txt", "*.gff.gz", "*.fam", "*.vcf", "*.html.j2"]

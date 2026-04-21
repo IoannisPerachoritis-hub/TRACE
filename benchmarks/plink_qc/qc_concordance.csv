@@ -1,0 +1,3 @@
+dataset,platform_snps,plink_snps,platform_samples,plink_samples,shared_snps,plink_in_trace_pct,trace_in_plink_pct
+tomato_locule_number,43974,43734,165,165,43427,99.3,98.8
+pepper_FWe,5862,4306,350,350,3895,90.5,66.4

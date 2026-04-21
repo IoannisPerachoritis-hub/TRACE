@@ -1,0 +1,76 @@
+cff-version: 1.2.0
+type: software
+title: "TRACE: An Automated End-to-End GWAS Framework for Crop Breeding"
+message: >-
+  If you use this software, please cite it using the metadata from this file.
+authors:
+  - family-names: Perachoritis
+    given-names: Ioannis
+    affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
+  - family-names: Vatov
+    given-names: Emil
+    affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
+  - family-names: Alseekh
+    given-names: Saleh
+    affiliation: "Max Planck Institute of Molecular Plant Physiology"
+  - family-names: Gechev
+    given-names: Tsanko
+    affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
+  - family-names: Rai
+    given-names: Avanish
+    affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
+version: "1.0.0"
+date-released: "2026-04-21"
+license: MIT
+url: "https://github.com/IoannisPerachoritis-hub/TRACE"
+repository-code: "https://github.com/IoannisPerachoritis-hub/TRACE"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.19632572
+    description: "Zenodo archive (concept DOI — always resolves to latest version)"
+  - type: doi
+    value: 10.5281/zenodo.19677539
+    description: "Zenodo archive (input VCFs + phenotypes)"
+keywords:
+  - GWAS
+  - mixed models
+  - crop breeding
+  - LOCO
+  - haplotype analysis
+  - LD block detection
+  - subsampling stability
+abstract: >-
+  Motivation: In crop breeding panels, global kinship matrices absorb
+  genuine association signal through proximal contamination, and significant hits
+  frequently span broad chromosomal regions in species with extended LD.
+  Moving from these raw p-values to interpretable candidate loci requires
+  multiple manual post-processing steps that existing crop GWAS tools do not integrate.
+
+  Results: We developed TRACE (Trait Resolution and Candidate Evaluation), 
+  a Python framework that automates the full GWAS workflow from VCF input to
+  annotated candidate loci. TRACE integrates LOCO-based mixed models with
+  automatic PC calibration, LD block detection, gene annotation, permutation-based haplotype testing,
+  and subsampling stability assessment. Null testing on permuted phenotypes well-controlled
+  type I error under the null. Simulations across nine genetic architectures showed that
+  TRACE with LOCO achieved the highest F1 score in 8 out of 9 scenarios, and real-data
+  concordance with GAPIT3 and rMVP showed similar p-value rankings. Using a single command,
+  TRACE was applied to a tomato diversity panel, where it re-detected the known
+  lc locule number locus and six annotated LD blocks with significant haplotype effects.
+
+preferred-citation:
+  type: article
+  title: "TRACE: An Automated End-To-End GWAS Framework for Crop Breeding"
+  authors:
+    - family-names: Perachoritis
+      given-names: Ioannis
+    - family-names: Vatov
+      given-names: Emil
+    - family-names: Alseekh
+      given-names: Saleh
+    - family-names: Gechev
+      given-names: Tsanko
+    - family-names: Rai
+      given-names: Avanish
+  journal: "Bioinformatics"
+  year: 2026
+  notes: "Manuscript submitted."

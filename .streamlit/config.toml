@@ -1,0 +1,14 @@
+[server]
+# Increase file upload limit to 1 GB
+maxUploadSize = 1024
+
+# (Optional but useful)
+enableXsrfProtection = false
+enableCORS = false
+
+[theme]
+primaryColor            = "#2C5F2D"
+backgroundColor         = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor               = "#1E1E1E"
+font                    = "sans serif"

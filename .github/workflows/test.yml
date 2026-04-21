@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+          pip install pytest pytest-cov
+
+      - name: Lint with ruff
+        run: pip install ruff && ruff check .
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+      - name: End-to-end null calibration
+        # Runs LOCO MLM on a simulated null phenotype and asserts
+        # lambda_GC in [0.85, 1.15] with zero genome-wide hits.
+        # Catches calibration regressions that ordinary unit tests miss.
+        run: pytest tests/test_null_calibration.py -v --tb=short
+
+      - name: Coverage report
+        # Gate at 50% as a regression floor; current total is ~53% and
+        # novelty-module coverage (haplotype, ld, plotting) is a v1.1
+        # target. The report is printed on every run so reviewers can
+        # read the per-module breakdown.
+        run: pytest tests/ --cov=gwas --cov=utils --cov-report=term-missing --cov-fail-under=50

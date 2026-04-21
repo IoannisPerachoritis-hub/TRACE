@@ -1,0 +1,90 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+
+# Swap files
+*.swp
+*.swo
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Data files — NEVER push raw genotype/phenotype data
+*.vcf
+*.vcf.gz
+# Allow small example VCF
+!examples/*.vcf
+*.bcf
+*.bed
+*.bim
+*.fam
+*.ped
+*.map
+*.gds
+*.h5
+*.hdf5
+data/*
+# Ship bundled gene models (required by utils/species_files.py)
+!data/Sol_genes_SL3.csv
+!data/SL3.1_descriptions.txt
+!data/Sol_genes.csv
+!data/ITAG4.0_annotation.txt
+!data/cann_gene_model.csv
+!data/cann_gene_annotation.txt
+uploads/
+outputs/
+
+# Large results and caches
+*.zip
+*.pkl
+*.pickle
+*.npy
+*.npz
+__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Results
+results/
+analysis_results/
+
+# Benchmark derived data (large CSVs + R output)
+benchmarks/qc_data/
+benchmarks/results/
+benchmarks/simulation/sim_data/
+benchmarks/simulation/null_data/
+benchmarks/simulation/sim_summary/null_qq_data.csv
+benchmarks/simulation/sim_summary/power_fdr_curves.csv
+benchmarks/simulation/sim_summary/fp_chromosomal_distribution.csv
+benchmarks/simulation/sim_summary/fp_chromosomal_per_rep.csv
+benchmarks/loco_sensitivity/
+!benchmarks/loco_sensitivity/compare_loco.py
+!benchmarks/loco_sensitivity/loco_comparison.csv
+benchmarks/plink_qc/results/
+
