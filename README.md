@@ -421,7 +421,7 @@ If you use TRACE in your research, please cite:
 > Perachoritis, I., Vatov, E., Alseekh, S., Gechev, T., & Rai, A. (2026).
 > TRACE: An Automated End-To-End GWAS Framework for Crop Breeding.
 > *Bioinformatics*. Submitted.
-> DOI: [10.5281/zenodo.19632572](https://doi.org/10.5281/zenodo.19632572)
+> DOI: [10.5281/zenodo.19678860](https://doi.org/10.5281/zenodo.19678860)
 >
 > See [CITATION.cff](CITATION.cff) for citation metadata.
 
