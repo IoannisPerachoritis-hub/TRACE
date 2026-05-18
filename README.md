@@ -418,9 +418,7 @@ Edge cases validated: all-NaN columns, monomorphic SNPs, single haplotype groups
 
 If you use TRACE in your research, please cite:
 
-> Perachoritis, I., Vatov, E., Alseekh, S., Gechev, T., & Rai, A. (2026).
-> TRACE: An Automated End-To-End GWAS Framework for Crop Breeding.
-> *Bioinformatics*. Submitted.
+> To be filled after acceptance.
 > DOI: [10.5281/zenodo.19678860](https://doi.org/10.5281/zenodo.19678860)
 >
 > See [CITATION.cff](CITATION.cff) for citation metadata.
