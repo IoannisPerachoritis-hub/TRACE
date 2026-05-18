@@ -129,7 +129,7 @@ st.title("TRACE — Trait Resolution and Candidate Evaluation")
 
 st.markdown("""
 Integrated GWAS, LD analysis, haplotype mapping, and gene annotation
-for **tomato, pepper, and other crop** breeding panels.
+for **tomato and other crop** breeding panels.
 
 Use the **sidebar** to navigate to:
 - **GWAS Analysis** — upload data and run the full pipeline

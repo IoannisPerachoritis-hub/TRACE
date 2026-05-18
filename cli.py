@@ -121,8 +121,8 @@ def _build_parser():
                          help="Skip gene annotation")
     ld_grp.add_argument("--genome-build", default="SL3", choices=["SL3", "SL4"],
                          help="Genome build for tomato gene annotation: SL3 (matches Varitome "
-                              "(matches Varitome SNP coords, default) or SL4 = ITAG4.0. Ignored for pepper.")
-    ld_grp.add_argument("--species", default="tomato", choices=["tomato", "pepper", "custom"],
+                              "(matches Varitome SNP coords, default) or SL4 = ITAG4.0.")
+    ld_grp.add_argument("--species", default="tomato", choices=["tomato", "custom"],
                          help="Species for annotation files (default: tomato)")
     ld_grp.add_argument("--gene-model", help="Gene coordinate CSV (required if --species custom)")
 
@@ -359,7 +359,7 @@ def _interactive_wizard(parser):
     if not args.no_annotation:
         args.species = click.prompt(
             "Species (for gene annotation)",
-            type=click.Choice(["tomato", "pepper", "custom"]),
+            type=click.Choice(["tomato", "custom"]),
             default="tomato",
         )
 
@@ -961,10 +961,6 @@ def run_pipeline(args):
                             _data_dir / "SL3.1_descriptions.txt" if _build == "SL3"
                             else _data_dir / "ITAG4.0_annotation.txt"
                         ),
-                    },
-                    "pepper": {
-                        "gene_model": _data_dir / "cann_gene_model.csv",
-                        "gene_desc": _data_dir / "cann_gene_annotation.txt",
                     },
                 }.get(args.species, {})
 

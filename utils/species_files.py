@@ -18,8 +18,4 @@ SPECIES_FILES = {
         "gene_model_SL4": _DATA_DIR / "Sol_genes.csv",
         "gene_desc_SL4": _DATA_DIR / "ITAG4.0_annotation.txt",
     },
-    "Capsicum annuum (pepper)": {
-        "gene_model": _DATA_DIR / "cann_gene_model.csv",
-        "gene_desc": _DATA_DIR / "cann_gene_annotation.txt",
-    },
 }

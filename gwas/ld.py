@@ -44,8 +44,7 @@ def _adaptive_adj_threshold(r2_sub: np.ndarray, base: float = 0.3, frac: float =
         threshold = max(base, frac * median_adjacent_r2)
 
     This stabilizes LD block detection across:
-        - tomato (often higher LD)
-        - pepper (often lower LD)
+        - species with higher vs lower LD
         - uneven marker density.
     """
     if r2_sub.shape[0] < 2:

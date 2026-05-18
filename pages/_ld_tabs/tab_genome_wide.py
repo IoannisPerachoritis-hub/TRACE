@@ -405,7 +405,7 @@ def render(
                 step=0.05,
                 help=(
                     "SNPs with pairwise r² above this threshold are grouped into the same LD block. "
-                    "0.6 is a common default for self-pollinating crops (tomato, pepper) where LD "
+                    "0.6 is a common default for self-pollinating crops where LD "
                     "decays slowly. Use 0.3–0.5 for outcrossing species."
                 ),
             )

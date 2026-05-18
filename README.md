@@ -1,6 +1,6 @@
 # TRACE: An Automated End-to-End GWAS Framework for Crop Breeding
 
-TRACE takes a VCF and a phenotype file and returns annotated candidate loci. One command runs QC, LOCO-based GWAS, LD block detection, haplotype testing, gene annotation, and subsampling stability in a single pass. It was built around tomato and pepper diversity panels, but works with any diploid VCF.
+TRACE takes a VCF and a phenotype file and returns annotated candidate loci. One command runs QC, LOCO-based GWAS, LD block detection, haplotype testing, gene annotation, and subsampling stability in a single pass. It was built around tomato diversity panels, but works with any diploid VCF.
 
 > Developed at the [Center of Plant Systems Biology and Biotechnology (CPSBB)](https://cpsbb.eu/), Plovdiv, Bulgaria, as part of the **NATGENCROP** project (EU Horizon Europe).
 
@@ -278,9 +278,7 @@ TRACE/
 │   ├── Sol_genes_SL3.csv               # Tomato SL3.1 gene coordinates
 │   ├── SL3.1_descriptions.txt          # Tomato SL3.1 functional descriptions
 │   ├── Sol_genes.csv                   # Tomato SL4 / ITAG4.0 gene coordinates
-│   ├── ITAG4.0_annotation.txt          # Tomato ITAG4.0 functional descriptions
-│   ├── cann_gene_model.csv             # Pepper gene coordinates
-│   └── cann_gene_annotation.txt        # Pepper functional descriptions
+│   └── ITAG4.0_annotation.txt          # Tomato ITAG4.0 functional descriptions
 │
 ├── examples/                           # Synthetic quick-start tutorial dataset
 │   ├── simulate_example.py             # Generates example.vcf.gz + example_pheno.csv
@@ -324,15 +322,14 @@ TRACE/
 
 ### Species & Gene Model Support
 
-TRACE ships with bundled gene models for two Solanaceae species:
+TRACE ships with bundled gene models for tomato:
 
 | Species | Gene model | Assembly | Source |
 |---------|-----------|----------|--------|
 | Tomato (*S. lycopersicum*) | SL3.1 (default) | GCF_000188115.5 | NCBI RefSeq |
 | Tomato (*S. lycopersicum*) | ITAG4.0 (SL4 option) | SL4.0 | Sol Genomics Network |
-| Pepper (*C. annuum*) | CDS gene coordinates | UCD10Xv1.1 | Pepper genome consortium |
 
-**Using TRACE with other species:** TRACE works with any diploid VCF. For species beyond tomato and pepper, supply a tab-delimited gene coordinate file with columns: `chr`, `start`, `end`, `gene_id`, `description`. Load it via the Gene Annotation upload in the UI or `--genes` on the CLI.
+**Using TRACE with other species:** TRACE works with any diploid VCF. For species beyond tomato, supply a tab-delimited gene coordinate file with columns: `chr`, `start`, `end`, `gene_id`, `description`. Load it via the Gene Annotation upload in the UI or `--genes` on the CLI.
 
 **Chromosome naming:** common prefixes (`chr`, `SL4.0ch`, `Ca`, `Os`, `Gm`, etc.) are stripped and entries that resolve to positive integers are kept. The chromosome count comes from the data. Anything that does not resolve to an integer is mapped to `"ALT"` and dropped from LOCO kernels and LD pruning. If no chromosomes resolve, the error prints a sample of the original CHROM values. Implementation: `_clean_chr_series()` in `gwas/io.py`.
 

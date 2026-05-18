@@ -3,6 +3,16 @@
 Scripts and data used for the TRACE manuscript: simulation studies,
 cross-tool concordance, and the downstream case-study rerun.
 
+> **Pepper benchmarks are archive-only.** The manuscript's pepper
+> FWe / pepper BX results were generated with TRACE v1.0.0, which
+> shipped bundled pepper gene annotations (`cann_gene_*`). Those
+> files were removed in the post-v1.0.0 cleanup because the upstream
+> annotation quality wasn't good enough to maintain. The pepper
+> benchmark scripts in this directory are kept for historical
+> traceability of the published numbers, but re-running them
+> requires checking out the `v1.0.0` tag or supplying pepper gene
+> models manually via the `--genes` CLI flag.
+
 ## Quick reproduction
 
 ```bash

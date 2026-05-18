@@ -296,22 +296,22 @@ class TestBlockDetectionMonomorphic:
                         f"r2[{mono_col},{j}] should be NaN for monomorphic SNP"
 
 
-# ── Pepper chromosome naming ──────────────────────────────────
+# ── Letter-prefixed chromosome naming (e.g. Ca1, Ca2, ...) ──────────
 
-class TestPepperChromosomeIntegration:
-    """Verify LD functions work with pepper chromosome naming (Ca prefix)."""
+class TestAlphanumChromosomeIntegration:
+    """Verify LD + canon_chr work with letter-prefixed chromosome naming."""
 
-    def test_pairwise_r2_pepper_data(self, gwas_rng):
+    def test_pairwise_r2_alphanum_chroms(self, gwas_rng):
         """pairwise_r2 works regardless of chromosome naming."""
         G = gwas_rng.choice([0.0, 1.0, 2.0], size=(30, 8)).astype(np.float32)
         r2 = pairwise_r2(G)
         assert r2.shape == (8, 8)
         np.testing.assert_allclose(np.diag(r2), 1.0, atol=1e-10)
 
-    def test_canon_chr_pepper_in_metadata(self, pepper_snp_metadata):
-        """Pepper chromosome names should canonicalize correctly."""
+    def test_canon_chr_alphanum_in_metadata(self, snp_metadata_alphanum):
+        """Letter-prefixed chromosome names should canonicalize correctly."""
         from annotation import canon_chr
-        chroms = pepper_snp_metadata["chroms"]
+        chroms = snp_metadata_alphanum["chroms"]
         canonical = np.array([canon_chr(c) for c in chroms])
         # Ca1 → "1", Ca2 → "2", Ca3 → "3"
         assert set(canonical) == {"1", "2", "3"}

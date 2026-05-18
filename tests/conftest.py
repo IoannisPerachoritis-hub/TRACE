@@ -174,19 +174,19 @@ def gwas_K_by_chr(gwas_iid, gwas_geno, gwas_snp_metadata):
     return K_by_chr
 
 
-# ── Pepper-specific fixtures ─────────────────────────────────
+# ── Alphanumeric-chromosome fixtures (for naming-regex coverage) ──────
 
 @pytest.fixture
-def pepper_chroms_layout():
-    """SNP count per chromosome using pepper naming (Ca prefix)."""
+def chroms_layout_alphanum():
+    """SNP count per chromosome using letter-prefixed naming (e.g. Ca1)."""
     return {"Ca1": 40, "Ca2": 30, "Ca3": 30}
 
 
 @pytest.fixture
-def pepper_snp_metadata(pepper_chroms_layout):
-    """sid, chroms, positions for 100 SNPs with pepper chromosome names."""
+def snp_metadata_alphanum(chroms_layout_alphanum):
+    """sid, chroms, positions for 100 SNPs with letter-prefixed chromosome names."""
     sid_list, chroms_list, pos_list = [], [], []
-    for ch_str, n_snps in pepper_chroms_layout.items():
+    for ch_str, n_snps in chroms_layout_alphanum.items():
         for i in range(n_snps):
             sid_list.append(f"{ch_str}_snp_{i:04d}")
             chroms_list.append(ch_str)

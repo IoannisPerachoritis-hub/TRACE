@@ -26,7 +26,7 @@ class TestCanonChr:
         assert canon_chr("SL4.0ch01") == "1"
         assert canon_chr("SL4.0Ch12") == "12"
 
-    def test_Ca_pepper_prefix(self):
+    def test_ca_prefix(self):
         assert canon_chr("Ca1") == "1"
         assert canon_chr("Ca12") == "12"
 
@@ -94,11 +94,11 @@ class TestCanonChr:
         assert canon_chr("Ah01") == "1"
         assert canon_chr("Ah20") == "20"
 
-    def test_pepper_cap_chr_format(self):
+    def test_cap_chr_format(self):
         assert canon_chr("CaP_Chr01") == "1"
         assert canon_chr("CaP_Chr12") == "12"
 
-    def test_pepper_ca_chr_format(self):
+    def test_ca_chr_format(self):
         assert canon_chr("Ca_chr01") == "1"
         assert canon_chr("Ca_chr05") == "5"
 
