@@ -47,7 +47,7 @@ from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
     plot_manhattan_interactive, plot_qq, compute_lambda_gc,
     download_matplotlib_fig, download_plotly_fig,
-    _build_gwas_results_zip, _append_metadata_to_zip,
+    _build_gwas_results_zip, _append_metadata_to_zip, _combine_gwas_zips,
     compute_meff_li_ji,
     PALETTE, PALETTE_CYCLE, export_matplotlib,
 )
@@ -454,6 +454,20 @@ sig_rule = st.sidebar.selectbox(
         "Good for exploratory screening when you expect many true associations."
     ),
 )
+show_secondary_threshold = st.sidebar.checkbox(
+    "Also show secondary threshold line on Manhattans",
+    value=False,
+    help=(
+        "When on, draws a second dotted grey line at whichever of "
+        "Bonferroni or M_eff is NOT the primary rule above. Useful "
+        "for figures where a peak lies between the two thresholds — "
+        "common for LD-aware loci that clear M_eff but not naive "
+        "Bonferroni. Has no effect when the primary rule is FDR "
+        "(FDR is observation-dependent and is not drawn as a single "
+        "−log10p line)."
+    ),
+    key="show_secondary_threshold_main",
+)
 
 # --- Reproducibility ---
 st.sidebar.subheader("Reproducibility")
@@ -632,15 +646,59 @@ if vcf_file and phe_file:
     # After normalization, select only numeric columns as possible traits
     numeric_traits = pheno.select_dtypes(include=[np.number]).columns.tolist()
 
-    st.markdown("### Select trait for GWAS")
-    trait_col = st.selectbox(
-        "Select a numeric trait for GWAS:",
+    st.markdown("### Select traits for GWAS")
+
+    # Initialize selection state with the first numeric trait on first load.
+    _trait_key = "selected_traits_multiselect"
+    if _trait_key not in st.session_state:
+        st.session_state[_trait_key] = (
+            [numeric_traits[0]] if numeric_traits else []
+        )
+
+    # Quick-select buttons for large phenotype tables (e.g. metabolomics
+    # with thousands of columns). Clicking sets session state *before*
+    # the multiselect renders, so the widget picks up the change in the
+    # same rerun without needing st.rerun().
+    _btn_col1, _btn_col2, _btn_col3 = st.columns([1, 1, 5])
+    with _btn_col1:
+        if st.button(
+            f"Select all ({len(numeric_traits)})",
+            use_container_width=True,
+            disabled=not numeric_traits,
+        ):
+            st.session_state[_trait_key] = list(numeric_traits)
+    with _btn_col2:
+        if st.button(
+            "Clear",
+            use_container_width=True,
+            disabled=not st.session_state[_trait_key],
+        ):
+            st.session_state[_trait_key] = []
+
+    selected_traits = st.multiselect(
+        "Select one or more numeric traits for GWAS:",
         numeric_traits,
-        help="Select one trait for GWAS analysis. Run separate analyses for additional traits.",
+        key=_trait_key,
+        help=(
+            "Select one or more traits. Each trait runs sequentially and "
+            "gets its own results tab + ZIP download in the one-click "
+            "pipeline. For production batches of many traits, prefer the "
+            "CLI (`cli.py`)."
+        ),
     )
-    if not trait_col:
-        st.info("Select a numeric trait to proceed.")
+    if len(selected_traits) > 10:
+        st.warning(
+            "More than 10 traits — consider the CLI batch workflow "
+            "(`cli.py`) for production runs."
+        )
+    if not selected_traits:
+        st.info("Select at least one numeric trait to proceed.")
         st.stop()
+    # Primary trait drives the pre-Run setup/preview (QC, PCA, data summary).
+    # Inside the one-click loop, each trait refreshes its own pipeline outputs.
+    # The single-trait detailed view below the one-click expander always uses
+    # the primary trait.
+    trait_col = selected_traits[0]
 
     # =========================
     # 4. GWAS preprocessing (VCF, QC, kinship, PCs)
@@ -700,8 +758,6 @@ if vcf_file and phe_file:
                 "Overrides appear when MLMM or FarmCPU is selected in "
                 "'Additional GWAS models' above."
             )
-
-    st.markdown("### Preparing genotype & kinship matrices for GWAS…")
 
     # --- Build stable cache keys ---
     vcf_hash = hash_bytes(vcf_bytes)
@@ -1218,6 +1274,17 @@ if vcf_file and phe_file:
                     "good for exploratory screening."
                 ),
             )
+            _pipe_show_secondary_threshold = st.checkbox(
+                "Also show secondary threshold line on Manhattans",
+                value=False,
+                key="pipe_show_secondary_threshold",
+                help=(
+                    "When on, draws a second dotted grey line at whichever of "
+                    "Bonferroni or M_eff is NOT the primary rule above. Useful "
+                    "for figures where a peak lies between the two thresholds. "
+                    "Has no effect when the primary rule is FDR."
+                ),
+            )
         with _cfg_col2:
             from utils.species_files import SPECIES_FILES as _PIPE_SP
             _pipe_species_opts = list(_PIPE_SP.keys()) + ["Other (upload files)"]
@@ -1321,6 +1388,19 @@ if vcf_file and phe_file:
                 "Haplotype permutations", min_value=100, max_value=5000,
                 value=1000, step=100, key="pipe_hap_perms",
             )
+            _pipe_generate_ld_heatmaps = st.checkbox(
+                "Generate LD block heatmap PNGs",
+                value=True,
+                key="pipe_generate_ld_heatmaps",
+                help=(
+                    "Render an r² heatmap PNG for each significant LD block "
+                    "and include them in the ZIP. Useful for visualising "
+                    "haplotype structure but adds one PNG per block per "
+                    "trait — turn off for batch runs over many traits "
+                    "(e.g. metabolomics with hundreds–thousands of "
+                    "phenotypes) to keep the ZIP small."
+                ),
+            )
 
         with st.expander("Advanced model settings", expanded=False):
             _adv1, _adv2 = st.columns(2)
@@ -1388,71 +1468,144 @@ if vcf_file and phe_file:
 
         if st.button("Run Full Analysis", key="run_full_pipeline", type="primary"):
             from gwas.reports import generate_gwas_report as _gen_report
+            import time as _time_mod
 
-            _pipe_extra_tables = {}
-            _pipe_extra_dfs = {}
-            _pipe_figures = {}
-            _pipe_pc_df = None
-            _pipe_lam = 1.0  # safe default
-            _pipe_boot_disc_df = None
-
-            # Per-model PC counts — will be set by auto or manual mode
-            _pipe_k_mlm = n_pcs  # fallback to sidebar slider
-            _pipe_k_mlmm = n_pcs
-            _pipe_k_fc = n_pcs
+            # Multi-trait progress widget — sits outside the status box so
+            # it stays visible as each trait completes.
+            _trait_progress = st.empty()
 
             with st.status("Running full analysis...", expanded=True) as _status:
+                # Per-trait accumulator — populated inside the loop.
+                _pipe_per_trait = {}
+                # Successful-trait durations (seconds); drives the ETA.
+                _per_trait_elapsed = []
+                for _ft_i, _ft_trait in enumerate(selected_traits):
+                    _trait_start = _time_mod.time()
+                    trait_col = _ft_trait
 
-                # --- Step 1: PC selection (auto or manual) ---
-                _status.update(label="Step 1: Selecting PCs...")
-                pcs_full_arr = st.session_state["pcs_full"]
-                _max_avail = pcs_full_arr.shape[1] if pcs_full_arr is not None else 0
-
-                if _pipe_pc_mode.startswith("Manual"):
-                    # --- Manual per-model PCs ---
-                    _pipe_k_mlm = min(_pipe_manual_pcs.get("MLM", n_pcs), _max_avail)
-                    _pipe_k_mlmm = min(_pipe_manual_pcs.get("MLMM", _pipe_k_mlm), _max_avail)
-                    _pipe_k_fc = min(_pipe_manual_pcs.get("FarmCPU", _pipe_k_mlm), _max_avail)
-                    _pc_msg = f"Manual PCs — MLM: {_pipe_k_mlm}"
-                    if "MLMM (iterative cofactors)" in _pipe_models:
-                        _pc_msg += f", MLMM: {_pipe_k_mlmm}"
-                    if "FarmCPU (multi-locus)" in _pipe_models:
-                        _pc_msg += f", FarmCPU: {_pipe_k_fc}"
-                    st.write(_pc_msg)
-
-                elif pcs_full_arr is not None and _max_avail >= 2:
-                    # --- Auto per-model PC selection ---
-                    if "Band" in _pipe_pc_strategy:
-                        _pc_strat = "band"
+                    # Top-of-iteration progress: "Trait i/N (name) — ETA: …".
+                    _n_total = len(selected_traits)
+                    if _per_trait_elapsed:
+                        _mean_pt = sum(_per_trait_elapsed) / len(_per_trait_elapsed)
+                        _eta_sec = max(0.0, _mean_pt * (_n_total - _ft_i))
+                        if _eta_sec < 60:
+                            _eta_text = f"~{int(_eta_sec)}s remaining"
+                        elif _eta_sec < 3600:
+                            _eta_text = (
+                                f"~{int(_eta_sec // 60)}m "
+                                f"{int(_eta_sec % 60)}s remaining"
+                            )
+                        else:
+                            _h = int(_eta_sec // 3600)
+                            _mn = int((_eta_sec % 3600) // 60)
+                            _eta_text = f"~{_h}h {_mn}m remaining"
                     else:
-                        _pc_strat = "closest_to_1"
-
-                    # MLM lambda scan
-                    _pipe_pc_df = auto_select_pcs(
-                        geno_imputed=geno_imputed, y=y, sid=sid,
-                        chroms=chroms, chroms_num=chroms_num, positions=positions,
-                        iid=iid, Z_grm=st.session_state["Z_grm"],
-                        chroms_grm=st.session_state["chroms_grm"],
-                        K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
-                        strategy=_pc_strat,
-                        use_loco=_pipe_use_loco,
-                        model="mlm",
-                    )
-                    # MLM best k
-                    _best_row_mlm = _pipe_pc_df.loc[_pipe_pc_df["recommended"] == "★"]
-                    if not _best_row_mlm.empty:
-                        _pipe_k_mlm = int(_best_row_mlm.iloc[0]["n_pcs"])
-                    _pipe_pc_df.rename(
-                        columns={"lambda_gc": "lambda_gc_MLM",
-                                 "delta_from_1": "delta_MLM",
-                                 "recommended": "recommended_MLM"},
-                        inplace=True,
+                        _eta_text = "estimating runtime…"
+                    _trait_progress.info(
+                        f"**Trait {_ft_i + 1}/{_n_total}** "
+                        f"(`{trait_col}`) — {_eta_text}"
                     )
 
-                    # MLMM independent lambda scan
-                    if "MLMM (iterative cofactors)" in _pipe_models:
-                        st.write("Scanning PCs for MLMM...")
-                        _mlmm_scan_df = auto_select_pcs(
+                    # Reset per-trait accumulators (these live in the
+                    # `if st.button:` scope; must be cleared between traits).
+                    _pipe_extra_tables = {}
+                    _pipe_extra_dfs = {}
+                    _pipe_figures = {}
+                    _pipe_pc_df = None
+                    _pipe_lam = 1.0
+                    _pipe_boot_disc_df = None
+                    _pipe_k_mlm = n_pcs
+                    _pipe_k_mlmm = n_pcs
+                    _pipe_k_fc = n_pcs
+
+                    # Re-derive trait-specific results for iterations > 0.
+                    # Iteration 0 reuses the pre-Run setup (primary trait).
+                    if _ft_i > 0:
+                        st.session_state[f"VCF_BYTES::{vcf_hash}"] = vcf_bytes
+                        results = gwas_pipeline(
+                            vcf_hash=vcf_hash,
+                            pheno_hash=pheno_hash,
+                            trait_col=trait_col,
+                            maf_thresh=maf_thresh,
+                            miss_thresh=miss_thresh,
+                            norm_option=norm_option,
+                            drop_alt=drop_alt,
+                            ind_miss_thresh=ind_miss_thresh,
+                            mac_thresh=mac_thresh,
+                            info_thresh=info_thresh,
+                        )
+                        y = results["y"]
+                        iid = results["iid"]
+                        K = results["K"]
+                        geno_imputed = results["geno_imputed"]
+                        geno_df = results["geno_df"]
+                        chroms = np.asarray(results["chroms"], dtype=str)
+                        chroms_num = results["chroms_num"]
+                        positions = results["positions"]
+                        sid = results["sid"]
+                        pcs_full, _ = compute_pcs_full_cached(
+                            results["Z_for_pca"], max_pcs=20
+                        )
+                        pcs = (
+                            pcs_full[:, :n_pcs]
+                            if n_pcs > 0 and pcs_full is not None
+                            else None
+                        )
+                        results["pcs"] = pcs
+                        K0, K_by_chr, loco_diag = build_loco_kernels_cached(
+                            iid=iid,
+                            Z_grm=results["Z_for_pca"],
+                            chroms_grm=np.asarray(results["chroms_grm"], dtype=str),
+                            K_base=results["K"],
+                        )
+                        pheno_reader = PhenoData(iid=iid, val=y)
+                        if pcs is not None:
+                            covar_reader = CovarData(
+                                iid=iid, val=pcs,
+                                names=[f"PC{i + 1}" for i in range(pcs.shape[1])],
+                            )
+                        else:
+                            covar_reader = None
+                        # Session-state keys read by the Full Analysis body
+                        st.session_state["Z_grm"] = results["Z_for_pca"]
+                        st.session_state["chroms_grm"] = np.asarray(
+                            results["chroms_grm"], dtype=str
+                        )
+                        st.session_state["pcs_full"] = pcs_full
+                        st.session_state["iid"] = iid
+                        st.session_state["K"] = results["K"]
+                        st.session_state["K0"] = K0
+                        st.session_state["K_by_chr"] = K_by_chr
+                        st.session_state["loco_diagnostics_by_chr"] = loco_diag
+                        st.session_state["pheno_reader"] = pheno_reader
+                        st.session_state["covar_reader"] = covar_reader
+
+                    # --- Step 1: PC selection (auto or manual) ---
+                    _status.update(label="Step 1: Selecting PCs...")
+                    pcs_full_arr = st.session_state["pcs_full"]
+                    _max_avail = pcs_full_arr.shape[1] if pcs_full_arr is not None else 0
+
+                    if _pipe_pc_mode.startswith("Manual"):
+                        # --- Manual per-model PCs ---
+                        _pipe_k_mlm = min(_pipe_manual_pcs.get("MLM", n_pcs), _max_avail)
+                        _pipe_k_mlmm = min(_pipe_manual_pcs.get("MLMM", _pipe_k_mlm), _max_avail)
+                        _pipe_k_fc = min(_pipe_manual_pcs.get("FarmCPU", _pipe_k_mlm), _max_avail)
+                        _pc_msg = f"Manual PCs — MLM: {_pipe_k_mlm}"
+                        if "MLMM (iterative cofactors)" in _pipe_models:
+                            _pc_msg += f", MLMM: {_pipe_k_mlmm}"
+                        if "FarmCPU (multi-locus)" in _pipe_models:
+                            _pc_msg += f", FarmCPU: {_pipe_k_fc}"
+                        st.write(_pc_msg)
+
+                    elif pcs_full_arr is not None and _max_avail >= 2:
+                        # --- Auto per-model PC selection ---
+                        if "Band" in _pipe_pc_strategy:
+                            _pc_strat = "band"
+                        else:
+                            _pc_strat = "closest_to_1"
+
+                        # MLM lambda scan
+                        _pipe_pc_df = auto_select_pcs(
                             geno_imputed=geno_imputed, y=y, sid=sid,
                             chroms=chroms, chroms_num=chroms_num, positions=positions,
                             iid=iid, Z_grm=st.session_state["Z_grm"],
@@ -1460,1115 +1613,1266 @@ if vcf_file and phe_file:
                             K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
                             strategy=_pc_strat,
                             use_loco=_pipe_use_loco,
-                            model="mlmm",
-                            mlmm_p_enter=_pipe_mlmm_p,
-                            mlmm_max_cof=_pipe_mlmm_max_cof,
+                            model="mlm",
                         )
-                        _pipe_pc_df["lambda_gc_MLMM"] = _mlmm_scan_df["lambda_gc"].values
-                        _pipe_pc_df["delta_MLMM"] = _mlmm_scan_df["delta_from_1"].values
-                        _pipe_pc_df["recommended_MLMM"] = _mlmm_scan_df["recommended"].values
-                        _best_row_mlmm = _mlmm_scan_df.loc[
-                            _mlmm_scan_df["recommended"] == "★"
-                        ]
-                        if not _best_row_mlmm.empty:
-                            _pipe_k_mlmm = int(_best_row_mlmm.iloc[0]["n_pcs"])
-
-                    # FarmCPU independent lambda scan
-                    if "FarmCPU (multi-locus)" in _pipe_models:
-                        st.write("Scanning PCs for FarmCPU...")
-                        _fc_scan_df = auto_select_pcs(
-                            geno_imputed=geno_imputed, y=y, sid=sid,
-                            chroms=chroms, chroms_num=chroms_num, positions=positions,
-                            iid=iid, Z_grm=st.session_state["Z_grm"],
-                            chroms_grm=st.session_state["chroms_grm"],
-                            K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
-                            strategy=_pc_strat,
-                            use_loco=_pipe_use_loco,
-                            model="farmcpu",
-                            farmcpu_p_threshold=_pipe_fc_p,
-                            farmcpu_max_iterations=_pipe_fc_max_iter,
-                            farmcpu_max_pseudo_qtns=_pipe_fc_max_pqtn,
-                            farmcpu_final_scan=_pipe_fc_final_scan,
+                        # MLM best k
+                        _best_row_mlm = _pipe_pc_df.loc[_pipe_pc_df["recommended"] == "★"]
+                        if not _best_row_mlm.empty:
+                            _pipe_k_mlm = int(_best_row_mlm.iloc[0]["n_pcs"])
+                        _pipe_pc_df.rename(
+                            columns={"lambda_gc": "lambda_gc_MLM",
+                                     "delta_from_1": "delta_MLM",
+                                     "recommended": "recommended_MLM"},
+                            inplace=True,
                         )
-                        _pipe_pc_df["lambda_gc_FarmCPU"] = _fc_scan_df["lambda_gc"].values
-                        _pipe_pc_df["delta_FarmCPU"] = _fc_scan_df["delta_from_1"].values
-                        _pipe_pc_df["recommended_FarmCPU"] = _fc_scan_df["recommended"].values
-                        _best_row_fc = _fc_scan_df.loc[
-                            _fc_scan_df["recommended"] == "★"
-                        ]
-                        if not _best_row_fc.empty:
-                            _pipe_k_fc = int(_best_row_fc.iloc[0]["n_pcs"])
 
-                    _pipe_extra_tables["PC_selection_lambda.csv"] = _pipe_pc_df
-
-                    # Display per-model PC summary
-                    _pc_msg = f"Auto-selected PCs — MLM: **{_pipe_k_mlm}**"
-                    if "MLMM (iterative cofactors)" in _pipe_models:
-                        _pc_msg += f", MLMM: **{_pipe_k_mlmm}**"
-                    if "FarmCPU (multi-locus)" in _pipe_models:
-                        _pc_msg += f", FarmCPU: **{_pipe_k_fc}**"
-                    st.write(_pc_msg)
-
-                    # PC selection lambda curve figure
-                    if _pipe_pc_df is not None and len(_pipe_pc_df) > 1:
-                        try:
-                            _fig_pc, _ax_pc = plt.subplots(figsize=(6, 3.5))
-                            _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_MLM"],
-                                        "o-", color="#0072B2", label="MLM")
-                            if "lambda_gc_MLMM" in _pipe_pc_df.columns:
-                                _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_MLMM"],
-                                            "^-", color="#009E73", label="MLMM")
-                            if "lambda_gc_FarmCPU" in _pipe_pc_df.columns:
-                                _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_FarmCPU"],
-                                            "s-", color="#D55E00", label="FarmCPU")
-                            _ax_pc.axhline(1.0, ls="--", color="#999", alpha=0.7)
-                            # Mark per-model best PC counts
-                            _ax_pc.axvline(_pipe_k_mlm, ls=":", color="#0072B2", alpha=0.6, lw=1.5,
-                                           label=f"MLM best: {_pipe_k_mlm}")
-                            _mlm_lam_at_best = _pipe_pc_df.loc[
-                                _pipe_pc_df["n_pcs"] == _pipe_k_mlm, "lambda_gc_MLM"
+                        # MLMM independent lambda scan
+                        if "MLMM (iterative cofactors)" in _pipe_models:
+                            st.write("Scanning PCs for MLMM...")
+                            _mlmm_scan_df = auto_select_pcs(
+                                geno_imputed=geno_imputed, y=y, sid=sid,
+                                chroms=chroms, chroms_num=chroms_num, positions=positions,
+                                iid=iid, Z_grm=st.session_state["Z_grm"],
+                                chroms_grm=st.session_state["chroms_grm"],
+                                K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
+                                strategy=_pc_strat,
+                                use_loco=_pipe_use_loco,
+                                model="mlmm",
+                                mlmm_p_enter=_pipe_mlmm_p,
+                                mlmm_max_cof=_pipe_mlmm_max_cof,
+                            )
+                            _pipe_pc_df["lambda_gc_MLMM"] = _mlmm_scan_df["lambda_gc"].values
+                            _pipe_pc_df["delta_MLMM"] = _mlmm_scan_df["delta_from_1"].values
+                            _pipe_pc_df["recommended_MLMM"] = _mlmm_scan_df["recommended"].values
+                            _best_row_mlmm = _mlmm_scan_df.loc[
+                                _mlmm_scan_df["recommended"] == "★"
                             ]
-                            if not _mlm_lam_at_best.empty:
-                                _ax_pc.plot(_pipe_k_mlm, float(_mlm_lam_at_best.iloc[0]),
-                                            "*", color="#0072B2", ms=14, zorder=5)
-                            if ("MLMM (iterative cofactors)" in _pipe_models
-                                    and _pipe_k_mlmm != _pipe_k_mlm):
-                                _ax_pc.axvline(_pipe_k_mlmm, ls=":", color="#009E73", alpha=0.6, lw=1.5,
-                                               label=f"MLMM best: {_pipe_k_mlmm}")
-                            if "lambda_gc_MLMM" in _pipe_pc_df.columns:
-                                _mlmm_lam_at_best = _pipe_pc_df.loc[
-                                    _pipe_pc_df["n_pcs"] == _pipe_k_mlmm, "lambda_gc_MLMM"
-                                ]
-                                if (not _mlmm_lam_at_best.empty
-                                        and np.isfinite(float(_mlmm_lam_at_best.iloc[0]))):
-                                    _ax_pc.plot(_pipe_k_mlmm, float(_mlmm_lam_at_best.iloc[0]),
-                                                "*", color="#009E73", ms=14, zorder=5)
-                            if "FarmCPU (multi-locus)" in _pipe_models and _pipe_k_fc != _pipe_k_mlm:
-                                _ax_pc.axvline(_pipe_k_fc, ls=":", color="#D55E00", alpha=0.6, lw=1.5,
-                                               label=f"FarmCPU best: {_pipe_k_fc}")
-                            if "lambda_gc_FarmCPU" in _pipe_pc_df.columns:
-                                _fc_lam_at_best = _pipe_pc_df.loc[
-                                    _pipe_pc_df["n_pcs"] == _pipe_k_fc, "lambda_gc_FarmCPU"
-                                ]
-                                if not _fc_lam_at_best.empty and np.isfinite(float(_fc_lam_at_best.iloc[0])):
-                                    _ax_pc.plot(_pipe_k_fc, float(_fc_lam_at_best.iloc[0]),
-                                                "*", color="#D55E00", ms=14, zorder=5)
-                            _ax_pc.legend(fontsize=8)
-                            _ax_pc.set_xlabel("Number of PCs")
-                            _ax_pc.set_ylabel("\u03bbGC")
-                            _ax_pc.set_title("PC Selection: \u03bbGC by PC Count (per model)")
-                            _fig_pc.tight_layout()
-                            _pipe_figures["PC_selection_lambda.png"] = _fig_pc
-                            plt.close(_fig_pc)
-                        except Exception:
-                            logging.exception("PC selection lambda figure failed")
-                else:
-                    st.write("Skipping PC scan (no PCs available).")
+                            if not _best_row_mlmm.empty:
+                                _pipe_k_mlmm = int(_best_row_mlmm.iloc[0]["n_pcs"])
 
-                # Build per-model PC matrices
-                def _slice_pcs(k):
-                    if pcs_full_arr is None or k <= 0:
-                        return None
-                    k = min(k, _max_avail)
-                    return pcs_full_arr[:, :k]
-
-                _pcs_for = {
-                    "MLM": _slice_pcs(_pipe_k_mlm),
-                    "MLMM": _slice_pcs(_pipe_k_mlmm),
-                    "FarmCPU": _slice_pcs(_pipe_k_fc),
-                }
-
-                _step = 2
-
-                # Build pipeline-specific kinship kernels respecting the
-                # local LOCO toggle. K_by_chr from session state was built
-                # using the sidebar `use_loco`, so we may need to adjust it.
-                if _pipe_use_loco == use_loco:
-                    _pipe_K_by_chr = K_by_chr
-                elif _pipe_use_loco:
-                    # Sidebar had LOCO off but pipeline wants it on:
-                    # rebuild real LOCO kernels from scratch.
-                    from gwas.kinship import _build_loco_kernels_impl
-                    _, _pipe_K_by_chr, _ = _build_loco_kernels_impl(
-                        iid=iid, Z_grm=st.session_state["Z_grm"],
-                        chroms_grm=st.session_state["chroms_grm"], K_base=K,
-                    )
-                else:
-                    # Sidebar had LOCO on but pipeline wants whole-genome:
-                    # override per-chromosome kernels with K0.
-                    _pipe_K_by_chr = {ch: K0 for ch in K_by_chr}
-
-                # --- Step 2: Core MLM GWAS ---
-                _status.update(label=f"Step {_step}: Running MLM GWAS...")
-                try:
-                    _pipe_gwas = run_gwas_cached(
-                        geno_imputed=geno_key, y=y,
-                        pcs_full=pcs_full_arr, n_pcs=_pipe_k_mlm,
-                        sid=sid, positions=positions, chroms=chroms,
-                        chroms_num=chroms_num, iid=iid,
-                        _K0=K0, _K_by_chr=_pipe_K_by_chr,
-                        _pheno_reader_key=pheno_reader_key,
-                        trait_name=trait_col,
-                    )
-                    _pipe_lam = compute_lambda_gc(_pipe_gwas["PValue"].values)
-                except np.linalg.LinAlgError:
-                    logging.exception("Core MLM GWAS failed (singular matrix)")
-                    st.error(
-                        "MLM GWAS failed: kinship matrix is singular. "
-                        "Try fewer PCs, relax QC thresholds to retain more SNPs, "
-                        "or disable LOCO kinship."
-                    )
-                    st.stop()
-                except ValueError as e:
-                    logging.exception("Core MLM GWAS failed (value error)")
-                    _emsg = str(e).lower()
-                    if "overlap" in _emsg or "sample" in _emsg:
-                        st.error(
-                            "MLM GWAS failed: sample IDs in VCF and phenotype file "
-                            "do not match. Check that accession naming conventions "
-                            "are consistent between files."
-                        )
-                    else:
-                        st.error(f"MLM GWAS failed: {e}")
-                    st.stop()
-                except Exception as e:
-                    logging.exception("Core MLM GWAS failed")
-                    st.error(f"MLM GWAS failed: {e}")
-                    st.stop()
-
-                # OLS marginal effects
-                try:
-                    _mlm_pcs = _pcs_for["MLM"]
-                    _pipe_covar = CovarData(iid=iid, val=_mlm_pcs) if _mlm_pcs is not None else None
-                    _pipe_gwas = add_ols_effects_to_gwas(
-                        _pipe_gwas, geno_imputed, y, _pipe_covar, sid,
-                    )
-                    st.write("OLS effects added (Beta, SE, t-stat).")
-                except Exception as e:
-                    logging.exception("Pipeline OLS effects failed")
-                    st.write(f"OLS effects skipped: {e}")
-
-                _pipe_gwas["-log10p"] = -np.log10(_pipe_gwas["PValue"].clip(1e-300))
-
-                # FDR
-                _rej, _fdr, _, _ = multipletests(_pipe_gwas["PValue"].values, method="fdr_bh")
-                _pipe_gwas["FDR"] = _fdr
-                _pipe_gwas["Significant_FDR"] = _rej
-
-                # M_eff (only when user selected LD-aware threshold)
-                _pipe_meff = None
-                _pipe_meff_thresh = None
-                if _pipe_sig_rule.startswith("M_eff"):
-                    try:
-                        _pipe_meff, _ = compute_meff_li_ji(geno_imputed)
-                        _pipe_meff_thresh = 0.05 / _pipe_meff
-                        st.session_state["meff_val"] = _pipe_meff
-                        st.write(
-                            f"M_eff = {_pipe_meff:,} independent tests "
-                            f"(of {len(_pipe_gwas):,} SNPs)"
-                        )
-                    except Exception:
-                        logging.exception("M_eff computation failed in pipeline")
-                        st.warning("M_eff computation failed — falling back to Bonferroni.")
-                        # leave _pipe_meff = None, _pipe_meff_thresh = None
-
-                # Derive threshold variables from user's significance rule
-                _n_tested = len(_pipe_gwas)
-                if _pipe_sig_rule.startswith("M_eff"):
-                    if _pipe_meff_thresh is not None:
-                        _pipe_sig_thresh = _pipe_meff_thresh
-                        _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
-                        _pipe_sig_label = f"M_eff (M={_pipe_meff:,})"
-                    else:
-                        # M_eff failed — fall back to Bonferroni
-                        _pipe_sig_thresh = 0.05 / max(_n_tested, 1)
-                        _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
-                        _pipe_sig_label = "Bonferroni (M_eff unavailable)"
-                elif _pipe_sig_rule.startswith("Bonferroni"):
-                    _pipe_sig_thresh = 0.05 / max(_n_tested, 1)
-                    _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
-                    _pipe_sig_label = "Bonferroni"
-                else:  # FDR
-                    _pipe_sig_thresh = 0.05 / max(_n_tested, 1)  # fallback when FDR column missing
-                    _pipe_sig_lod = None
-                    _pipe_sig_label = "FDR q<0.05"
-
-                # Add significance columns for available threshold types
-                _pipe_gwas["Significant_Bonf"] = _pipe_gwas["PValue"] < (0.05 / max(_n_tested, 1))
-                if _pipe_meff_thresh is not None:
-                    _pipe_gwas["Significant_Meff"] = _pipe_gwas["PValue"] < _pipe_meff_thresh
-
-                # Column name for the user's chosen significance rule
-                if _pipe_sig_rule.startswith("M_eff") and _pipe_meff_thresh is not None:
-                    _sig_col = "Significant_Meff"
-                elif _pipe_sig_rule.startswith("Bonferroni"):
-                    _sig_col = "Significant_Bonf"
-                else:
-                    _sig_col = "Significant_FDR"
-
-                # Display key metrics
-                if _pipe_meff is not None:
-                    _m1, _m2, _m3, _m4 = st.columns(4)
-                    _m4.metric("M_eff", f"{_pipe_meff:,}")
-                else:
-                    _m1, _m2, _m3 = st.columns(3)
-                _m1.metric("λGC", f"{_pipe_lam:.3f}")
-                _m2.metric(f"Significant ({_pipe_sig_label})", int(_pipe_gwas[_sig_col].sum()))
-                _m3.metric("SNPs tested", f"{len(_pipe_gwas):,}")
-
-                # Manhattan + QQ figures
-                try:
-                    _cumpos_df, _tick_pos, _tick_lab = compute_cumulative_positions(_pipe_gwas)
-                    _fig_man = plot_manhattan_static(
-                        _cumpos_df, active_lod=_pipe_sig_lod,
-                        active_label=_pipe_sig_label,
-                        title=f"Manhattan — {trait_col} (MLM)",
-                    )
-                    plt.figure(_fig_man.number)
-                    plt.xticks(_tick_pos, _tick_lab, fontsize=8)
-                    _pipe_figures[f"Manhattan_{trait_col}_MLM.png"] = _fig_man
-                    plt.close(_fig_man)
-
-                    # Interactive Manhattan for ZIP export
-                    try:
-                        _fig_man_int = plot_manhattan_interactive(
-                            _cumpos_df, active_lod=_pipe_sig_lod,
-                            active_label=_pipe_sig_label,
-                            title=f"Interactive Manhattan — {trait_col} (MLM)",
-                        )
-                        _fig_man_int.update_layout(
-                            xaxis=dict(tickmode="array", tickvals=_tick_pos, ticktext=_tick_lab),
-                            height=500,
-                        )
-                        _pipe_figures[f"Interactive_Manhattan_{trait_col}_MLM.html"] = (
-                            _fig_man_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
-                        )
-                    except Exception:
-                        logging.exception("Pipeline MLM interactive Manhattan failed")
-
-                    _fig_qq = plot_qq(_pipe_gwas["PValue"].values, lambda_gc_used=_pipe_lam)
-                    _pipe_figures[f"QQ_{trait_col}_MLM.png"] = _fig_qq
-                    plt.close(_fig_qq)
-
-                    # PCA scatter plot (population structure)
-                    if pcs_full_arr is not None and _pipe_k_mlm >= 2:
-                        from gwas.plotting import plot_pca_scatter, plot_pca_scree
-                        _fig_pca = plot_pca_scatter(
-                            pcs_full_arr[:, :_pipe_k_mlm],
-                            y=y.ravel(),
-                            title=f"PCA — {trait_col}",
-                            eigenvalues=pca_eigenvalues,
-                        )
-                        _pipe_figures[f"PCA_{trait_col}.png"] = _fig_pca
-                        plt.close(_fig_pca)
-                        # Scree plot
-                        if pca_eigenvalues is not None:
-                            _fig_scree = plot_pca_scree(
-                                pca_eigenvalues, n_pcs_used=_pipe_k_mlm,
-                                title=f"PCA Scree — {trait_col}",
+                        # FarmCPU independent lambda scan
+                        if "FarmCPU (multi-locus)" in _pipe_models:
+                            st.write("Scanning PCs for FarmCPU...")
+                            _fc_scan_df = auto_select_pcs(
+                                geno_imputed=geno_imputed, y=y, sid=sid,
+                                chroms=chroms, chroms_num=chroms_num, positions=positions,
+                                iid=iid, Z_grm=st.session_state["Z_grm"],
+                                chroms_grm=st.session_state["chroms_grm"],
+                                K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
+                                strategy=_pc_strat,
+                                use_loco=_pipe_use_loco,
+                                model="farmcpu",
+                                farmcpu_p_threshold=_pipe_fc_p,
+                                farmcpu_max_iterations=_pipe_fc_max_iter,
+                                farmcpu_max_pseudo_qtns=_pipe_fc_max_pqtn,
+                                farmcpu_final_scan=_pipe_fc_final_scan,
                             )
-                            _pipe_figures[f"PCA_scree_{trait_col}.png"] = _fig_scree
-                            plt.close(_fig_scree)
-                except Exception:
-                    logging.exception("Pipeline figure generation failed")
-                _step += 1
+                            _pipe_pc_df["lambda_gc_FarmCPU"] = _fc_scan_df["lambda_gc"].values
+                            _pipe_pc_df["delta_FarmCPU"] = _fc_scan_df["delta_from_1"].values
+                            _pipe_pc_df["recommended_FarmCPU"] = _fc_scan_df["recommended"].values
+                            _best_row_fc = _fc_scan_df.loc[
+                                _fc_scan_df["recommended"] == "★"
+                            ]
+                            if not _best_row_fc.empty:
+                                _pipe_k_fc = int(_best_row_fc.iloc[0]["n_pcs"])
 
-                # --- Step N: Multi-model (if selected) ---
-                if "MLMM (iterative cofactors)" in _pipe_models:
-                    _status.update(label=f"Step {_step}: Running MLMM...")
-                    try:
-                        _pr_key = put_object_in_session(
-                            PhenoData(iid=iid, val=y),
-                            "PHENO_READER", vcf_hash, pheno_hash, trait_col,
-                        )
-                        _mlmm_pcs = _pcs_for["MLMM"]
-                        _cr = CovarData(iid=iid, val=_mlmm_pcs) if _mlmm_pcs is not None else None
-                        _cr_key = put_object_in_session(
-                            _cr, "COVAR_READER", vcf_hash, pheno_hash,
-                        ) if _cr is not None else None
-                        _mlmm_df, _cof_tbl = run_mlmm_core_cached(
-                            geno_key=geno_key, y_key=y_key,
-                            iid=iid, sid=sid, chroms=chroms,
-                            chroms_num=chroms_num, positions=positions,
-                            K0_key=K0_key, pheno_reader_key=_pr_key,
-                            covar_reader_key=_cr_key, gwas_df_mlm=_pipe_gwas,
-                            p_enter=_pipe_mlmm_p, max_cof=_pipe_mlmm_max_cof, window_kb=250,
-                        )
-                        _mlmm_df["PValue"] = _mlmm_df["PValue"].astype(float)
-                        _rej_m, _fdr_m, _, _ = multipletests(
-                            _mlmm_df["PValue"].clip(lower=1e-300).values, method="fdr_bh"
-                        )
-                        _mlmm_df["-log10p"] = -np.log10(_mlmm_df["PValue"].clip(lower=1e-300))
-                        _mlmm_df["FDR"] = _fdr_m
-                        _mlmm_df["Significant_FDR"] = _rej_m
-                        _mlmm_df["Significant_Bonf"] = _mlmm_df["PValue"] < (0.05 / max(len(_mlmm_df), 1))
-                        if _pipe_meff_thresh is not None:
-                            _mlmm_df["Significant_Meff"] = _mlmm_df["PValue"] < _pipe_meff_thresh
-                        _pipe_extra_dfs["MLMM"] = _mlmm_df
-                        st.write(f"MLMM complete — {int(_rej_m.sum())} significant SNPs")
-                        # Manhattan + QQ for MLMM
-                        try:
-                            _cumpos_m, _tp_m, _tl_m = compute_cumulative_positions(_mlmm_df)
-                            _lam_m = compute_lambda_gc(_mlmm_df["PValue"].values)
-                            _fig_man_m = plot_manhattan_static(
-                                _cumpos_m, active_lod=_pipe_sig_lod,
-                                active_label=_pipe_sig_label, title=f"Manhattan — {trait_col} (MLMM)",
-                            )
-                            plt.figure(_fig_man_m.number)
-                            plt.xticks(_tp_m, _tl_m, fontsize=8)
-                            _pipe_figures[f"Manhattan_{trait_col}_MLMM.png"] = _fig_man_m
-                            plt.close(_fig_man_m)
-                            # Interactive Manhattan for ZIP export
+                        _pipe_extra_tables["PC_selection_lambda.csv"] = _pipe_pc_df
+
+                        # Display per-model PC summary
+                        _pc_msg = f"Auto-selected PCs — MLM: **{_pipe_k_mlm}**"
+                        if "MLMM (iterative cofactors)" in _pipe_models:
+                            _pc_msg += f", MLMM: **{_pipe_k_mlmm}**"
+                        if "FarmCPU (multi-locus)" in _pipe_models:
+                            _pc_msg += f", FarmCPU: **{_pipe_k_fc}**"
+                        st.write(_pc_msg)
+
+                        # PC selection lambda curve figure
+                        if _pipe_pc_df is not None and len(_pipe_pc_df) > 1:
                             try:
-                                _fig_man_m_int = plot_manhattan_interactive(
-                                    _cumpos_m, active_lod=_pipe_sig_lod,
-                                    active_label=_pipe_sig_label,
-                                    title=f"Interactive Manhattan — {trait_col} (MLMM)",
-                                )
-                                _fig_man_m_int.update_layout(
-                                    xaxis=dict(tickmode="array", tickvals=_tp_m, ticktext=_tl_m),
-                                    height=500,
-                                )
-                                _pipe_figures[f"Interactive_Manhattan_{trait_col}_MLMM.html"] = (
-                                    _fig_man_m_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
-                                )
-                            except Exception:
-                                logging.exception("Pipeline MLMM interactive Manhattan failed")
-                            _fig_qq_m = plot_qq(_mlmm_df["PValue"].values, lambda_gc_used=_lam_m)
-                            _pipe_figures[f"QQ_{trait_col}_MLMM.png"] = _fig_qq_m
-                            plt.close(_fig_qq_m)
-                        except Exception:
-                            logging.exception("MLMM figure generation failed")
-                    except Exception as e:
-                        logging.exception("Pipeline MLMM failed")
-                        st.write(f"MLMM skipped: {e}")
-                    _step += 1
-
-                if "FarmCPU (multi-locus)" in _pipe_models:
-                    _status.update(label=f"Step {_step}: Running FarmCPU...")
-                    try:
-                        _fc_pcs = _pcs_for["FarmCPU"]
-                        _fc_df, _pqtn_tbl, _conv = run_farmcpu(
-                            geno_imputed=geno_imputed, sid=sid,
-                            chroms=chroms, chroms_num=chroms_num,
-                            positions=positions, iid=iid,
-                            pheno_reader=PhenoData(iid=iid, val=y),
-                            K0=K0,
-                            covar_reader=CovarData(iid=iid, val=_fc_pcs) if _fc_pcs is not None else None,
-                            p_threshold=_pipe_fc_p, max_iterations=_pipe_fc_max_iter,
-                            max_pseudo_qtns=_pipe_fc_max_pqtn,
-                            final_scan=_pipe_fc_final_scan,
-                            use_loco=_pipe_use_loco,
-                        )
-                        _fc_df["PValue"] = _fc_df["PValue"].astype(float)
-                        _rej_fc, _fdr_fc, _, _ = multipletests(
-                            _fc_df["PValue"].clip(lower=1e-300).values, method="fdr_bh"
-                        )
-                        _fc_df["-log10p"] = -np.log10(_fc_df["PValue"].clip(lower=1e-300))
-                        _fc_df["FDR"] = _fdr_fc
-                        _fc_df["Significant_FDR"] = _rej_fc
-                        _fc_df["Significant_Bonf"] = _fc_df["PValue"] < (0.05 / max(len(_fc_df), 1))
-                        if _pipe_meff_thresh is not None:
-                            _fc_df["Significant_Meff"] = _fc_df["PValue"] < _pipe_meff_thresh
-                        _pipe_extra_dfs["FarmCPU"] = _fc_df
-                        st.write(f"FarmCPU complete — {int(_rej_fc.sum())} significant SNPs")
-                        # Manhattan + QQ for FarmCPU
-                        try:
-                            _cumpos_fc, _tp_fc, _tl_fc = compute_cumulative_positions(_fc_df)
-                            _lam_fc = compute_lambda_gc(_fc_df["PValue"].values)
-                            _fig_man_fc = plot_manhattan_static(
-                                _cumpos_fc, active_lod=_pipe_sig_lod,
-                                active_label=_pipe_sig_label, title=f"Manhattan — {trait_col} (FarmCPU)",
-                            )
-                            plt.figure(_fig_man_fc.number)
-                            plt.xticks(_tp_fc, _tl_fc, fontsize=8)
-                            _pipe_figures[f"Manhattan_{trait_col}_FarmCPU.png"] = _fig_man_fc
-                            plt.close(_fig_man_fc)
-                            # Interactive Manhattan for ZIP export
-                            try:
-                                _fig_man_fc_int = plot_manhattan_interactive(
-                                    _cumpos_fc, active_lod=_pipe_sig_lod,
-                                    active_label=_pipe_sig_label,
-                                    title=f"Interactive Manhattan — {trait_col} (FarmCPU)",
-                                )
-                                _fig_man_fc_int.update_layout(
-                                    xaxis=dict(tickmode="array", tickvals=_tp_fc, ticktext=_tl_fc),
-                                    height=500,
-                                )
-                                _pipe_figures[f"Interactive_Manhattan_{trait_col}_FarmCPU.html"] = (
-                                    _fig_man_fc_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
-                                )
-                            except Exception:
-                                logging.exception("Pipeline FarmCPU interactive Manhattan failed")
-                            _fig_qq_fc = plot_qq(_fc_df["PValue"].values, lambda_gc_used=_lam_fc)
-                            _pipe_figures[f"QQ_{trait_col}_FarmCPU.png"] = _fig_qq_fc
-                            plt.close(_fig_qq_fc)
-                        except Exception:
-                            logging.exception("FarmCPU figure generation failed")
-                    except Exception as e:
-                        logging.exception("Pipeline FarmCPU failed")
-                        st.write(f"FarmCPU skipped: {e}")
-                    _step += 1
-
-                # --- Step N: Cross-model consensus ---
-                _model_results = [("MLM", _pipe_gwas)]
-                for _mname in ["MLMM", "FarmCPU"]:
-                    if _mname in _pipe_extra_dfs:
-                        _model_results.append((_mname, _pipe_extra_dfs[_mname]))
-
-                if len(_model_results) >= 2:
-                    _status.update(label=f"Step {_step}: Cross-model consensus...")
-                    try:
-                        _sig_by_model = {}
-                        for _mname, _mdf in _model_results:
-                            if _pipe_sig_rule.startswith("FDR") and "FDR" in _mdf.columns:
-                                _sig_by_model[_mname] = set(
-                                    _mdf.loc[_mdf["FDR"] < 0.05, "SNP"]
-                                )
-                            else:
-                                _sig_by_model[_mname] = set(
-                                    _mdf.loc[_mdf["PValue"] < _pipe_sig_thresh, "SNP"]
-                                )
-                        _all_sig = set().union(*_sig_by_model.values())
-                        if _all_sig:
-                            _all_res = pd.concat(
-                                [_df.assign(Model=_m) for _m, _df in _model_results],
-                                ignore_index=True,
-                            )
-                            _consensus_rows = []
-                            for _snp in _all_sig:
-                                _det = [m for m, s in _sig_by_model.items() if _snp in s]
-                                _best = _all_res.loc[
-                                    _all_res["SNP"] == _snp
-                                ].nsmallest(1, "PValue").iloc[0]
-                                _crow = {
-                                    "SNP": _snp, "Chr": _best["Chr"],
-                                    "Pos": _best["Pos"],
-                                    "Best_PValue": _best["PValue"],
-                                    "Best_FDR": _best.get("FDR", np.nan),
-                                    "Significant_Bonf": bool(_best.get("Significant_Bonf", False)),
-                                    "Significant_FDR": bool(_best.get("Significant_FDR", False)),
-                                    "Detected_by": ", ".join(_det),
-                                    "N_models": len(_det),
-                                }
-                                if _pipe_meff_thresh is not None:
-                                    _crow["Significant_Meff"] = bool(_best.get("Significant_Meff", False))
-                                _consensus_rows.append(_crow)
-                            _consensus_df = pd.DataFrame(_consensus_rows).sort_values(
-                                ["N_models", "Best_PValue"], ascending=[False, True],
-                            )
-                            _n_high = int((_consensus_df["N_models"] >= 2).sum())
-                            st.write(
-                                f"Cross-model consensus: {_n_high}/{len(_consensus_df)} "
-                                f"SNPs detected by 2+ models ({_pipe_sig_label})"
-                            )
-                            _pipe_extra_tables["CrossModel_Consensus.csv"] = _consensus_df
-                        else:
-                            st.write(f"No SNPs reached significance ({_pipe_sig_label}) in any model.")
-                    except Exception as e:
-                        logging.exception("Pipeline consensus failed")
-                        st.write(f"Cross-model consensus skipped: {e}")
-                    _step += 1
-
-                # --- Step N: LD decay (accurate per-chromosome computation) ---
-                _pipe_ld_decay_kb = None
-
-                if _pipe_ld_flank is None:  # Auto mode
-                    _status.update(label=f"Step {_step}: Computing LD decay (per-chromosome)...")
-                    try:
-                        _decay_df, _summary_df, _median_decay = _compute_ld_decay_for_gwas_page(
-                            geno_key=geno_key,
-                            chroms_tuple=tuple(np.asarray(chroms, dtype=str).tolist()),
-                            positions_tuple=tuple(int(p) for p in positions),
-                        )
-                        if _median_decay is not None:
-                            _pipe_ld_decay_kb = float(_median_decay)
-                            _pipe_ld_flank = int(2 * _pipe_ld_decay_kb)
-                            # Publish to session_state so LD Analysis page shows
-                            # the accurate value (and the "from Decay tab" label).
-                            st.session_state["ld_decay_df"] = _decay_df
-                            st.session_state["ld_decay_summary"] = _summary_df
-                            st.session_state["ld_decay_kb"] = _pipe_ld_decay_kb
-                            st.session_state["ld_decay_computed"] = True
-                            st.write(
-                                f"LD decay (r² ≤ 0.2) ≈ {_pipe_ld_decay_kb:.0f} kb "
-                                f"→ flank = {_pipe_ld_flank} kb"
-                            )
-                        else:
-                            _pipe_ld_flank = 300
-                            st.write("Could not compute LD decay — using 300 kb flank")
-                    except Exception as e:
-                        logging.exception("Pipeline LD decay computation failed")
-                        _pipe_ld_flank = 300
-                        st.write(f"LD decay computation failed: {e} — using 300 kb flank")
-                    _step += 1
-
-                # --- Load gene model + KEGG mapping once (shared across models) ---
-                _pipe_sp_auto = _PIPE_SP.get(_pipe_species, {})
-                if _pipe_genome_build and f"gene_model_{_pipe_genome_build}" in _pipe_sp_auto:
-                    _pipe_gm_path = _pipe_sp_auto[f"gene_model_{_pipe_genome_build}"]
-                    _pipe_desc_path = _pipe_sp_auto.get(f"gene_desc_{_pipe_genome_build}")
-                else:
-                    _pipe_gm_path = _pipe_sp_auto.get("gene_model")
-                    _pipe_desc_path = _pipe_sp_auto.get("gene_desc")
-
-                # User-uploaded overrides (apply for any species, including "Other")
-                import tempfile as _tempfile
-                from pathlib import Path as _PipePath
-                _pipe_gm_up = st.session_state.get("pipe_gene_model_override")
-                _pipe_desc_up = st.session_state.get("pipe_gene_desc_override")
-                if _pipe_gm_up is not None:
-                    _gm_tmp = os.path.join(_tempfile.gettempdir(), "trace_pipe_gene_model.csv")
-                    with open(_gm_tmp, "wb") as _f:
-                        _f.write(_pipe_gm_up.getbuffer())
-                    _pipe_gm_path = _PipePath(_gm_tmp)
-                if _pipe_desc_up is not None:
-                    _desc_tmp = os.path.join(_tempfile.gettempdir(), "trace_pipe_gene_desc.txt")
-                    with open(_desc_tmp, "wb") as _f:
-                        _f.write(_pipe_desc_up.getbuffer())
-                    _pipe_desc_path = _PipePath(_desc_tmp)
-
-                _pipe_genes_df = None
-                if _pipe_gm_path and _pipe_gm_path.exists():
-                    try:
-                        _pipe_genes_df = load_gene_annotation(
-                            str(_pipe_gm_path),
-                            str(_pipe_desc_path) if _pipe_desc_path and _pipe_desc_path.exists() else None,
-                        )
-                        st.write(f"Loaded {len(_pipe_genes_df):,} gene records.")
-                    except Exception as e:
-                        logging.exception("Gene model loading failed")
-                        st.write(f"Gene model loading failed: {e}")
-                elif _pipe_species == "Other (upload files)":
-                    st.info(
-                        "No custom gene model uploaded — gene annotation will be skipped. "
-                        "Upload a gene coordinates CSV under 'Override gene files' "
-                        "in the pipeline config to enable annotation."
-                    )
-
-                # --- Per-model post-GWAS analysis ---
-                _post_gwas_models = [("MLM", _pipe_gwas)]
-                for _mname in ["MLMM", "FarmCPU"]:
-                    if _mname in _pipe_extra_dfs:
-                        _post_gwas_models.append((_mname, _pipe_extra_dfs[_mname]))
-
-                # Track MLM results for report backward compat
-                _pipe_ld_blocks_mlm = None
-                _pipe_ld_annotated_mlm = None
-                _pipe_hap_gwas_mlm = None
-                _geno_float = np.asarray(geno_imputed, float)
-                _chr_arr = np.array([canon_chr(str(c)) for c in chroms])
-                _pos_arr = np.array(positions)
-                _sid_arr = np.array(sid)
-                _per_model_post = {}
-                _heatmap_blocks_done = set()
-
-                for _model_name, _model_df in _post_gwas_models:
-                    _status.update(label=f"Step {_step}: Post-GWAS ({_model_name})...")
-                    st.write(f"**Post-GWAS analysis: {_model_name}**")
-
-                    # Guard: ensure FDR column exists (compute BH-FDR)
-                    if "FDR" not in _model_df.columns:
-                        _model_df = _model_df.copy()
-                        _rej_fb, _fdr_fb, _, _ = multipletests(
-                            _model_df["PValue"].astype(float).clip(lower=1e-300).values,
-                            method="fdr_bh",
-                        )
-                        _model_df["FDR"] = _fdr_fb
-                        if "Significant_FDR" not in _model_df.columns:
-                            _model_df["Significant_FDR"] = _rej_fb
-                        st.write(f"  {_model_name}: FDR computed (was missing).")
-
-                    _m_ld_blocks = None
-                    _m_ld_annotated = None
-                    _m_hap_gwas = None
-                    _m_consolidated = None
-                    # --- LD block detection ---
-                    try:
-                        _ld_suggestive = _pipe_ld_seed.startswith("Suggestive")
-                        if _ld_suggestive:
-                            _m_has_seeds = (_model_df["PValue"] < _pipe_ld_sig_p).any()
-                        else:
-                            _m_has_seeds = _model_df[_sig_col].any()
-                        if _m_has_seeds:
-                            _m_ld_blocks = ld.find_ld_clusters_genomewide(
-                                gwas_df=_model_df,
-                                chroms=chroms,
-                                positions=positions,
-                                geno_imputed=_geno_float,
-                                sid=sid,
-                                ld_threshold=_pipe_ld_r2,
-                                flank_kb=_pipe_ld_flank,
-                                ld_decay_kb=_pipe_ld_decay_kb,
-                                min_snps=3,
-                                top_n=_pipe_ld_top_n if _ld_suggestive else 0,
-                                sig_thresh=_pipe_ld_sig_p if _ld_suggestive else _pipe_sig_thresh,
-                            )
-                            _n_before_filter = len(_m_ld_blocks)
-                            _m_ld_blocks, _ = ld.filter_contained_blocks(
-                                _m_ld_blocks, min_contained=2,
-                                size_ratio_threshold=3.0, mode="remove",
-                            )
-                            if _n_before_filter > 0 and _m_ld_blocks.empty:
-                                st.write(
-                                    f"  {_model_name}: All {_n_before_filter} LD blocks "
-                                    f"removed by containment filter."
-                                )
-                            _n_seeds = int((_model_df["PValue"] < _pipe_ld_sig_p).sum()) if _ld_suggestive else int(_model_df[_sig_col].sum())
-                            st.write(
-                                f"  {_model_name}: {len(_m_ld_blocks)} LD blocks "
-                                f"around {_n_seeds} seed peaks"
-                            )
-                        else:
-                            if _ld_suggestive:
-                                st.write(f"  {_model_name}: No SNPs with p < {_pipe_ld_sig_p:.1e} — skipping LD blocks.")
-                            else:
-                                st.write(f"  {_model_name}: No significant SNPs — skipping LD blocks.")
-                    except Exception as e:
-                        logging.exception("Pipeline LD detection failed for %s", _model_name)
-                        st.write(f"  {_model_name} LD detection skipped: {e}")
-
-                    # --- Haplotype testing ---
-                    if _m_ld_blocks is not None and not _m_ld_blocks.empty:
-                        try:
-                            _m_hap_gwas, _ = run_haplotype_block_gwas(
-                                haplo_df=_m_ld_blocks,
-                                chroms=chroms,
-                                positions=positions,
-                                geno_imputed=_geno_float,
-                                sid=sid,
-                                geno_df=geno_df,
-                                pheno_df=pheno_clean,
-                                trait_col=trait_col,
-                                pcs=_pcs_for["MLM"],
-                                n_perm=_pipe_hap_perms,
-                                n_pcs_used=_pipe_k_mlm,
-                            )
-                            if _m_hap_gwas is not None and not _m_hap_gwas.empty:
-                                _n_sig_hap = int((_m_hap_gwas.get("FDR_BH", pd.Series(dtype=float)) < 0.05).sum())
-                                st.write(
-                                    f"  {_model_name} haplotype: {_n_sig_hap} of "
-                                    f"{len(_m_hap_gwas)} blocks significant"
-                                )
-                            else:
-                                st.write(f"  {_model_name} haplotype: no results.")
-                        except Exception as e:
-                            logging.exception("Haplotype testing failed for %s", _model_name)
-                            st.write(f"  {_model_name} haplotype skipped: {e}")
-
-                    # --- Gene annotation ---
-                    if _m_ld_blocks is not None and not _m_ld_blocks.empty and _pipe_genes_df is not None:
-                        try:
-                            _m_ld_annotated = annotate_ld_blocks(
-                                _m_ld_blocks, _pipe_genes_df,
-                                n_flank=2, max_flank_dist_bp=500_000,
-                            )
-                        except Exception as e:
-                            logging.exception("Gene annotation failed for %s", _model_name)
-                            st.write(f"  {_model_name} annotation skipped: {e}")
-
-                    # --- Consolidate LD blocks + annotation + haplotype into one table ---
-                    if _m_ld_blocks is not None and not _m_ld_blocks.empty:
-                        try:
-                            _m_consolidated = consolidate_ld_block_table(
-                                _m_ld_blocks, _m_hap_gwas, _m_ld_annotated,
-                            )
-                            if _m_consolidated is not None and not _m_consolidated.empty:
-                                _pipe_extra_tables[f"LD_blocks_annotated_{_model_name}.csv"] = _m_consolidated
-
-                                # --- LD block summary narrative ---
-                                if _model_name == "MLM":
-                                    try:
-                                        _nar_n = len(_m_consolidated)
-                                        _nar_chrs = sorted(_m_consolidated["Chr"].astype(str).unique())
-                                        _nar_chr_str = ", ".join(_nar_chrs)
-                                        _nar_parts = [
-                                            f"**{_nar_n} LD block(s)** detected on chromosome(s) {_nar_chr_str}."
-                                        ]
-                                        if "Hap_eta2" in _m_consolidated.columns:
-                                            _lead_idx = _m_consolidated["Hap_eta2"].idxmax()
-                                            _lead = _m_consolidated.loc[_lead_idx]
-                                            _l_start = int(_lead.get("Start (bp)", 0)) / 1e6
-                                            _l_end = int(_lead.get("End (bp)", 0)) / 1e6
-                                            _l_eta = float(_lead["Hap_eta2"]) * 100
-                                            _l_chr = _lead["Chr"]
-                                            _nar_parts.append(
-                                                f"The lead block (Chr{_l_chr}: {_l_start:.2f}\u2013{_l_end:.2f} Mb) "
-                                                f"explains {_l_eta:.1f}% of phenotypic variance."
-                                            )
-                                        if "overlapping_genes" in _m_consolidated.columns:
-                                            _n_genes = sum(
-                                                len([g for g in str(v).split(";") if g.strip() and g.strip() != "nan"])
-                                                for v in _m_consolidated["overlapping_genes"]
-                                                if pd.notna(v)
-                                            )
-                                            if _n_genes:
-                                                _nar_parts.append(f"{_n_genes} annotated gene(s) overlap these blocks.")
-                                        st.info(" ".join(_nar_parts))
-                                    except Exception:
-                                        pass  # narrative is best-effort
-                        except Exception:
-                            logging.exception("LD block consolidation failed for %s", _model_name)
-
-                    # --- LD heatmaps for significant blocks (deduplicated across models) ---
-                    if _m_ld_blocks is not None and not _m_ld_blocks.empty:
-                        try:
-                            import seaborn as sns
-                            _m_sig_snps_set = set(_model_df.loc[_model_df[_sig_col], "SNP"].astype(str))
-                            _sig_blocks = []
-                            for _, _blk in _m_ld_blocks.iterrows():
-                                _lead_snps = str(_blk.get("Lead SNP", "")).split(";")
-                                if any(s.strip() in _m_sig_snps_set for s in _lead_snps):
-                                    _sig_blocks.append(_blk)
-                            _sig_blocks_df = pd.DataFrame(_sig_blocks) if _sig_blocks else pd.DataFrame()
-
-                            if not _sig_blocks_df.empty:
-                                _n_heatmaps = 0
-                                for _bi, _brow in _sig_blocks_df.iterrows():
-                                    _bchr = canon_chr(str(_brow["Chr"]))
-                                    _bstart = int(_brow.get("Start (bp)", _brow.get("Start", 0)))
-                                    _bend = int(_brow.get("End (bp)", _brow.get("End", 0)))
-                                    _block_key = (_bchr, _bstart, _bend)
-                                    if _block_key in _heatmap_blocks_done:
-                                        continue
-                                    _heatmap_blocks_done.add(_block_key)
-                                    _in_block = (
-                                        (_chr_arr == _bchr)
-                                        & (_pos_arr >= _bstart)
-                                        & (_pos_arr <= _bend)
-                                    )
-                                    _block_idx = np.where(_in_block)[0]
-                                    if len(_block_idx) < 2:
-                                        continue
-                                    _block_geno = _geno_float[:, _block_idx]
-                                    _block_r2 = ld.pairwise_r2(_block_geno)
-                                    _block_snp_labels = [
-                                        f"{_chr_arr[i]}_{_pos_arr[i]}" for i in _block_idx
+                                _fig_pc, _ax_pc = plt.subplots(figsize=(6, 3.5))
+                                _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_MLM"],
+                                            "o-", color="#0072B2", label="MLM")
+                                if "lambda_gc_MLMM" in _pipe_pc_df.columns:
+                                    _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_MLMM"],
+                                                "^-", color="#009E73", label="MLMM")
+                                if "lambda_gc_FarmCPU" in _pipe_pc_df.columns:
+                                    _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_FarmCPU"],
+                                                "s-", color="#D55E00", label="FarmCPU")
+                                _ax_pc.axhline(1.0, ls="--", color="#999", alpha=0.7)
+                                # Mark per-model best PC counts
+                                _ax_pc.axvline(_pipe_k_mlm, ls=":", color="#0072B2", alpha=0.6, lw=1.5,
+                                               label=f"MLM best: {_pipe_k_mlm}")
+                                _mlm_lam_at_best = _pipe_pc_df.loc[
+                                    _pipe_pc_df["n_pcs"] == _pipe_k_mlm, "lambda_gc_MLM"
+                                ]
+                                if not _mlm_lam_at_best.empty:
+                                    _ax_pc.plot(_pipe_k_mlm, float(_mlm_lam_at_best.iloc[0]),
+                                                "*", color="#0072B2", ms=14, zorder=5)
+                                if ("MLMM (iterative cofactors)" in _pipe_models
+                                        and _pipe_k_mlmm != _pipe_k_mlm):
+                                    _ax_pc.axvline(_pipe_k_mlmm, ls=":", color="#009E73", alpha=0.6, lw=1.5,
+                                                   label=f"MLMM best: {_pipe_k_mlmm}")
+                                if "lambda_gc_MLMM" in _pipe_pc_df.columns:
+                                    _mlmm_lam_at_best = _pipe_pc_df.loc[
+                                        _pipe_pc_df["n_pcs"] == _pipe_k_mlmm, "lambda_gc_MLMM"
                                     ]
-                                    _fig_hm, _ax_hm = plt.subplots(
-                                        figsize=(max(4, len(_block_idx) * 0.3 + 1),
-                                                 max(3, len(_block_idx) * 0.25 + 1))
-                                    )
-                                    _mask_upper = np.triu(np.ones_like(_block_r2, dtype=bool))
-                                    sns.heatmap(
-                                        _block_r2, mask=_mask_upper,
-                                        cmap="YlOrBr", vmin=0, vmax=1,
-                                        square=True, linewidths=0.5,
-                                        xticklabels=_block_snp_labels,
-                                        yticklabels=_block_snp_labels,
-                                        cbar_kws={"label": "r²"},
-                                        ax=_ax_hm,
-                                    )
-                                    _ax_hm.set_title(
-                                        f"LD heatmap: Chr{_bchr} {_bstart:,}–{_bend:,}",
-                                        fontsize=10,
-                                    )
-                                    _ax_hm.tick_params(labelsize=8)
-                                    _fig_hm.tight_layout()
-                                    _pipe_figures[f"LD_heatmap_Chr{_bchr}_{_bstart}_{_bend}.png"] = _fig_hm
-                                    _n_heatmaps += 1
-                                    plt.close(_fig_hm)
-                                if _n_heatmaps:
-                                    st.write(f"  {_n_heatmaps} LD heatmaps generated.")
-                        except Exception as e:
-                            logging.exception("LD heatmap generation failed for %s", _model_name)
-                            st.write(f"  LD heatmaps skipped: {e}")
+                                    if (not _mlmm_lam_at_best.empty
+                                            and np.isfinite(float(_mlmm_lam_at_best.iloc[0]))):
+                                        _ax_pc.plot(_pipe_k_mlmm, float(_mlmm_lam_at_best.iloc[0]),
+                                                    "*", color="#009E73", ms=14, zorder=5)
+                                if "FarmCPU (multi-locus)" in _pipe_models and _pipe_k_fc != _pipe_k_mlm:
+                                    _ax_pc.axvline(_pipe_k_fc, ls=":", color="#D55E00", alpha=0.6, lw=1.5,
+                                                   label=f"FarmCPU best: {_pipe_k_fc}")
+                                if "lambda_gc_FarmCPU" in _pipe_pc_df.columns:
+                                    _fc_lam_at_best = _pipe_pc_df.loc[
+                                        _pipe_pc_df["n_pcs"] == _pipe_k_fc, "lambda_gc_FarmCPU"
+                                    ]
+                                    if not _fc_lam_at_best.empty and np.isfinite(float(_fc_lam_at_best.iloc[0])):
+                                        _ax_pc.plot(_pipe_k_fc, float(_fc_lam_at_best.iloc[0]),
+                                                    "*", color="#D55E00", ms=14, zorder=5)
+                                _ax_pc.legend(fontsize=8)
+                                _ax_pc.set_xlabel("Number of PCs")
+                                _ax_pc.set_ylabel("\u03bbGC")
+                                _ax_pc.set_title("PC Selection: \u03bbGC by PC Count (per model)")
+                                _fig_pc.tight_layout()
+                                _pipe_figures["PC_selection_lambda.png"] = _fig_pc
+                                plt.close(_fig_pc)
+                            except Exception:
+                                logging.exception("PC selection lambda figure failed")
+                    else:
+                        st.write("Skipping PC scan (no PCs available).")
 
-                    # Track MLM results for report backward compat
-                    if _model_name == "MLM":
-                        _pipe_ld_blocks_mlm = _m_ld_blocks
-                        _pipe_ld_annotated_mlm = _m_consolidated if _m_consolidated is not None else _m_ld_annotated
-                        _pipe_hap_gwas_mlm = _m_hap_gwas
+                    # Build per-model PC matrices
+                    def _slice_pcs(k):
+                        if pcs_full_arr is None or k <= 0:
+                            return None
+                        k = min(k, _max_avail)
+                        return pcs_full_arr[:, :k]
 
-                    # Collect per-model post-GWAS for report
-                    _per_model_post[_model_name] = {
-                        "ld_blocks_annotated_df": _m_consolidated if _m_consolidated is not None else _m_ld_annotated,
-                        "haplotype_gwas_df": _m_hap_gwas,
+                    _pcs_for = {
+                        "MLM": _slice_pcs(_pipe_k_mlm),
+                        "MLMM": _slice_pcs(_pipe_k_mlmm),
+                        "FarmCPU": _slice_pcs(_pipe_k_fc),
                     }
 
-                _step += 1
+                    _step = 2
 
-                # Expose pipeline tables to session state (used by VNN LD-informed masks)
-                st.session_state["_pipe_extra_tables"] = _pipe_extra_tables
+                    # Build pipeline-specific kinship kernels respecting the
+                    # local LOCO toggle. K_by_chr from session state was built
+                    # using the sidebar `use_loco`, so we may need to adjust it.
+                    if _pipe_use_loco == use_loco:
+                        _pipe_K_by_chr = K_by_chr
+                    elif _pipe_use_loco:
+                        # Sidebar had LOCO off but pipeline wants it on:
+                        # rebuild real LOCO kernels from scratch.
+                        from gwas.kinship import _build_loco_kernels_impl
+                        _, _pipe_K_by_chr, _ = _build_loco_kernels_impl(
+                            iid=iid, Z_grm=st.session_state["Z_grm"],
+                            chroms_grm=st.session_state["chroms_grm"], K_base=K,
+                        )
+                    else:
+                        # Sidebar had LOCO on but pipeline wants whole-genome:
+                        # override per-chromosome kernels with K0.
+                        _pipe_K_by_chr = {ch: K0 for ch in K_by_chr}
 
-                # --- Optional subsampling stability screening ---
-                if _pipe_run_subsampling:
-                    _status.update(label=f"Step {_step}: Subsampling GWAS resampling...")
-                    st.write("**Subsampling GWAS stability screening (MLM + GRM recomputation)**")
+                    # --- Step 2: Core MLM GWAS ---
+                    _status.update(label=f"Step {_step}: Running MLM GWAS...")
                     try:
-                        import os as _os_boot
-                        from gwas.subsampling import (
-                            subsample_gwas_resampling,
-                            aggregate_subsampling_to_ld_blocks,
+                        _pipe_gwas = run_gwas_cached(
+                            geno_imputed=geno_key, y=y,
+                            pcs_full=pcs_full_arr, n_pcs=_pipe_k_mlm,
+                            sid=sid, positions=positions, chroms=chroms,
+                            chroms_num=chroms_num, iid=iid,
+                            _K0=K0, _K_by_chr=_pipe_K_by_chr,
+                            _pheno_reader_key=pheno_reader_key,
+                            trait_name=trait_col,
                         )
-
-                        _boot_n_jobs = min(4, _os_boot.cpu_count() or 1)
-
-                        _Z_grm_boot = st.session_state.get("Z_grm", None)
-                        if _Z_grm_boot is None:
-                            raise RuntimeError("Z_grm not in session state")
-
-                        _Z_grm_boot = np.asarray(_Z_grm_boot, dtype=np.float32)
-                        if _Z_grm_boot.shape[0] != geno_imputed.shape[0]:
-                            raise RuntimeError(
-                                f"Z_grm rows ({_Z_grm_boot.shape[0]}) != "
-                                f"genotype rows ({geno_imputed.shape[0]})"
+                        _pipe_lam = compute_lambda_gc(_pipe_gwas["PValue"].values)
+                    except np.linalg.LinAlgError:
+                        logging.exception("Core MLM GWAS failed (singular matrix)")
+                        st.error(
+                            "MLM GWAS failed: kinship matrix is singular. "
+                            "Try fewer PCs, relax QC thresholds to retain more SNPs, "
+                            "or disable LOCO kinship."
+                        )
+                        st.stop()
+                    except ValueError as e:
+                        logging.exception("Core MLM GWAS failed (value error)")
+                        _emsg = str(e).lower()
+                        if "overlap" in _emsg or "sample" in _emsg:
+                            st.error(
+                                "MLM GWAS failed: sample IDs in VCF and phenotype file "
+                                "do not match. Check that accession naming conventions "
+                                "are consistent between files."
                             )
-
-                        _boot_parallel = _boot_n_jobs > 1
-                        if _boot_parallel:
-                            st.write(
-                                f"  Running {int(_pipe_boot_n_reps)} subsampling iterations "
-                                f"on {_boot_n_jobs} cores..."
-                            )
-                            _boot_cb = None
                         else:
-                            _boot_pbar = st.progress(0)
-                            def _boot_cb(rep, total):
-                                _boot_pbar.progress((rep + 1) / total)
+                            st.error(f"MLM GWAS failed: {e}")
+                        st.stop()
+                    except Exception as e:
+                        logging.exception("Core MLM GWAS failed")
+                        st.error(f"MLM GWAS failed: {e}")
+                        st.stop()
 
-                        _boot_disc_df, _boot_raw_pvals, _boot_meta = subsample_gwas_resampling(
-                            geno_imputed=geno_imputed,
-                            y=y,
-                            sid=sid,
-                            chroms=chroms,
-                            chroms_num=chroms_num,
-                            positions=positions,
-                            iid=iid,
-                            Z_for_grm=_Z_grm_boot,
-                            pcs_full=pcs_full_arr,
-                            n_pcs=_pipe_k_mlm,
-                            n_reps=int(_pipe_boot_n_reps),
-                            sample_frac=float(_pipe_boot_frac),
-                            discovery_thresh=float(_pipe_boot_thresh),
-                            seed=int(random_seed),
-                            progress_callback=_boot_cb,
-                            n_jobs=_boot_n_jobs,
-                            use_loco=_pipe_boot_loco,
-                            chroms_grm=st.session_state.get("chroms_grm") if _pipe_boot_loco else None,
+                    # OLS marginal effects
+                    try:
+                        _mlm_pcs = _pcs_for["MLM"]
+                        _pipe_covar = CovarData(iid=iid, val=_mlm_pcs) if _mlm_pcs is not None else None
+                        _pipe_gwas = add_ols_effects_to_gwas(
+                            _pipe_gwas, geno_imputed, y, _pipe_covar, sid,
                         )
+                        st.write("OLS effects added (Beta, SE, t-stat).")
+                    except Exception as e:
+                        logging.exception("Pipeline OLS effects failed")
+                        st.write(f"OLS effects skipped: {e}")
 
-                        if not _boot_parallel:
-                            _boot_pbar.empty()
+                    _pipe_gwas["-log10p"] = -np.log10(_pipe_gwas["PValue"].clip(1e-300))
 
-                        # Per-iteration diagnostics
-                        _boot_meta_df = pd.DataFrame(_boot_meta)
-                        _boot_n_ok = int((_boot_meta_df["status"] == "ok").sum())
+                    # FDR
+                    _rej, _fdr, _, _ = multipletests(_pipe_gwas["PValue"].values, method="fdr_bh")
+                    _pipe_gwas["FDR"] = _fdr
+                    _pipe_gwas["Significant_FDR"] = _rej
 
-                        st.write(
-                            f"  Subsampling complete: {_boot_n_ok}/{int(_pipe_boot_n_reps)} "
-                            f"successful iterations."
-                        )
-
-                        _boot_lam_vals = _boot_meta_df.loc[
-                            _boot_meta_df["status"] == "ok", "lambda_gc"
-                        ].dropna()
-                        if _boot_lam_vals.size > 0:
-                            st.write(
-                                f"  λGC across reps: "
-                                f"median={_boot_lam_vals.median():.3f}, "
-                                f"SD={_boot_lam_vals.std():.3f}"
-                            )
-
-                        # Add to ZIP tables
-                        _pipe_extra_tables["Subsampling_SNP_stability.csv"] = _boot_disc_df
-                        _pipe_extra_tables["Subsampling_rep_metadata.csv"] = _boot_meta_df
-
-                        # Discovery frequency histogram
+                    # M_eff (only when user selected LD-aware threshold)
+                    _pipe_meff = None
+                    _pipe_meff_thresh = None
+                    if _pipe_sig_rule.startswith("M_eff"):
                         try:
-                            from utils.pub_theme import PALETTE, SIG_LINE_COLOR, FIGSIZE
-                            _fig_bh, _ax_bh = plt.subplots(
-                                figsize=FIGSIZE.get("histogram", (7, 4))
+                            _pipe_meff, _ = compute_meff_li_ji(geno_imputed)
+                            _pipe_meff_thresh = 0.05 / _pipe_meff
+                            st.session_state["meff_val"] = _pipe_meff
+                            st.write(
+                                f"M_eff = {_pipe_meff:,} independent tests "
+                                f"(of {len(_pipe_gwas):,} SNPs)"
                             )
-                            _freq_vals = _boot_disc_df["DiscoveryFreq"].values
-                            _ax_bh.hist(
-                                _freq_vals[_freq_vals > 0], bins=30,
-                                edgecolor="white", linewidth=0.5,
-                                color=PALETTE["blue"],
-                            )
-                            _ax_bh.set_xlabel("Discovery frequency")
-                            _ax_bh.set_ylabel("Number of SNPs")
-                            _ax_bh.set_title(
-                                f"Subsampling GWAS: SNP discovery frequency — {trait_col}"
-                            )
-                            _ax_bh.axvline(
-                                0.5, color=SIG_LINE_COLOR, linestyle="--",
-                                label="50% threshold",
-                            )
-                            _ax_bh.legend()
-                            plt.tight_layout()
-                            _pipe_figures[
-                                f"Subsampling_discovery_freq_{trait_col}.png"
-                            ] = _fig_bh
-                            plt.close(_fig_bh)
                         except Exception:
-                            logging.exception("Subsampling histogram failed")
+                            logging.exception("M_eff computation failed in pipeline")
+                            st.warning("M_eff computation failed — falling back to Bonferroni.")
+                            # leave _pipe_meff = None, _pipe_meff_thresh = None
 
-                        # LD block aggregation (MLM blocks only)
-                        if _pipe_ld_blocks_mlm is not None and not _pipe_ld_blocks_mlm.empty:
-                            try:
-                                _boot_block_stab = aggregate_subsampling_to_ld_blocks(
-                                    discovery_df=_boot_disc_df,
-                                    ld_blocks_df=_pipe_ld_blocks_mlm,
-                                    raw_pvals=_boot_raw_pvals,
-                                    sid=sid,
-                                    chroms=chroms,
-                                    positions=positions,
-                                    discovery_thresh=float(_pipe_boot_thresh),
-                                )
-                                if not _boot_block_stab.empty:
-                                    _pipe_extra_tables[
-                                        "Subsampling_block_stability.csv"
-                                    ] = _boot_block_stab
-                                    _n_stable = int(
-                                        (_boot_block_stab["BlockDiscoveryFreq"] >= 0.5).sum()
-                                    )
-                                    st.write(
-                                        f"  Block stability: {_n_stable}/"
-                                        f"{len(_boot_block_stab)} blocks with "
-                                        f"BlockDiscoveryFreq ≥ 0.5"
-                                    )
-                                    st.session_state[
-                                        "subsampling_block_stability"
-                                    ] = _boot_block_stab
-                            except Exception:
-                                logging.exception("Subsampling block aggregation failed")
-                                st.write("  Block aggregation skipped (error).")
+                    # Derive threshold variables from user's significance rule
+                    _n_tested = len(_pipe_gwas)
+                    if _pipe_sig_rule.startswith("M_eff"):
+                        if _pipe_meff_thresh is not None:
+                            _pipe_sig_thresh = _pipe_meff_thresh
+                            _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
+                            _pipe_sig_label = f"M_eff (M={_pipe_meff:,})"
                         else:
-                            st.write("  No MLM LD blocks — skipping block aggregation.")
+                            # M_eff failed — fall back to Bonferroni
+                            _pipe_sig_thresh = 0.05 / max(_n_tested, 1)
+                            _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
+                            _pipe_sig_label = "Bonferroni (M_eff unavailable)"
+                    elif _pipe_sig_rule.startswith("Bonferroni"):
+                        _pipe_sig_thresh = 0.05 / max(_n_tested, 1)
+                        _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
+                        _pipe_sig_label = "Bonferroni"
+                    else:  # FDR
+                        _pipe_sig_thresh = 0.05 / max(_n_tested, 1)  # fallback when FDR column missing
+                        _pipe_sig_lod = None
+                        _pipe_sig_label = "FDR q<0.05"
 
-                        # Store in session state for downstream use
-                        st.session_state["subsampling_gwas_summary"] = {
-                            "n_reps": int(_pipe_boot_n_reps),
-                            "n_successful": _boot_n_ok,
-                            "sample_frac": float(_pipe_boot_frac),
-                            "discovery_thresh": float(_pipe_boot_thresh),
-                            "seed": int(random_seed),
-                            "n_snps_freq_gt_50pct": int(
-                                (_boot_disc_df["DiscoveryFreq"] > 0.5).sum()
-                            ),
-                            "n_snps_freq_gt_80pct": int(
-                                (_boot_disc_df["DiscoveryFreq"] > 0.8).sum()
-                            ),
-                            "lambda_gc_median": (
-                                float(_boot_lam_vals.median())
-                                if _boot_lam_vals.size > 0
-                                else None
-                            ),
-                        }
+                    # Optional secondary threshold (Bonferroni AND M_eff
+                    # shown together) — informational only, does not change
+                    # which SNPs are amplified.
+                    _pipe_secondary_lod = None
+                    _pipe_secondary_label = None
+                    if _pipe_show_secondary_threshold:
+                        if _pipe_sig_rule.startswith("Bonferroni"):
+                            # Primary = Bonferroni → secondary = M_eff
+                            if _pipe_meff is None:
+                                try:
+                                    _pipe_meff, _ = compute_meff_li_ji(geno_imputed)
+                                    st.session_state["meff_val"] = _pipe_meff
+                                except Exception:
+                                    logging.exception("M_eff computation failed for secondary threshold")
+                                    _pipe_meff = None
+                            if _pipe_meff is not None and _pipe_meff > 0:
+                                _pipe_secondary_lod = -np.log10(0.05 / _pipe_meff)
+                                _pipe_secondary_label = f"M_eff (M={int(_pipe_meff):,})"
+                        elif _pipe_sig_rule.startswith("M_eff"):
+                            # Primary = M_eff → secondary = Bonferroni
+                            _pipe_secondary_lod = -np.log10(0.05 / max(_n_tested, 1))
+                            _pipe_secondary_label = "Bonferroni α=0.05"
+                        # FDR primary: skip — FDR isn't a single −log10p line
 
-                        # Store subsampling cache in session state
-                        st.session_state["boot_gwas_cache_pipeline"] = {
-                            "disc_df": _boot_disc_df,
-                            "raw_pvals": _boot_raw_pvals,
-                            "meta": _boot_meta,
-                        }
+                    # Add significance columns for available threshold types
+                    _pipe_gwas["Significant_Bonf"] = _pipe_gwas["PValue"] < (0.05 / max(_n_tested, 1))
+                    if _pipe_meff_thresh is not None:
+                        _pipe_gwas["Significant_Meff"] = _pipe_gwas["PValue"] < _pipe_meff_thresh
 
-                        _pipe_boot_disc_df = _boot_disc_df
+                    # Column name for the user's chosen significance rule
+                    if _pipe_sig_rule.startswith("M_eff") and _pipe_meff_thresh is not None:
+                        _sig_col = "Significant_Meff"
+                    elif _pipe_sig_rule.startswith("Bonferroni"):
+                        _sig_col = "Significant_Bonf"
+                    else:
+                        _sig_col = "Significant_FDR"
 
-                    except Exception as _boot_err:
-                        logging.exception("Pipeline subsampling GWAS failed")
-                        st.write(f"  Subsampling skipped: {_boot_err}")
+                    # Display key metrics
+                    if _pipe_meff is not None:
+                        _m1, _m2, _m3, _m4 = st.columns(4)
+                        _m4.metric("M_eff", f"{_pipe_meff:,}")
+                    else:
+                        _m1, _m2, _m3 = st.columns(3)
+                    _m1.metric("λGC", f"{_pipe_lam:.3f}")
+                    _m2.metric(f"Significant ({_pipe_sig_label})", int(_pipe_gwas[_sig_col].sum()))
+                    _m3.metric("SNPs tested", f"{len(_pipe_gwas):,}")
+
+                    # Manhattan + QQ figures
+                    try:
+                        _cumpos_df, _tick_pos, _tick_lab = compute_cumulative_positions(_pipe_gwas)
+                        _fig_man = plot_manhattan_static(
+                            _cumpos_df, active_lod=_pipe_sig_lod,
+                            active_label=_pipe_sig_label,
+                            title=f"Manhattan — {trait_col} (MLM)",
+                            secondary_lod=_pipe_secondary_lod,
+                            secondary_label=_pipe_secondary_label,
+                        )
+                        plt.figure(_fig_man.number)
+                        plt.xticks(_tick_pos, _tick_lab, fontsize=8)
+                        _pipe_figures[f"Manhattan_{trait_col}_MLM.png"] = _fig_man
+                        plt.close(_fig_man)
+
+                        # Interactive Manhattan for ZIP export
+                        try:
+                            _fig_man_int = plot_manhattan_interactive(
+                                _cumpos_df, active_lod=_pipe_sig_lod,
+                                active_label=_pipe_sig_label,
+                                title=f"Interactive Manhattan — {trait_col} (MLM)",
+                                secondary_lod=_pipe_secondary_lod,
+                                secondary_label=_pipe_secondary_label,
+                            )
+                            _fig_man_int.update_layout(
+                                xaxis=dict(tickmode="array", tickvals=_tick_pos, ticktext=_tick_lab),
+                                height=500,
+                            )
+                            _pipe_figures[f"Interactive_Manhattan_{trait_col}_MLM.html"] = (
+                                _fig_man_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
+                            )
+                        except Exception:
+                            logging.exception("Pipeline MLM interactive Manhattan failed")
+
+                        _fig_qq = plot_qq(_pipe_gwas["PValue"].values, lambda_gc_used=_pipe_lam)
+                        _pipe_figures[f"QQ_{trait_col}_MLM.png"] = _fig_qq
+                        plt.close(_fig_qq)
+
+                        # PCA scatter plot (population structure)
+                        if pcs_full_arr is not None and _pipe_k_mlm >= 2:
+                            from gwas.plotting import plot_pca_scatter, plot_pca_scree
+                            _fig_pca = plot_pca_scatter(
+                                pcs_full_arr[:, :_pipe_k_mlm],
+                                y=y.ravel(),
+                                title=f"PCA — {trait_col}",
+                                eigenvalues=pca_eigenvalues,
+                            )
+                            _pipe_figures[f"PCA_{trait_col}.png"] = _fig_pca
+                            plt.close(_fig_pca)
+                            # Scree plot
+                            if pca_eigenvalues is not None:
+                                _fig_scree = plot_pca_scree(
+                                    pca_eigenvalues, n_pcs_used=_pipe_k_mlm,
+                                    title=f"PCA Scree — {trait_col}",
+                                )
+                                _pipe_figures[f"PCA_scree_{trait_col}.png"] = _fig_scree
+                                plt.close(_fig_scree)
+                    except Exception:
+                        logging.exception("Pipeline figure generation failed")
                     _step += 1
 
-                # --- Step N: Generate report ---
-                _status.update(label=f"Step {_step}: Generating report...")
-                _pipe_meta = {
-                    "Run date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Pipeline": "One-Click Full Analysis",
-                    "Trait": trait_col,
-                    "PCs_MLM": _pipe_k_mlm,
-                    "PCs_MLMM": _pipe_k_mlmm if "MLMM (iterative cofactors)" in _pipe_models else "N/A",
-                    "PCs_FarmCPU": _pipe_k_fc if "FarmCPU (multi-locus)" in _pipe_models else "N/A",
-                    "Lambda_GC": round(_pipe_lam, 3),
-                    "Samples": int(geno_df.shape[0]),
-                    "SNPs": int(geno_df.shape[1]),
-                    "Models": ", ".join(["MLM (FaST-MLM)"] + list(_pipe_models)),
-                    "Significance_rule": _pipe_sig_rule,
-                    "M_eff": int(_pipe_meff) if _pipe_meff is not None else "N/A",
-                    "M_eff_threshold": f"{_pipe_meff_thresh:.2e}" if _pipe_meff_thresh is not None else "N/A",
-                    "LD_decay_kb": round(_pipe_ld_decay_kb, 1) if _pipe_ld_decay_kb else "N/A",
-                    "LD_flank_kb": _pipe_ld_flank,
-                    **{f"LD_blocks_{mn}": len(tb) if tb is not None else 0
-                       for mn, tb in [(mn, _pipe_extra_tables.get(f"LD_blocks_annotated_{mn}.csv"))
-                                      for mn, _ in _post_gwas_models]},
-                    **({f"Subsampling_{k}": v
-                        for k, v in st.session_state["subsampling_gwas_summary"].items()}
-                       if "subsampling_gwas_summary" in st.session_state else {}),
-                }
-                try:
-                    _pipe_report_html = _gen_report(
-                        trait_col=trait_col,
-                        qc_snp=results.get("qc_snp"),
-                        gwas_df=_pipe_gwas,
-                        figures={k: v for k, v in _pipe_figures.items() if not k.startswith("LD_heatmap")},
-                        metadata=_pipe_meta,
-                        mlmm_df=_pipe_extra_dfs.get("MLMM"),
-                        farmcpu_df=_pipe_extra_dfs.get("FarmCPU"),
-                        ld_blocks_df=_pipe_ld_blocks_mlm,
-                        lambda_gc=_pipe_lam,
-                        n_samples=int(geno_df.shape[0]),
-                        n_snps=int(geno_df.shape[1]),
-                        info_field=results.get("info_field"),
-                        pc_selection_df=_pipe_pc_df,
-                        ld_blocks_annotated_df=_pipe_ld_annotated_mlm,
-                        haplotype_gwas_df=_pipe_hap_gwas_mlm,
-                        per_model_post_gwas=_per_model_post,
-                        sig_label=_pipe_sig_label,
-                        n_significant_override=int(_pipe_gwas[_sig_col].sum()),
-                    )
-                except Exception as e:
-                    logging.exception("Report generation failed")
-                    st.warning(f"HTML report generation failed: {e}")
-                    _pipe_report_html = None
-                _step += 1
+                    # --- Step N: Multi-model (if selected) ---
+                    if "MLMM (iterative cofactors)" in _pipe_models:
+                        _status.update(label=f"Step {_step}: Running MLMM...")
+                        try:
+                            _pr_key = put_object_in_session(
+                                PhenoData(iid=iid, val=y),
+                                "PHENO_READER", vcf_hash, pheno_hash, trait_col,
+                            )
+                            _mlmm_pcs = _pcs_for["MLMM"]
+                            _cr = CovarData(iid=iid, val=_mlmm_pcs) if _mlmm_pcs is not None else None
+                            _cr_key = put_object_in_session(
+                                _cr, "COVAR_READER", vcf_hash, pheno_hash,
+                            ) if _cr is not None else None
+                            _mlmm_df, _cof_tbl = run_mlmm_core_cached(
+                                geno_key=geno_key, y_key=y_key,
+                                iid=iid, sid=sid, chroms=chroms,
+                                chroms_num=chroms_num, positions=positions,
+                                K0_key=K0_key, pheno_reader_key=_pr_key,
+                                covar_reader_key=_cr_key, gwas_df_mlm=_pipe_gwas,
+                                p_enter=_pipe_mlmm_p, max_cof=_pipe_mlmm_max_cof, window_kb=250,
+                            )
+                            _mlmm_df["PValue"] = _mlmm_df["PValue"].astype(float)
+                            _rej_m, _fdr_m, _, _ = multipletests(
+                                _mlmm_df["PValue"].clip(lower=1e-300).values, method="fdr_bh"
+                            )
+                            _mlmm_df["-log10p"] = -np.log10(_mlmm_df["PValue"].clip(lower=1e-300))
+                            _mlmm_df["FDR"] = _fdr_m
+                            _mlmm_df["Significant_FDR"] = _rej_m
+                            _mlmm_df["Significant_Bonf"] = _mlmm_df["PValue"] < (0.05 / max(len(_mlmm_df), 1))
+                            if _pipe_meff_thresh is not None:
+                                _mlmm_df["Significant_Meff"] = _mlmm_df["PValue"] < _pipe_meff_thresh
+                            _pipe_extra_dfs["MLMM"] = _mlmm_df
+                            st.write(f"MLMM complete — {int(_rej_m.sum())} significant SNPs")
+                            # Manhattan + QQ for MLMM
+                            try:
+                                _cumpos_m, _tp_m, _tl_m = compute_cumulative_positions(_mlmm_df)
+                                _lam_m = compute_lambda_gc(_mlmm_df["PValue"].values)
+                                _fig_man_m = plot_manhattan_static(
+                                    _cumpos_m, active_lod=_pipe_sig_lod,
+                                    active_label=_pipe_sig_label, title=f"Manhattan — {trait_col} (MLMM)",
+                                    secondary_lod=_pipe_secondary_lod,
+                                    secondary_label=_pipe_secondary_label,
+                                )
+                                plt.figure(_fig_man_m.number)
+                                plt.xticks(_tp_m, _tl_m, fontsize=8)
+                                _pipe_figures[f"Manhattan_{trait_col}_MLMM.png"] = _fig_man_m
+                                plt.close(_fig_man_m)
+                                # Interactive Manhattan for ZIP export
+                                try:
+                                    _fig_man_m_int = plot_manhattan_interactive(
+                                        _cumpos_m, active_lod=_pipe_sig_lod,
+                                        active_label=_pipe_sig_label,
+                                        title=f"Interactive Manhattan — {trait_col} (MLMM)",
+                                        secondary_lod=_pipe_secondary_lod,
+                                        secondary_label=_pipe_secondary_label,
+                                    )
+                                    _fig_man_m_int.update_layout(
+                                        xaxis=dict(tickmode="array", tickvals=_tp_m, ticktext=_tl_m),
+                                        height=500,
+                                    )
+                                    _pipe_figures[f"Interactive_Manhattan_{trait_col}_MLMM.html"] = (
+                                        _fig_man_m_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
+                                    )
+                                except Exception:
+                                    logging.exception("Pipeline MLMM interactive Manhattan failed")
+                                _fig_qq_m = plot_qq(_mlmm_df["PValue"].values, lambda_gc_used=_lam_m)
+                                _pipe_figures[f"QQ_{trait_col}_MLMM.png"] = _fig_qq_m
+                                plt.close(_fig_qq_m)
+                            except Exception:
+                                logging.exception("MLMM figure generation failed")
+                        except Exception as e:
+                            logging.exception("Pipeline MLMM failed")
+                            st.write(f"MLMM skipped: {e}")
+                        _step += 1
 
-                # --- Step N+1: Build ZIP ---
-                _status.update(label=f"Step {_step}: Building ZIP...")
-                try:
-                    _pipe_zip_name, _pipe_zip_buf = _build_gwas_results_zip(
-                        trait_col=trait_col,
-                        gwas_df=_pipe_gwas,
-                        figures_dict=_pipe_figures,
-                        pheno_label=st.session_state.get("pheno_file_label"),
-                        extra_model_dfs=_pipe_extra_dfs or None,
-                        extra_tables=_pipe_extra_tables or None,
-                        report_html=_pipe_report_html,
-                    )
-                    _pipe_zip_bytes = _pipe_zip_buf.getvalue()
-                    _pipe_zip_bytes = _append_metadata_to_zip(_pipe_zip_bytes, _pipe_meta)
-                except Exception as e:
-                    logging.exception("ZIP building failed")
-                    st.error(f"Failed to build results ZIP: {e}")
-                    st.stop()
+                    if "FarmCPU (multi-locus)" in _pipe_models:
+                        _status.update(label=f"Step {_step}: Running FarmCPU...")
+                        try:
+                            _fc_pcs = _pcs_for["FarmCPU"]
+                            _fc_df, _pqtn_tbl, _conv = run_farmcpu(
+                                geno_imputed=geno_imputed, sid=sid,
+                                chroms=chroms, chroms_num=chroms_num,
+                                positions=positions, iid=iid,
+                                pheno_reader=PhenoData(iid=iid, val=y),
+                                K0=K0,
+                                covar_reader=CovarData(iid=iid, val=_fc_pcs) if _fc_pcs is not None else None,
+                                p_threshold=_pipe_fc_p, max_iterations=_pipe_fc_max_iter,
+                                max_pseudo_qtns=_pipe_fc_max_pqtn,
+                                final_scan=_pipe_fc_final_scan,
+                                use_loco=_pipe_use_loco,
+                            )
+                            _fc_df["PValue"] = _fc_df["PValue"].astype(float)
+                            _rej_fc, _fdr_fc, _, _ = multipletests(
+                                _fc_df["PValue"].clip(lower=1e-300).values, method="fdr_bh"
+                            )
+                            _fc_df["-log10p"] = -np.log10(_fc_df["PValue"].clip(lower=1e-300))
+                            _fc_df["FDR"] = _fdr_fc
+                            _fc_df["Significant_FDR"] = _rej_fc
+                            _fc_df["Significant_Bonf"] = _fc_df["PValue"] < (0.05 / max(len(_fc_df), 1))
+                            if _pipe_meff_thresh is not None:
+                                _fc_df["Significant_Meff"] = _fc_df["PValue"] < _pipe_meff_thresh
+                            _pipe_extra_dfs["FarmCPU"] = _fc_df
+                            st.write(f"FarmCPU complete — {int(_rej_fc.sum())} significant SNPs")
+                            # Manhattan + QQ for FarmCPU
+                            try:
+                                _cumpos_fc, _tp_fc, _tl_fc = compute_cumulative_positions(_fc_df)
+                                _lam_fc = compute_lambda_gc(_fc_df["PValue"].values)
+                                _fig_man_fc = plot_manhattan_static(
+                                    _cumpos_fc, active_lod=_pipe_sig_lod,
+                                    active_label=_pipe_sig_label, title=f"Manhattan — {trait_col} (FarmCPU)",
+                                    secondary_lod=_pipe_secondary_lod,
+                                    secondary_label=_pipe_secondary_label,
+                                )
+                                plt.figure(_fig_man_fc.number)
+                                plt.xticks(_tp_fc, _tl_fc, fontsize=8)
+                                _pipe_figures[f"Manhattan_{trait_col}_FarmCPU.png"] = _fig_man_fc
+                                plt.close(_fig_man_fc)
+                                # Interactive Manhattan for ZIP export
+                                try:
+                                    _fig_man_fc_int = plot_manhattan_interactive(
+                                        _cumpos_fc, active_lod=_pipe_sig_lod,
+                                        active_label=_pipe_sig_label,
+                                        title=f"Interactive Manhattan — {trait_col} (FarmCPU)",
+                                        secondary_lod=_pipe_secondary_lod,
+                                        secondary_label=_pipe_secondary_label,
+                                    )
+                                    _fig_man_fc_int.update_layout(
+                                        xaxis=dict(tickmode="array", tickvals=_tp_fc, ticktext=_tl_fc),
+                                        height=500,
+                                    )
+                                    _pipe_figures[f"Interactive_Manhattan_{trait_col}_FarmCPU.html"] = (
+                                        _fig_man_fc_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
+                                    )
+                                except Exception:
+                                    logging.exception("Pipeline FarmCPU interactive Manhattan failed")
+                                _fig_qq_fc = plot_qq(_fc_df["PValue"].values, lambda_gc_used=_lam_fc)
+                                _pipe_figures[f"QQ_{trait_col}_FarmCPU.png"] = _fig_qq_fc
+                                plt.close(_fig_qq_fc)
+                            except Exception:
+                                logging.exception("FarmCPU figure generation failed")
+                        except Exception as e:
+                            logging.exception("Pipeline FarmCPU failed")
+                            st.write(f"FarmCPU skipped: {e}")
+                        _step += 1
+
+                    # --- Step N: Cross-model consensus ---
+                    _model_results = [("MLM", _pipe_gwas)]
+                    for _mname in ["MLMM", "FarmCPU"]:
+                        if _mname in _pipe_extra_dfs:
+                            _model_results.append((_mname, _pipe_extra_dfs[_mname]))
+
+                    if len(_model_results) >= 2:
+                        _status.update(label=f"Step {_step}: Cross-model consensus...")
+                        try:
+                            _sig_by_model = {}
+                            for _mname, _mdf in _model_results:
+                                if _pipe_sig_rule.startswith("FDR") and "FDR" in _mdf.columns:
+                                    _sig_by_model[_mname] = set(
+                                        _mdf.loc[_mdf["FDR"] < 0.05, "SNP"]
+                                    )
+                                else:
+                                    _sig_by_model[_mname] = set(
+                                        _mdf.loc[_mdf["PValue"] < _pipe_sig_thresh, "SNP"]
+                                    )
+                            _all_sig = set().union(*_sig_by_model.values())
+                            if _all_sig:
+                                _all_res = pd.concat(
+                                    [_df.assign(Model=_m) for _m, _df in _model_results],
+                                    ignore_index=True,
+                                )
+                                _consensus_rows = []
+                                for _snp in _all_sig:
+                                    _det = [m for m, s in _sig_by_model.items() if _snp in s]
+                                    _best = _all_res.loc[
+                                        _all_res["SNP"] == _snp
+                                    ].nsmallest(1, "PValue").iloc[0]
+                                    _crow = {
+                                        "SNP": _snp, "Chr": _best["Chr"],
+                                        "Pos": _best["Pos"],
+                                        "Best_PValue": _best["PValue"],
+                                        "Best_FDR": _best.get("FDR", np.nan),
+                                        "Significant_Bonf": bool(_best.get("Significant_Bonf", False)),
+                                        "Significant_FDR": bool(_best.get("Significant_FDR", False)),
+                                        "Detected_by": ", ".join(_det),
+                                        "N_models": len(_det),
+                                    }
+                                    if _pipe_meff_thresh is not None:
+                                        _crow["Significant_Meff"] = bool(_best.get("Significant_Meff", False))
+                                    _consensus_rows.append(_crow)
+                                _consensus_df = pd.DataFrame(_consensus_rows).sort_values(
+                                    ["N_models", "Best_PValue"], ascending=[False, True],
+                                )
+                                _n_high = int((_consensus_df["N_models"] >= 2).sum())
+                                st.write(
+                                    f"Cross-model consensus: {_n_high}/{len(_consensus_df)} "
+                                    f"SNPs detected by 2+ models ({_pipe_sig_label})"
+                                )
+                                _pipe_extra_tables["CrossModel_Consensus.csv"] = _consensus_df
+                            else:
+                                st.write(f"No SNPs reached significance ({_pipe_sig_label}) in any model.")
+                        except Exception as e:
+                            logging.exception("Pipeline consensus failed")
+                            st.write(f"Cross-model consensus skipped: {e}")
+                        _step += 1
+
+                    # --- Step N: LD decay (accurate per-chromosome computation) ---
+                    _pipe_ld_decay_kb = None
+
+                    if _pipe_ld_flank is None:  # Auto mode
+                        _status.update(label=f"Step {_step}: Computing LD decay (per-chromosome)...")
+                        try:
+                            _decay_df, _summary_df, _median_decay = _compute_ld_decay_for_gwas_page(
+                                geno_key=geno_key,
+                                chroms_tuple=tuple(np.asarray(chroms, dtype=str).tolist()),
+                                positions_tuple=tuple(int(p) for p in positions),
+                            )
+                            if _median_decay is not None:
+                                _pipe_ld_decay_kb = float(_median_decay)
+                                _pipe_ld_flank = int(2 * _pipe_ld_decay_kb)
+                                # Publish to session_state so LD Analysis page shows
+                                # the accurate value (and the "from Decay tab" label).
+                                st.session_state["ld_decay_df"] = _decay_df
+                                st.session_state["ld_decay_summary"] = _summary_df
+                                st.session_state["ld_decay_kb"] = _pipe_ld_decay_kb
+                                st.session_state["ld_decay_computed"] = True
+                                st.write(
+                                    f"LD decay (r² ≤ 0.2) ≈ {_pipe_ld_decay_kb:.0f} kb "
+                                    f"→ flank = {_pipe_ld_flank} kb"
+                                )
+                            else:
+                                _pipe_ld_flank = 300
+                                st.write("Could not compute LD decay — using 300 kb flank")
+                        except Exception as e:
+                            logging.exception("Pipeline LD decay computation failed")
+                            _pipe_ld_flank = 300
+                            st.write(f"LD decay computation failed: {e} — using 300 kb flank")
+                        _step += 1
+
+                    # --- Load gene model + KEGG mapping once (shared across models) ---
+                    _pipe_sp_auto = _PIPE_SP.get(_pipe_species, {})
+                    if _pipe_genome_build and f"gene_model_{_pipe_genome_build}" in _pipe_sp_auto:
+                        _pipe_gm_path = _pipe_sp_auto[f"gene_model_{_pipe_genome_build}"]
+                        _pipe_desc_path = _pipe_sp_auto.get(f"gene_desc_{_pipe_genome_build}")
+                    else:
+                        _pipe_gm_path = _pipe_sp_auto.get("gene_model")
+                        _pipe_desc_path = _pipe_sp_auto.get("gene_desc")
+
+                    # User-uploaded overrides (apply for any species, including "Other")
+                    import tempfile as _tempfile
+                    from pathlib import Path as _PipePath
+                    _pipe_gm_up = st.session_state.get("pipe_gene_model_override")
+                    _pipe_desc_up = st.session_state.get("pipe_gene_desc_override")
+                    if _pipe_gm_up is not None:
+                        _gm_tmp = os.path.join(_tempfile.gettempdir(), "trace_pipe_gene_model.csv")
+                        with open(_gm_tmp, "wb") as _f:
+                            _f.write(_pipe_gm_up.getbuffer())
+                        _pipe_gm_path = _PipePath(_gm_tmp)
+                    if _pipe_desc_up is not None:
+                        _desc_tmp = os.path.join(_tempfile.gettempdir(), "trace_pipe_gene_desc.txt")
+                        with open(_desc_tmp, "wb") as _f:
+                            _f.write(_pipe_desc_up.getbuffer())
+                        _pipe_desc_path = _PipePath(_desc_tmp)
+
+                    _pipe_genes_df = None
+                    if _pipe_gm_path and _pipe_gm_path.exists():
+                        try:
+                            _pipe_genes_df = load_gene_annotation(
+                                str(_pipe_gm_path),
+                                str(_pipe_desc_path) if _pipe_desc_path and _pipe_desc_path.exists() else None,
+                            )
+                            st.write(f"Loaded {len(_pipe_genes_df):,} gene records.")
+                        except Exception as e:
+                            logging.exception("Gene model loading failed")
+                            st.write(f"Gene model loading failed: {e}")
+                    elif _pipe_species == "Other (upload files)":
+                        st.info(
+                            "No custom gene model uploaded — gene annotation will be skipped. "
+                            "Upload a gene coordinates CSV under 'Override gene files' "
+                            "in the pipeline config to enable annotation."
+                        )
+
+                    # --- Per-model post-GWAS analysis ---
+                    _post_gwas_models = [("MLM", _pipe_gwas)]
+                    for _mname in ["MLMM", "FarmCPU"]:
+                        if _mname in _pipe_extra_dfs:
+                            _post_gwas_models.append((_mname, _pipe_extra_dfs[_mname]))
+
+                    # Track MLM results for report backward compat
+                    _pipe_ld_blocks_mlm = None
+                    _pipe_ld_annotated_mlm = None
+                    _pipe_hap_gwas_mlm = None
+                    _geno_float = np.asarray(geno_imputed, float)
+                    _chr_arr = np.array([canon_chr(str(c)) for c in chroms])
+                    _pos_arr = np.array(positions)
+                    _sid_arr = np.array(sid)
+                    _per_model_post = {}
+                    _heatmap_blocks_done = set()
+
+                    for _model_name, _model_df in _post_gwas_models:
+                        _status.update(label=f"Step {_step}: Post-GWAS ({_model_name})...")
+                        st.write(f"**Post-GWAS analysis: {_model_name}**")
+
+                        # Guard: ensure FDR column exists (compute BH-FDR)
+                        if "FDR" not in _model_df.columns:
+                            _model_df = _model_df.copy()
+                            _rej_fb, _fdr_fb, _, _ = multipletests(
+                                _model_df["PValue"].astype(float).clip(lower=1e-300).values,
+                                method="fdr_bh",
+                            )
+                            _model_df["FDR"] = _fdr_fb
+                            if "Significant_FDR" not in _model_df.columns:
+                                _model_df["Significant_FDR"] = _rej_fb
+                            st.write(f"  {_model_name}: FDR computed (was missing).")
+
+                        _m_ld_blocks = None
+                        _m_ld_annotated = None
+                        _m_hap_gwas = None
+                        _m_consolidated = None
+                        # --- LD block detection ---
+                        try:
+                            _ld_suggestive = _pipe_ld_seed.startswith("Suggestive")
+                            if _ld_suggestive:
+                                _m_has_seeds = (_model_df["PValue"] < _pipe_ld_sig_p).any()
+                            else:
+                                _m_has_seeds = _model_df[_sig_col].any()
+                            if _m_has_seeds:
+                                _m_ld_blocks = ld.find_ld_clusters_genomewide(
+                                    gwas_df=_model_df,
+                                    chroms=chroms,
+                                    positions=positions,
+                                    geno_imputed=_geno_float,
+                                    sid=sid,
+                                    ld_threshold=_pipe_ld_r2,
+                                    flank_kb=_pipe_ld_flank,
+                                    ld_decay_kb=_pipe_ld_decay_kb,
+                                    min_snps=3,
+                                    top_n=_pipe_ld_top_n if _ld_suggestive else 0,
+                                    sig_thresh=_pipe_ld_sig_p if _ld_suggestive else _pipe_sig_thresh,
+                                )
+                                _n_before_filter = len(_m_ld_blocks)
+                                _m_ld_blocks, _ = ld.filter_contained_blocks(
+                                    _m_ld_blocks, min_contained=2,
+                                    size_ratio_threshold=3.0, mode="remove",
+                                )
+                                if _n_before_filter > 0 and _m_ld_blocks.empty:
+                                    st.write(
+                                        f"  {_model_name}: All {_n_before_filter} LD blocks "
+                                        f"removed by containment filter."
+                                    )
+                                _n_seeds = int((_model_df["PValue"] < _pipe_ld_sig_p).sum()) if _ld_suggestive else int(_model_df[_sig_col].sum())
+                                st.write(
+                                    f"  {_model_name}: {len(_m_ld_blocks)} LD blocks "
+                                    f"around {_n_seeds} seed peaks"
+                                )
+                            else:
+                                if _ld_suggestive:
+                                    st.write(f"  {_model_name}: No SNPs with p < {_pipe_ld_sig_p:.1e} — skipping LD blocks.")
+                                else:
+                                    st.write(f"  {_model_name}: No significant SNPs — skipping LD blocks.")
+                        except Exception as e:
+                            logging.exception("Pipeline LD detection failed for %s", _model_name)
+                            st.write(f"  {_model_name} LD detection skipped: {e}")
+
+                        # --- Haplotype testing ---
+                        if _m_ld_blocks is not None and not _m_ld_blocks.empty:
+                            try:
+                                _m_hap_gwas, _ = run_haplotype_block_gwas(
+                                    haplo_df=_m_ld_blocks,
+                                    chroms=chroms,
+                                    positions=positions,
+                                    geno_imputed=_geno_float,
+                                    sid=sid,
+                                    geno_df=geno_df,
+                                    pheno_df=pheno_clean,
+                                    trait_col=trait_col,
+                                    pcs=_pcs_for["MLM"],
+                                    n_perm=_pipe_hap_perms,
+                                    n_pcs_used=_pipe_k_mlm,
+                                )
+                                if _m_hap_gwas is not None and not _m_hap_gwas.empty:
+                                    _n_sig_hap = int((_m_hap_gwas.get("FDR_BH", pd.Series(dtype=float)) < 0.05).sum())
+                                    st.write(
+                                        f"  {_model_name} haplotype: {_n_sig_hap} of "
+                                        f"{len(_m_hap_gwas)} blocks significant"
+                                    )
+                                else:
+                                    st.write(f"  {_model_name} haplotype: no results.")
+                            except Exception as e:
+                                logging.exception("Haplotype testing failed for %s", _model_name)
+                                st.write(f"  {_model_name} haplotype skipped: {e}")
+
+                        # --- Gene annotation ---
+                        if _m_ld_blocks is not None and not _m_ld_blocks.empty and _pipe_genes_df is not None:
+                            try:
+                                _m_ld_annotated = annotate_ld_blocks(
+                                    _m_ld_blocks, _pipe_genes_df,
+                                    n_flank=2, max_flank_dist_bp=500_000,
+                                )
+                            except Exception as e:
+                                logging.exception("Gene annotation failed for %s", _model_name)
+                                st.write(f"  {_model_name} annotation skipped: {e}")
+
+                        # --- Consolidate LD blocks + annotation + haplotype into one table ---
+                        if _m_ld_blocks is not None and not _m_ld_blocks.empty:
+                            try:
+                                _m_consolidated = consolidate_ld_block_table(
+                                    _m_ld_blocks, _m_hap_gwas, _m_ld_annotated,
+                                )
+                                if _m_consolidated is not None and not _m_consolidated.empty:
+                                    _pipe_extra_tables[f"LD_blocks_annotated_{_model_name}.csv"] = _m_consolidated
+
+                                    # --- LD block summary narrative ---
+                                    if _model_name == "MLM":
+                                        try:
+                                            _nar_n = len(_m_consolidated)
+                                            _nar_chrs = sorted(_m_consolidated["Chr"].astype(str).unique())
+                                            _nar_chr_str = ", ".join(_nar_chrs)
+                                            _nar_parts = [
+                                                f"**{_nar_n} LD block(s)** detected on chromosome(s) {_nar_chr_str}."
+                                            ]
+                                            if "Hap_eta2" in _m_consolidated.columns:
+                                                _lead_idx = _m_consolidated["Hap_eta2"].idxmax()
+                                                _lead = _m_consolidated.loc[_lead_idx]
+                                                _l_start = int(_lead.get("Start (bp)", 0)) / 1e6
+                                                _l_end = int(_lead.get("End (bp)", 0)) / 1e6
+                                                _l_eta = float(_lead["Hap_eta2"]) * 100
+                                                _l_chr = _lead["Chr"]
+                                                _nar_parts.append(
+                                                    f"The lead block (Chr{_l_chr}: {_l_start:.2f}\u2013{_l_end:.2f} Mb) "
+                                                    f"explains {_l_eta:.1f}% of phenotypic variance."
+                                                )
+                                            if "overlapping_genes" in _m_consolidated.columns:
+                                                _n_genes = sum(
+                                                    len([g for g in str(v).split(";") if g.strip() and g.strip() != "nan"])
+                                                    for v in _m_consolidated["overlapping_genes"]
+                                                    if pd.notna(v)
+                                                )
+                                                if _n_genes:
+                                                    _nar_parts.append(f"{_n_genes} annotated gene(s) overlap these blocks.")
+                                            st.info(" ".join(_nar_parts))
+                                        except Exception:
+                                            pass  # narrative is best-effort
+                            except Exception:
+                                logging.exception("LD block consolidation failed for %s", _model_name)
+
+                        # --- LD heatmaps for significant blocks (deduplicated across models) ---
+                        # Gated by the one-click "Generate LD block heatmap PNGs"
+                        # checkbox so large trait batches (e.g. metabolomics with
+                        # thousands of phenotypes) don't produce a huge ZIP of
+                        # per-block heatmap images.
+                        if (
+                            _pipe_generate_ld_heatmaps
+                            and _m_ld_blocks is not None
+                            and not _m_ld_blocks.empty
+                        ):
+                            try:
+                                import seaborn as sns
+                                _m_sig_snps_set = set(_model_df.loc[_model_df[_sig_col], "SNP"].astype(str))
+                                _sig_blocks = []
+                                for _, _blk in _m_ld_blocks.iterrows():
+                                    _lead_snps = str(_blk.get("Lead SNP", "")).split(";")
+                                    if any(s.strip() in _m_sig_snps_set for s in _lead_snps):
+                                        _sig_blocks.append(_blk)
+                                _sig_blocks_df = pd.DataFrame(_sig_blocks) if _sig_blocks else pd.DataFrame()
+
+                                if not _sig_blocks_df.empty:
+                                    _n_heatmaps = 0
+                                    for _bi, _brow in _sig_blocks_df.iterrows():
+                                        _bchr = canon_chr(str(_brow["Chr"]))
+                                        _bstart = int(_brow.get("Start (bp)", _brow.get("Start", 0)))
+                                        _bend = int(_brow.get("End (bp)", _brow.get("End", 0)))
+                                        _block_key = (_bchr, _bstart, _bend)
+                                        if _block_key in _heatmap_blocks_done:
+                                            continue
+                                        _heatmap_blocks_done.add(_block_key)
+                                        _in_block = (
+                                            (_chr_arr == _bchr)
+                                            & (_pos_arr >= _bstart)
+                                            & (_pos_arr <= _bend)
+                                        )
+                                        _block_idx = np.where(_in_block)[0]
+                                        if len(_block_idx) < 2:
+                                            continue
+                                        _block_geno = _geno_float[:, _block_idx]
+                                        _block_r2 = ld.pairwise_r2(_block_geno)
+                                        _block_snp_labels = [
+                                            f"{_chr_arr[i]}_{_pos_arr[i]}" for i in _block_idx
+                                        ]
+                                        _fig_hm, _ax_hm = plt.subplots(
+                                            figsize=(max(4, len(_block_idx) * 0.3 + 1),
+                                                     max(3, len(_block_idx) * 0.25 + 1))
+                                        )
+                                        _mask_upper = np.triu(np.ones_like(_block_r2, dtype=bool))
+                                        sns.heatmap(
+                                            _block_r2, mask=_mask_upper,
+                                            cmap="YlOrBr", vmin=0, vmax=1,
+                                            square=True, linewidths=0.5,
+                                            xticklabels=_block_snp_labels,
+                                            yticklabels=_block_snp_labels,
+                                            cbar_kws={"label": "r²"},
+                                            ax=_ax_hm,
+                                        )
+                                        _ax_hm.set_title(
+                                            f"LD heatmap: Chr{_bchr} {_bstart:,}–{_bend:,}",
+                                            fontsize=10,
+                                        )
+                                        _ax_hm.tick_params(labelsize=8)
+                                        _fig_hm.tight_layout()
+                                        _pipe_figures[f"LD_heatmap_Chr{_bchr}_{_bstart}_{_bend}.png"] = _fig_hm
+                                        _n_heatmaps += 1
+                                        plt.close(_fig_hm)
+                                    if _n_heatmaps:
+                                        st.write(f"  {_n_heatmaps} LD heatmaps generated.")
+                            except Exception as e:
+                                logging.exception("LD heatmap generation failed for %s", _model_name)
+                                st.write(f"  LD heatmaps skipped: {e}")
+
+                        # Track MLM results for report backward compat
+                        if _model_name == "MLM":
+                            _pipe_ld_blocks_mlm = _m_ld_blocks
+                            _pipe_ld_annotated_mlm = _m_consolidated if _m_consolidated is not None else _m_ld_annotated
+                            _pipe_hap_gwas_mlm = _m_hap_gwas
+
+                        # Collect per-model post-GWAS for report
+                        _per_model_post[_model_name] = {
+                            "ld_blocks_annotated_df": _m_consolidated if _m_consolidated is not None else _m_ld_annotated,
+                            "haplotype_gwas_df": _m_hap_gwas,
+                        }
+
+                    _step += 1
+
+                    # Expose pipeline tables to session state (used by VNN LD-informed masks)
+                    st.session_state["_pipe_extra_tables"] = _pipe_extra_tables
+
+                    # --- Optional subsampling stability screening ---
+                    if _pipe_run_subsampling:
+                        _status.update(label=f"Step {_step}: Subsampling GWAS resampling...")
+                        st.write("**Subsampling GWAS stability screening (MLM + GRM recomputation)**")
+                        try:
+                            import os as _os_boot
+                            from gwas.subsampling import (
+                                subsample_gwas_resampling,
+                                aggregate_subsampling_to_ld_blocks,
+                            )
+
+                            _boot_n_jobs = min(4, _os_boot.cpu_count() or 1)
+
+                            _Z_grm_boot = st.session_state.get("Z_grm", None)
+                            if _Z_grm_boot is None:
+                                raise RuntimeError("Z_grm not in session state")
+
+                            _Z_grm_boot = np.asarray(_Z_grm_boot, dtype=np.float32)
+                            if _Z_grm_boot.shape[0] != geno_imputed.shape[0]:
+                                raise RuntimeError(
+                                    f"Z_grm rows ({_Z_grm_boot.shape[0]}) != "
+                                    f"genotype rows ({geno_imputed.shape[0]})"
+                                )
+
+                            _boot_parallel = _boot_n_jobs > 1
+                            if _boot_parallel:
+                                st.write(
+                                    f"  Running {int(_pipe_boot_n_reps)} subsampling iterations "
+                                    f"on {_boot_n_jobs} cores..."
+                                )
+                                _boot_cb = None
+                            else:
+                                _boot_pbar = st.progress(0)
+                                def _boot_cb(rep, total):
+                                    _boot_pbar.progress((rep + 1) / total)
+
+                            _boot_disc_df, _boot_raw_pvals, _boot_meta = subsample_gwas_resampling(
+                                geno_imputed=geno_imputed,
+                                y=y,
+                                sid=sid,
+                                chroms=chroms,
+                                chroms_num=chroms_num,
+                                positions=positions,
+                                iid=iid,
+                                Z_for_grm=_Z_grm_boot,
+                                pcs_full=pcs_full_arr,
+                                n_pcs=_pipe_k_mlm,
+                                n_reps=int(_pipe_boot_n_reps),
+                                sample_frac=float(_pipe_boot_frac),
+                                discovery_thresh=float(_pipe_boot_thresh),
+                                seed=int(random_seed),
+                                progress_callback=_boot_cb,
+                                n_jobs=_boot_n_jobs,
+                                use_loco=_pipe_boot_loco,
+                                chroms_grm=st.session_state.get("chroms_grm") if _pipe_boot_loco else None,
+                            )
+
+                            if not _boot_parallel:
+                                _boot_pbar.empty()
+
+                            # Per-iteration diagnostics
+                            _boot_meta_df = pd.DataFrame(_boot_meta)
+                            _boot_n_ok = int((_boot_meta_df["status"] == "ok").sum())
+
+                            st.write(
+                                f"  Subsampling complete: {_boot_n_ok}/{int(_pipe_boot_n_reps)} "
+                                f"successful iterations."
+                            )
+
+                            _boot_lam_vals = _boot_meta_df.loc[
+                                _boot_meta_df["status"] == "ok", "lambda_gc"
+                            ].dropna()
+                            if _boot_lam_vals.size > 0:
+                                st.write(
+                                    f"  λGC across reps: "
+                                    f"median={_boot_lam_vals.median():.3f}, "
+                                    f"SD={_boot_lam_vals.std():.3f}"
+                                )
+
+                            # Add to ZIP tables
+                            _pipe_extra_tables["Subsampling_SNP_stability.csv"] = _boot_disc_df
+                            _pipe_extra_tables["Subsampling_rep_metadata.csv"] = _boot_meta_df
+
+                            # Discovery frequency histogram
+                            try:
+                                from utils.pub_theme import PALETTE, SIG_LINE_COLOR, FIGSIZE
+                                _fig_bh, _ax_bh = plt.subplots(
+                                    figsize=FIGSIZE.get("histogram", (7, 4))
+                                )
+                                _freq_vals = _boot_disc_df["DiscoveryFreq"].values
+                                _ax_bh.hist(
+                                    _freq_vals[_freq_vals > 0], bins=30,
+                                    edgecolor="white", linewidth=0.5,
+                                    color=PALETTE["blue"],
+                                )
+                                _ax_bh.set_xlabel("Discovery frequency")
+                                _ax_bh.set_ylabel("Number of SNPs")
+                                _ax_bh.set_title(
+                                    f"Subsampling GWAS: SNP discovery frequency — {trait_col}"
+                                )
+                                _ax_bh.axvline(
+                                    0.5, color=SIG_LINE_COLOR, linestyle="--",
+                                    label="50% threshold",
+                                )
+                                _ax_bh.legend()
+                                plt.tight_layout()
+                                _pipe_figures[
+                                    f"Subsampling_discovery_freq_{trait_col}.png"
+                                ] = _fig_bh
+                                plt.close(_fig_bh)
+                            except Exception:
+                                logging.exception("Subsampling histogram failed")
+
+                            # LD block aggregation (MLM blocks only)
+                            if _pipe_ld_blocks_mlm is not None and not _pipe_ld_blocks_mlm.empty:
+                                try:
+                                    _boot_block_stab = aggregate_subsampling_to_ld_blocks(
+                                        discovery_df=_boot_disc_df,
+                                        ld_blocks_df=_pipe_ld_blocks_mlm,
+                                        raw_pvals=_boot_raw_pvals,
+                                        sid=sid,
+                                        chroms=chroms,
+                                        positions=positions,
+                                        discovery_thresh=float(_pipe_boot_thresh),
+                                    )
+                                    if not _boot_block_stab.empty:
+                                        _pipe_extra_tables[
+                                            "Subsampling_block_stability.csv"
+                                        ] = _boot_block_stab
+                                        _n_stable = int(
+                                            (_boot_block_stab["BlockDiscoveryFreq"] >= 0.5).sum()
+                                        )
+                                        st.write(
+                                            f"  Block stability: {_n_stable}/"
+                                            f"{len(_boot_block_stab)} blocks with "
+                                            f"BlockDiscoveryFreq ≥ 0.5"
+                                        )
+                                        st.session_state[
+                                            "subsampling_block_stability"
+                                        ] = _boot_block_stab
+                                except Exception:
+                                    logging.exception("Subsampling block aggregation failed")
+                                    st.write("  Block aggregation skipped (error).")
+                            else:
+                                st.write("  No MLM LD blocks — skipping block aggregation.")
+
+                            # Store in session state for downstream use
+                            st.session_state["subsampling_gwas_summary"] = {
+                                "n_reps": int(_pipe_boot_n_reps),
+                                "n_successful": _boot_n_ok,
+                                "sample_frac": float(_pipe_boot_frac),
+                                "discovery_thresh": float(_pipe_boot_thresh),
+                                "seed": int(random_seed),
+                                "n_snps_freq_gt_50pct": int(
+                                    (_boot_disc_df["DiscoveryFreq"] > 0.5).sum()
+                                ),
+                                "n_snps_freq_gt_80pct": int(
+                                    (_boot_disc_df["DiscoveryFreq"] > 0.8).sum()
+                                ),
+                                "lambda_gc_median": (
+                                    float(_boot_lam_vals.median())
+                                    if _boot_lam_vals.size > 0
+                                    else None
+                                ),
+                            }
+
+                            # Store subsampling cache in session state
+                            st.session_state["boot_gwas_cache_pipeline"] = {
+                                "disc_df": _boot_disc_df,
+                                "raw_pvals": _boot_raw_pvals,
+                                "meta": _boot_meta,
+                            }
+
+                            _pipe_boot_disc_df = _boot_disc_df
+
+                        except Exception as _boot_err:
+                            logging.exception("Pipeline subsampling GWAS failed")
+                            st.write(f"  Subsampling skipped: {_boot_err}")
+                        _step += 1
+
+                    # --- Step N: Generate report ---
+                    _status.update(label=f"Step {_step}: Generating report...")
+                    _pipe_meta = {
+                        "Run date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Pipeline": "One-Click Full Analysis",
+                        "Trait": trait_col,
+                        "PCs_MLM": _pipe_k_mlm,
+                        "PCs_MLMM": _pipe_k_mlmm if "MLMM (iterative cofactors)" in _pipe_models else "N/A",
+                        "PCs_FarmCPU": _pipe_k_fc if "FarmCPU (multi-locus)" in _pipe_models else "N/A",
+                        "Lambda_GC": round(_pipe_lam, 3),
+                        "Samples": int(geno_df.shape[0]),
+                        "SNPs": int(geno_df.shape[1]),
+                        "Models": ", ".join(["MLM (FaST-MLM)"] + list(_pipe_models)),
+                        "Significance_rule": _pipe_sig_rule,
+                        "M_eff": int(_pipe_meff) if _pipe_meff is not None else "N/A",
+                        "M_eff_threshold": f"{_pipe_meff_thresh:.2e}" if _pipe_meff_thresh is not None else "N/A",
+                        "LD_decay_kb": round(_pipe_ld_decay_kb, 1) if _pipe_ld_decay_kb else "N/A",
+                        "LD_flank_kb": _pipe_ld_flank,
+                        **{f"LD_blocks_{mn}": len(tb) if tb is not None else 0
+                           for mn, tb in [(mn, _pipe_extra_tables.get(f"LD_blocks_annotated_{mn}.csv"))
+                                          for mn, _ in _post_gwas_models]},
+                        **({f"Subsampling_{k}": v
+                            for k, v in st.session_state["subsampling_gwas_summary"].items()}
+                           if "subsampling_gwas_summary" in st.session_state else {}),
+                    }
+                    try:
+                        _pipe_report_html = _gen_report(
+                            trait_col=trait_col,
+                            qc_snp=results.get("qc_snp"),
+                            gwas_df=_pipe_gwas,
+                            figures={k: v for k, v in _pipe_figures.items() if not k.startswith("LD_heatmap")},
+                            metadata=_pipe_meta,
+                            mlmm_df=_pipe_extra_dfs.get("MLMM"),
+                            farmcpu_df=_pipe_extra_dfs.get("FarmCPU"),
+                            ld_blocks_df=_pipe_ld_blocks_mlm,
+                            lambda_gc=_pipe_lam,
+                            n_samples=int(geno_df.shape[0]),
+                            n_snps=int(geno_df.shape[1]),
+                            info_field=results.get("info_field"),
+                            pc_selection_df=_pipe_pc_df,
+                            ld_blocks_annotated_df=_pipe_ld_annotated_mlm,
+                            haplotype_gwas_df=_pipe_hap_gwas_mlm,
+                            per_model_post_gwas=_per_model_post,
+                            sig_label=_pipe_sig_label,
+                            n_significant_override=int(_pipe_gwas[_sig_col].sum()),
+                        )
+                    except Exception as e:
+                        logging.exception("Report generation failed")
+                        st.warning(f"HTML report generation failed: {e}")
+                        _pipe_report_html = None
+                    _step += 1
+
+                    # --- Step N+1: Build ZIP ---
+                    _status.update(label=f"Step {_step}: Building ZIP...")
+                    try:
+                        _pipe_zip_name, _pipe_zip_buf = _build_gwas_results_zip(
+                            trait_col=trait_col,
+                            gwas_df=_pipe_gwas,
+                            figures_dict=_pipe_figures,
+                            pheno_label=st.session_state.get("pheno_file_label"),
+                            extra_model_dfs=_pipe_extra_dfs or None,
+                            extra_tables=_pipe_extra_tables or None,
+                            report_html=_pipe_report_html,
+                        )
+                        _pipe_zip_bytes = _pipe_zip_buf.getvalue()
+                        _pipe_zip_bytes = _append_metadata_to_zip(_pipe_zip_bytes, _pipe_meta)
+
+                        # Collect this trait's outputs for the combined
+                        # ZIP + post-loop summary tabs.
+                        _pipe_per_trait[trait_col] = {
+                            "zip_name": _pipe_zip_name,
+                            "zip_bytes": _pipe_zip_bytes,
+                            "lam": _pipe_lam,
+                            "n_sig": (
+                                int(_pipe_gwas[_sig_col].sum())
+                                if _sig_col in _pipe_gwas.columns else 0
+                            ),
+                            "sig_label": _pipe_sig_label,
+                            "ld_blocks": _pipe_ld_blocks_mlm,
+                            "k_mlm": _pipe_k_mlm,
+                        }
+                        # Successful trait — record its runtime so the
+                        # next iteration's ETA reflects this run's data.
+                        _per_trait_elapsed.append(_time_mod.time() - _trait_start)
+                    except Exception as e:
+                        logging.exception("ZIP building failed")
+                        st.error(f"Failed to build results ZIP: {e}")
+                        st.stop()
 
                 _status.update(label="Full analysis complete!", state="complete")
+                # Replace the trait-progress banner with a final summary
+                # so it doesn't keep showing "ETA: ~Xm remaining" forever.
+                _total_run_sec = (
+                    sum(_per_trait_elapsed) if _per_trait_elapsed else 0.0
+                )
+                if _total_run_sec < 60:
+                    _total_str = f"{int(_total_run_sec)}s"
+                elif _total_run_sec < 3600:
+                    _total_str = (
+                        f"{int(_total_run_sec // 60)}m "
+                        f"{int(_total_run_sec % 60)}s"
+                    )
+                else:
+                    _h = int(_total_run_sec // 3600)
+                    _m = int((_total_run_sec % 3600) // 60)
+                    _total_str = f"{_h}h {_m}m"
+                _trait_progress.success(
+                    f"**Done.** Processed {len(_per_trait_elapsed)}/"
+                    f"{len(selected_traits)} traits in {_total_str}."
+                )
 
-            # --- Results summary card ---
-            _n_ld_blks = (
-                len(_pipe_ld_blocks_mlm)
-                if _pipe_ld_blocks_mlm is not None and not _pipe_ld_blocks_mlm.empty
-                else None
-            )
-            _render_results_summary_card(
-                lambda_gc=_pipe_lam,
-                n_significant=int(_pipe_gwas[_sig_col].sum()),
-                sig_label=_pipe_sig_label,
-                n_ld_blocks=_n_ld_blks,
-                auto_pc_k=_pipe_k_mlm if _pipe_pc_mode.startswith("Auto") else None,
-            )
+            # --- Build combined ZIP when multi-trait ---
+            _combined_zip_name = None
+            _combined_zip_bytes = None
+            if len(_pipe_per_trait) > 1:
+                _pheno_label = st.session_state.get(
+                    "pheno_file_label", "unknown_pheno"
+                )
+                _combined_zip_name, _combined_zip_buf = _combine_gwas_zips(
+                    {t: d["zip_bytes"] for t, d in _pipe_per_trait.items()},
+                    pheno_label=_pheno_label,
+                )
+                _combined_zip_bytes = _combined_zip_buf.getvalue()
 
-            # --- Interpretation panel ---
+            # --- Per-trait results summary (tabs when >1 trait) ---
+            def _render_one_trait_summary(_td):
+                _n_ld_blks = (
+                    len(_td["ld_blocks"])
+                    if _td["ld_blocks"] is not None and not _td["ld_blocks"].empty
+                    else None
+                )
+                _render_results_summary_card(
+                    lambda_gc=_td["lam"],
+                    n_significant=_td["n_sig"],
+                    sig_label=_td["sig_label"],
+                    n_ld_blocks=_n_ld_blks,
+                    auto_pc_k=(
+                        _td["k_mlm"]
+                        if _pipe_pc_mode.startswith("Auto")
+                        else None
+                    ),
+                )
+
+            if len(selected_traits) > 1:
+                _summary_tabs = st.tabs(selected_traits)
+                for _ti, _tname in enumerate(selected_traits):
+                    _td = _pipe_per_trait.get(_tname)
+                    if _td is None:
+                        continue
+                    with _summary_tabs[_ti]:
+                        _render_one_trait_summary(_td)
+            else:
+                _td = _pipe_per_trait.get(selected_traits[0])
+                if _td is not None:
+                    _render_one_trait_summary(_td)
+
+            # --- Interpretation panel (rendered once, regardless of trait count) ---
             _render_interpretation_panel()
 
-            # Single download button (HTML report is inside the ZIP)
-            st.download_button(
-                label="Download Full Results (ZIP)",
-                data=_pipe_zip_bytes,
-                file_name=_pipe_zip_name,
-                mime="application/zip",
-                key="pipe_zip_dl",
-            )
+            # --- Download button: combined ZIP for multi-trait, single ZIP for one trait ---
+            if _combined_zip_bytes is not None:
+                st.download_button(
+                    label=(
+                        f"Download Full Results "
+                        f"({len(selected_traits)} traits, combined ZIP)"
+                    ),
+                    data=_combined_zip_bytes,
+                    file_name=_combined_zip_name,
+                    mime="application/zip",
+                    key="pipe_zip_dl",
+                )
+            else:
+                _td = _pipe_per_trait.get(selected_traits[0])
+                if _td is not None:
+                    st.download_button(
+                        label="Download Full Results (ZIP)",
+                        data=_td["zip_bytes"],
+                        file_name=_td["zip_name"],
+                        mime="application/zip",
+                        key="pipe_zip_dl",
+                    )
 
             # ── Stop here — don't run the detailed single-trait view below ──
             st.stop()
@@ -2724,6 +3028,20 @@ if vcf_file and phe_file:
         active_lod = -np.log10(bonf_thresh)
         active_label = "Bonferroni α=0.05"
         _active_sig_col = "Significant_Bonf"
+
+    # Optional secondary threshold (show BOTH Bonferroni and M_eff
+    # on the Manhattan when the user has asked for it). The line is
+    # informational — it does not change which SNPs are amplified.
+    secondary_lod = None
+    secondary_label = None
+    if show_secondary_threshold:
+        if sig_rule.startswith("Bonferroni") and meff_thresh is not None:
+            secondary_lod = -np.log10(meff_thresh)
+            secondary_label = f"M_eff (M={meff_val:,})"
+        elif sig_rule.startswith("M_eff"):
+            secondary_lod = -np.log10(bonf_thresh)
+            secondary_label = "Bonferroni α=0.05"
+        # FDR primary: skip — FDR isn't a single −log10p line
 
     # ============================================================
     # 2. PCA plot
@@ -3224,7 +3542,8 @@ if vcf_file and phe_file:
         # Static Manhattan (generated for ZIP export + download, not displayed inline)
         df_manh, tick_pos, tick_lab = compute_cumulative_positions(gwas_df)
         fig_manh = plot_manhattan_static(
-            df_manh, active_lod, active_label, f"Manhattan — {trait_col} (MLM)"
+            df_manh, active_lod, active_label, f"Manhattan — {trait_col} (MLM)",
+            secondary_lod=secondary_lod, secondary_label=secondary_label,
         )
         plt.figure(fig_manh.number)
         plt.xticks(tick_pos, tick_lab, fontsize=8)
@@ -3234,7 +3553,8 @@ if vcf_file and phe_file:
         st.write("### Manhattan Plot (MLM)")
         df_plot, tick_pos_i, tick_lab_i = compute_cumulative_positions(gwas_df)
         fig_int = plot_manhattan_interactive(
-            df_plot, active_lod, active_label, f"Interactive Manhattan — {trait_col} (MLM)"
+            df_plot, active_lod, active_label, f"Interactive Manhattan — {trait_col} (MLM)",
+            secondary_lod=secondary_lod, secondary_label=secondary_label,
         )
         fig_int.update_layout(
             xaxis=dict(tickmode="array", tickvals=tick_pos_i, ticktext=tick_lab_i),
@@ -3424,7 +3744,9 @@ if vcf_file and phe_file:
                 df_mlmm,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Manhattan — MLMM — {trait_col}"
+                title=f"Manhattan — MLMM — {trait_col}",
+                secondary_lod=secondary_lod,
+                secondary_label=secondary_label,
             )
             plt.figure(fig_mlmm.number)
             plt.xticks(tick_pos_m, tick_lab_m, fontsize=8)
@@ -3436,7 +3758,9 @@ if vcf_file and phe_file:
                 df_mlmm,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Interactive Manhattan — MLMM — {trait_col}"
+                title=f"Interactive Manhattan — MLMM — {trait_col}",
+                secondary_lod=secondary_lod,
+                secondary_label=secondary_label,
             )
             fig_plotly_mlmm.update_layout(
                 xaxis=dict(tickmode="array", tickvals=tick_pos_m, ticktext=tick_lab_m, showgrid=False),
@@ -3529,7 +3853,9 @@ if vcf_file and phe_file:
                 df_fc,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Manhattan — FarmCPU — {trait_col}"
+                title=f"Manhattan — FarmCPU — {trait_col}",
+                secondary_lod=secondary_lod,
+                secondary_label=secondary_label,
             )
             plt.figure(fig_farmcpu.number)
             plt.xticks(tick_pos_fc, tick_lab_fc, fontsize=8)
@@ -3541,7 +3867,9 @@ if vcf_file and phe_file:
                 df_fc,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Interactive Manhattan — FarmCPU — {trait_col}"
+                title=f"Interactive Manhattan — FarmCPU — {trait_col}",
+                secondary_lod=secondary_lod,
+                secondary_label=secondary_label,
             )
             fig_plotly_fc.update_layout(
                 xaxis=dict(tickmode="array", tickvals=tick_pos_fc, ticktext=tick_lab_fc, showgrid=False),

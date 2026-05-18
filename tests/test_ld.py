@@ -315,3 +315,69 @@ class TestPepperChromosomeIntegration:
         canonical = np.array([canon_chr(c) for c in chroms])
         # Ca1 → "1", Ca2 → "2", Ca3 → "3"
         assert set(canonical) == {"1", "2", "3"}
+
+
+# ── pairwise_r (raw correlation, used by Local LD tab) ────────
+
+class TestPairwiseR:
+    def test_identical_columns_returns_one(self, geno_small):
+        from gwas.ld import pairwise_r
+        G = geno_small.copy()
+        G[:, 1] = G[:, 0]
+        r = pairwise_r(G)
+        assert r[0, 1] == pytest.approx(1.0, abs=1e-10)
+
+    def test_diagonal_is_one(self, geno_small):
+        from gwas.ld import pairwise_r
+        r = pairwise_r(geno_small)
+        np.testing.assert_allclose(np.diag(r), 1.0, atol=1e-10)
+
+    def test_symmetric(self, geno_small):
+        from gwas.ld import pairwise_r
+        r = pairwise_r(geno_small)
+        np.testing.assert_allclose(r, r.T, atol=1e-10)
+
+    def test_range_minus_one_to_one(self, geno_small):
+        from gwas.ld import pairwise_r
+        r = pairwise_r(geno_small)
+        valid = r[np.isfinite(r)]
+        assert np.all(valid >= -1.0 - 1e-10)
+        assert np.all(valid <= 1.0 + 1e-10)
+
+    def test_perfectly_anticorrelated(self):
+        from gwas.ld import pairwise_r
+        # SNP1 = 2 - SNP0 → r should be exactly -1
+        G = np.zeros((10, 2))
+        G[:, 0] = np.array([0, 1, 2, 0, 1, 2, 0, 1, 2, 0], dtype=float)
+        G[:, 1] = 2.0 - G[:, 0]
+        r = pairwise_r(G)
+        assert r[0, 1] == pytest.approx(-1.0, abs=1e-10)
+
+    def test_monomorphic_snp_nan(self, geno_with_monomorphic):
+        from gwas.ld import pairwise_r
+        r = pairwise_r(geno_with_monomorphic)
+        mono_col = 2
+        for j in range(r.shape[1]):
+            if j != mono_col:
+                assert np.isnan(r[mono_col, j]), \
+                    f"r[{mono_col},{j}] should be NaN for monomorphic SNP"
+        assert r[mono_col, mono_col] == pytest.approx(1.0)
+
+
+# ── tab_local_ld import smoke test ────────────────────────────
+
+class TestTabLocalLDImport:
+    """Smoke test: the Local LD tab module imports cleanly and exposes render()."""
+
+    def test_module_imports(self):
+        from pages._ld_tabs import tab_local_ld
+        assert hasattr(tab_local_ld, "render")
+        assert callable(tab_local_ld.render)
+
+    def test_render_signature_takes_ctx_and_r2_callable(self):
+        import inspect
+        from pages._ld_tabs import tab_local_ld
+        sig = inspect.signature(tab_local_ld.render)
+        params = list(sig.parameters)
+        assert params == ["ctx", "get_r2_cached"], \
+            f"render() signature changed: {params}"

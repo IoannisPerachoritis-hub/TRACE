@@ -195,7 +195,9 @@ class TestAutoSelectPCs:
             pcs_full=rng.normal(0, 1, (n, 3)),
             max_pcs=3,
         )
-        assert set(df.columns) == {"n_pcs", "lambda_gc", "delta_from_1", "recommended"}
+        assert set(df.columns) == {
+            "n_pcs", "lambda_gc", "delta_from_1", "recommended", "status"
+        }
         assert len(df) == 4  # 0, 1, 2, 3 PCs
 
     @patch("gwas.kinship._build_loco_kernels_impl")
@@ -623,15 +625,16 @@ class TestAutoSelectPCs:
         )
         # Expected DataFrame shape and columns
         assert set(df.columns) == {
-            "n_pcs", "lambda_gc", "delta_from_1", "recommended"
+            "n_pcs", "lambda_gc", "delta_from_1", "recommended", "status"
         }
         assert len(df) == 4
         # Exactly one recommended row
         best = df.loc[df["recommended"] == "★"]
         assert len(best) == 1
         assert best.iloc[0]["n_pcs"] == 1
-        # MLMM runner was called once per k (4 calls for k=0..3)
-        assert mock_mlmm.call_count == 4
+        # Early-stop (default): MLMM runs at k=0 (λ=1.20, not acceptable)
+        # and k=1 (λ=1.05, acceptable → stop). k=2, k=3 are skipped.
+        assert mock_mlmm.call_count == 2
 
     @patch("gwas.plotting.compute_lambda_gc")
     @patch("gwas.kinship._build_loco_kernels_impl")
@@ -670,12 +673,14 @@ class TestAutoSelectPCs:
             farmcpu_max_iterations=5,
         )
         assert set(df.columns) == {
-            "n_pcs", "lambda_gc", "delta_from_1", "recommended"
+            "n_pcs", "lambda_gc", "delta_from_1", "recommended", "status"
         }
         best = df.loc[df["recommended"] == "★"]
         assert len(best) == 1
         assert best.iloc[0]["n_pcs"] == 2
-        assert mock_fc.call_count == 4
+        # Early-stop (default): FarmCPU runs at k=0..2 (λ=1.02 at k=2 is
+        # the first acceptable). k=3 is skipped.
+        assert mock_fc.call_count == 3
 
     @patch("gwas.plotting.compute_lambda_gc")
     @patch("gwas.kinship._build_loco_kernels_impl")
@@ -722,6 +727,127 @@ class TestAutoSelectPCs:
         best = df.loc[df["recommended"] == "★"]
         assert len(best) == 1
         assert best.iloc[0]["n_pcs"] == 0
+
+    # ── Edge-tolerant band + early-stop (regression tests) ────────
+
+    @patch("gwas.plotting.compute_lambda_gc")
+    @patch("gwas.kinship._build_loco_kernels_impl")
+    @patch("gwas.models._run_gwas_impl")
+    def test_band_edge_zone_accepts_lambda_just_outside(
+        self, mock_gwas, mock_loco, mock_lambda
+    ):
+        """λGC=1.06 at k=1 is acceptable under the edge-tolerant rule.
+
+        Under the old strict band [0.95, 1.05], k=1 (λ=1.06) was
+        rejected (just outside the band) and the algorithm would
+        advance to k=2 (λ=1.04). Under the edge-tolerant rule
+        (acceptable_delta = 0.07), k=1 is acceptable and parsimony
+        wins.
+        """
+        rng = np.random.default_rng(11)
+        n, p = 30, 100
+        iid = np.array([f"S{i}" for i in range(n)])
+        mock_loco.return_value = (None, {}, {})
+        mock_gwas.return_value = _make_fake_gwas_df(n_snps=300)
+        mock_lambda.side_effect = [1.20, 1.06, 1.04, 1.00]
+
+        df = auto_select_pcs(
+            geno_imputed=rng.normal(0, 1, (n, p)),
+            y=rng.normal(0, 1, n),
+            sid=np.array([f"snp_{i}" for i in range(p)]),
+            chroms=np.array(["1"] * p),
+            chroms_num=np.ones(p, dtype=int),
+            positions=np.arange(p) * 1000,
+            iid=iid,
+            Z_grm=rng.normal(0, 1, (n, p)),
+            chroms_grm=np.array(["1"] * p),
+            K_base=np.eye(n),
+            pcs_full=rng.normal(0, 1, (n, 3)),
+            max_pcs=3,
+            strategy="band",
+        )
+        best = df.loc[df["recommended"] == "★"]
+        assert len(best) == 1
+        assert best.iloc[0]["n_pcs"] == 1
+        # Early-stop fires at k=1 (first acceptable); k=2, k=3 are skipped.
+        assert mock_gwas.call_count == 2
+
+    @patch("gwas.plotting.compute_lambda_gc")
+    @patch("gwas.kinship._build_loco_kernels_impl")
+    @patch("gwas.models._run_gwas_impl")
+    def test_early_stop_marks_skipped_rows(
+        self, mock_gwas, mock_loco, mock_lambda
+    ):
+        """After early-stop fires, remaining k get lambda_gc=NaN and status='skipped'."""
+        rng = np.random.default_rng(12)
+        n, p = 30, 100
+        iid = np.array([f"S{i}" for i in range(n)])
+        mock_loco.return_value = (None, {}, {})
+        mock_gwas.return_value = _make_fake_gwas_df(n_snps=300)
+        # λ=1.5 (out), 1.2 (out), 1.0 (acceptable → stop), 0.95 (skipped)
+        mock_lambda.side_effect = [1.5, 1.2, 1.0, 0.95]
+
+        df = auto_select_pcs(
+            geno_imputed=rng.normal(0, 1, (n, p)),
+            y=rng.normal(0, 1, n),
+            sid=np.array([f"snp_{i}" for i in range(p)]),
+            chroms=np.array(["1"] * p),
+            chroms_num=np.ones(p, dtype=int),
+            positions=np.arange(p) * 1000,
+            iid=iid,
+            Z_grm=rng.normal(0, 1, (n, p)),
+            chroms_grm=np.array(["1"] * p),
+            K_base=np.eye(n),
+            pcs_full=rng.normal(0, 1, (n, 3)),
+            max_pcs=3,
+            strategy="band",
+        )
+        # k=0..2 evaluated, k=3 skipped.
+        assert df.loc[df["n_pcs"].isin([0, 1, 2]), "status"].eq("evaluated").all()
+        assert df.loc[df["n_pcs"] == 3, "status"].iloc[0] == "skipped"
+        # Skipped row carries NaN lambda + delta.
+        assert pd.isna(df.loc[df["n_pcs"] == 3, "lambda_gc"].iloc[0])
+        assert pd.isna(df.loc[df["n_pcs"] == 3, "delta_from_1"].iloc[0])
+        # Engine was not invoked for the skipped k.
+        assert mock_gwas.call_count == 3
+
+    @patch("gwas.plotting.compute_lambda_gc")
+    @patch("gwas.kinship._build_loco_kernels_impl")
+    @patch("gwas.models._run_gwas_impl")
+    def test_early_stop_disabled_runs_full_scan(
+        self, mock_gwas, mock_loco, mock_lambda
+    ):
+        """early_stop=False forces the full λ-vs-k scan (diagnostic mode)."""
+        rng = np.random.default_rng(13)
+        n, p = 30, 100
+        iid = np.array([f"S{i}" for i in range(n)])
+        mock_loco.return_value = (None, {}, {})
+        mock_gwas.return_value = _make_fake_gwas_df(n_snps=300)
+        # k=1 would have early-stopped (λ=1.0 acceptable).
+        mock_lambda.side_effect = [1.5, 1.0, 0.99, 0.98]
+
+        df = auto_select_pcs(
+            geno_imputed=rng.normal(0, 1, (n, p)),
+            y=rng.normal(0, 1, n),
+            sid=np.array([f"snp_{i}" for i in range(p)]),
+            chroms=np.array(["1"] * p),
+            chroms_num=np.ones(p, dtype=int),
+            positions=np.arange(p) * 1000,
+            iid=iid,
+            Z_grm=rng.normal(0, 1, (n, p)),
+            chroms_grm=np.array(["1"] * p),
+            K_base=np.eye(n),
+            pcs_full=rng.normal(0, 1, (n, 3)),
+            max_pcs=3,
+            strategy="band",
+            early_stop=False,
+        )
+        # All four k evaluated.
+        assert df["status"].eq("evaluated").all()
+        assert mock_gwas.call_count == 4
+        # Selection unchanged: smallest acceptable k still wins.
+        best = df.loc[df["recommended"] == "★"]
+        assert best.iloc[0]["n_pcs"] == 1
 
 
 # ── select_best_pc_from_lambdas ──────────────────────────────

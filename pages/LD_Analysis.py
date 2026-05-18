@@ -15,6 +15,7 @@ from gwas.utils import canonicalize_chr, align_pheno_to_geno, resolve_trait_colu
 from gwas.haplotype import mlg_labels_for_block
 from pages._ld_tabs import LDContext
 from pages._ld_tabs import tab_block_heatmaps
+from pages._ld_tabs import tab_local_ld
 from pages._ld_tabs import tab_gene_annotation
 from pages._ld_tabs import tab_decay
 from pages._ld_tabs import tab_genome_wide
@@ -683,14 +684,18 @@ def ld_analysis_page():
     # ============================================================
     # Tabs
     # ============================================================
-    tab_blocks, tab_genes, tab_decay_t, tab2 = st.tabs([
+    tab_blocks, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
         "Block Heatmaps",
+        "Local LD",
         "Gene Annotation",
         "LD Decay",
         "LD Blocks & Haplotypes",
     ])
     with tab_blocks:
         tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
+
+    with tab1:
+        tab_local_ld.render(_ld_ctx, get_r2_cached)
 
     with tab_genes:
         tab_gene_annotation.render(_ld_ctx)

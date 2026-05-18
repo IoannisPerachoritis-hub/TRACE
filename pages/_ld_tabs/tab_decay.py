@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from utils.pub_theme import export_matplotlib
 from . import LDContext
 
 
@@ -15,7 +14,7 @@ def render(ctx: LDContext):
         st.error("annotation.py module not found.")
         return
 
-    from annotation import compute_ld_decay_by_chromosome, plot_ld_decay_matplotlib
+    from annotation import compute_ld_decay_by_chromosome
 
     st.markdown(
         "Computes LD decay curves per chromosome from your genotype data. "
@@ -74,16 +73,6 @@ def render(ctx: LDContext):
                         f"Updated LD decay estimate to {median_decay:.0f} kb. "
                         "This will be used for flank windows in LD block detection."
                     )
-
-        # Plot
-        fig_decay, ax_decay = plot_ld_decay_matplotlib(
-            decay_df, summary_df,
-            title=f"LD Decay — {ctx.trait_col}",
-        )
-        st.pyplot(fig_decay)
-
-        # Export
-        export_matplotlib(fig_decay, f"LD_decay__{ctx.trait_col}", label_prefix="Download LD decay")
 
         st.download_button(
             "Download LD decay data (CSV)",

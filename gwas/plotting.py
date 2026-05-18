@@ -14,27 +14,41 @@ from utils.pub_theme import (
     PALETTE, PALETTE_CYCLE, MANHATTAN_COLORS, SIG_LINE_COLOR, FIGSIZE,  # noqa: F401 (PALETTE_CYCLE re-exported)
     export_matplotlib, export_plotly,
 )
+from annotation import canon_chr
 
 def compute_cumulative_positions(df, chr_col="Chr", pos_col="Pos"):
     """
     Computes cumulative genomic positions and returns:
     df (with CumPos), tick_positions, tick_labels.
     """
+    import re as _re
     df = df.copy()
     df[chr_col] = df[chr_col].astype(str)
-    df[pos_col] = df[pos_col].astype(int)
+    # Force int64 — on Windows `astype(int)` may default to int32, which
+    # silently wraps when the cumulative offset grows past ~2.1 Gbp
+    # (~10–12 typical plant chromosomes worth). Wrapping turns later
+    # chromosomes' CumPos negative, which then renders them at the LEFT
+    # of the plot before chromosomes 1-9.
+    df[pos_col] = df[pos_col].astype("int64")
 
     def chr_key(x):
-        x = str(x).replace("chr", "").replace("Chr", "")
+        c = canon_chr(x)
         try:
-            return (0, int(x))
+            return (0, int(c))
         except ValueError:
-            return (1, x)
+            pass
+        # Fallback: extract leading digits from the canonical form so
+        # names like "1_subA", "1.0", or anything else that retains a
+        # numeric prefix still sort numerically.
+        m = _re.match(r"^(\d+)", c)
+        if m:
+            return (0, int(m.group(1)))
+        return (1, c)
 
     chroms_unique = sorted(df[chr_col].unique(), key=chr_key)
 
     gap = 1_000_000
-    offset = 0
+    offset = 0  # plain Python int — has unlimited precision
     tick_positions = []
     tick_labels = []
 
@@ -45,10 +59,13 @@ def compute_cumulative_positions(df, chr_col="Chr", pos_col="Pos"):
         if not mask.any():
             continue
 
-        min_pos = df.loc[mask, pos_col].min()
-        max_pos = df.loc[mask, pos_col].max()
+        # int(...) forces Python int so the running offset never demotes
+        # to a fixed-width numpy dtype (which is what triggered the
+        # overflow warning on Windows).
+        min_pos = int(df.loc[mask, pos_col].min())
+        max_pos = int(df.loc[mask, pos_col].max())
 
-        df.loc[mask, "CumPos"] = df.loc[mask, pos_col] + offset
+        df.loc[mask, "CumPos"] = df.loc[mask, pos_col].astype("int64") + offset
         tick_positions.append(offset + (min_pos + max_pos) / 2.0)
         tick_labels.append(ch)
 
@@ -56,17 +73,32 @@ def compute_cumulative_positions(df, chr_col="Chr", pos_col="Pos"):
 
     return df, tick_positions, tick_labels
 
-def plot_manhattan_static(df, active_lod, active_label, title, chr_col="Chr"):
-    """Static matplotlib Manhattan plot with signal amplification."""
+def plot_manhattan_static(
+    df,
+    active_lod,
+    active_label,
+    title,
+    chr_col="Chr",
+    secondary_lod=None,
+    secondary_label=None,
+):
+    """Static matplotlib Manhattan plot with signal amplification.
+
+    Optional secondary threshold line (`secondary_lod` / `secondary_label`)
+    is drawn as a dotted dark-grey line, useful for showing both
+    Bonferroni and M_eff thresholds when a peak lies between them. The
+    secondary line is informational only — it does NOT trigger SNP
+    amplification (only the primary `active_lod` does).
+    """
     fig = plt.figure(figsize=FIGSIZE["manhattan"])
 
     # chromosome ordering
     def chr_key(x):
-        x = str(x).replace("chr", "").replace("Chr", "")
+        c = canon_chr(x)
         try:
-            return (0, int(x))
+            return (0, int(c))
         except ValueError:
-            return (1, x)
+            return (1, c)
 
     chroms_unique = sorted(df[chr_col].unique(), key=chr_key)
 
@@ -75,13 +107,32 @@ def plot_manhattan_static(df, active_lod, active_label, title, chr_col="Chr"):
         plt.scatter(df.loc[mask, "CumPos"], df.loc[mask, "-log10p"],
                     s=8, color=MANHATTAN_COLORS[i % 2], zorder=1)
 
-    # significance line
+    # Secondary threshold line — drawn FIRST so the primary's red line
+    # sits visually on top if they happen to coincide. No SNP
+    # amplification (informational only).
+    has_secondary = (
+        secondary_lod is not None
+        and not (isinstance(secondary_lod, float) and np.isnan(secondary_lod))
+        and secondary_label is not None
+        and not str(secondary_label).startswith("FDR")
+    )
+    if has_secondary:
+        plt.axhline(
+            secondary_lod,
+            linestyle=":",
+            label=secondary_label,
+            color=PALETTE.get("grey", "#7F7F7F"),
+            linewidth=1.0,
+            zorder=2,
+        )
+
+    # Primary significance line + significant-SNP amplification
     has_threshold = (active_lod is not None
                      and not np.isnan(active_lod)
                      and not active_label.startswith("FDR"))
     if has_threshold:
         plt.axhline(active_lod, linestyle="--", label=active_label,
-                     color=SIG_LINE_COLOR, linewidth=1.0, zorder=2)
+                     color=SIG_LINE_COLOR, linewidth=1.0, zorder=3)
 
         # Signal amplification: enlarge + recolor significant SNPs
         sig_mask = df["-log10p"] >= active_lod
@@ -89,29 +140,42 @@ def plot_manhattan_static(df, active_lod, active_label, title, chr_col="Chr"):
             plt.scatter(
                 df.loc[sig_mask, "CumPos"], df.loc[sig_mask, "-log10p"],
                 s=18, color=SIG_LINE_COLOR, edgecolors="white",
-                linewidths=0.3, zorder=3, label=f"Significant ({int(sig_mask.sum())})",
+                linewidths=0.3, zorder=4, label=f"Significant ({int(sig_mask.sum())})",
             )
 
     plt.xlabel("Chromosome")
     plt.ylabel(r"$-\log_{10}(p)$")
     plt.title(title)
 
-    if has_threshold:
+    if has_threshold or has_secondary:
         plt.legend(loc="upper right", fontsize=9)
 
     plt.tight_layout()
     return fig
 
 
-def plot_manhattan_interactive(df, active_lod, active_label, title):
-    """Plotly Manhattan plot with alternating chromosome colors."""
+def plot_manhattan_interactive(
+    df,
+    active_lod,
+    active_label,
+    title,
+    secondary_lod=None,
+    secondary_label=None,
+):
+    """Plotly Manhattan plot with alternating chromosome colors.
+
+    Optional secondary threshold line (`secondary_lod` / `secondary_label`)
+    is drawn as a dotted dark-grey line with annotation in the top-right
+    (so it does not collide with the top-left primary annotation). Useful
+    for showing both Bonferroni and M_eff thresholds simultaneously.
+    """
     # Build chromosome color map (alternating blue/cyan like static version)
     def _chr_key(x):
-        x = str(x).replace("chr", "").replace("Chr", "")
+        c = canon_chr(x)
         try:
-            return (0, int(x))
+            return (0, int(c))
         except ValueError:
-            return (1, x)
+            return (1, c)
 
     chroms_unique = sorted(df["Chr"].astype(str).unique(), key=_chr_key)
     chr_color_map = {
@@ -134,6 +198,22 @@ def plot_manhattan_interactive(df, active_lod, active_label, title):
     fig.update_traces(marker_size=4)
     fig.update_layout(showlegend=False)
 
+    # Secondary threshold line (informational, drawn first so primary
+    # red line sits visually on top if they overlap)
+    if (
+        secondary_lod is not None
+        and secondary_label is not None
+        and not str(secondary_label).startswith("FDR")
+    ):
+        fig.add_hline(
+            y=secondary_lod,
+            line_dash="dot",
+            annotation_text=secondary_label,
+            annotation_position="top right",
+            line_color=PALETTE.get("grey", "#7F7F7F"),
+        )
+
+    # Primary threshold line
     if active_lod is not None and not active_label.startswith("FDR"):
         fig.add_hline(
             y=active_lod,
@@ -305,6 +385,35 @@ def _build_gwas_results_zip(
 
     buf.seek(0)
     return zip_name, buf
+
+
+def _combine_gwas_zips(per_trait_zips, pheno_label=None):
+    """
+    Merge per-trait ZIPs (bytes) into a single archive with `{trait}/` prefixes.
+
+    Parameters
+    ----------
+    per_trait_zips : dict {trait_name: bytes}
+    pheno_label    : str or None
+    """
+    buf = BytesIO()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    label = pheno_label or "unknown_pheno"
+    zip_name = (
+        f"GWAS_{label}__MultiTrait_{len(per_trait_zips)}traits__{timestamp}.zip"
+    )
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as out_zf:
+        for trait_name, zip_bytes in per_trait_zips.items():
+            src = BytesIO(zip_bytes)
+            with zipfile.ZipFile(src, "r") as in_zf:
+                for info in in_zf.infolist():
+                    out_zf.writestr(
+                        f"{trait_name}/{info.filename}",
+                        in_zf.read(info.filename),
+                    )
+    buf.seek(0)
+    return zip_name, buf
+
 
 # ============================================================
 # LD UTILITIES

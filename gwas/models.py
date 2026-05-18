@@ -1357,6 +1357,7 @@ def auto_select_pcs(
     max_pcs=10, progress_callback=None, strategy="band",
     use_loco=True, band_lo=0.95, band_hi=1.05,
     parsimony_tolerance=0.02,
+    early_stop=True,
     model="mlm",
     farmcpu_p_threshold=0.01,
     farmcpu_max_iterations=10,
@@ -1386,20 +1387,45 @@ def auto_select_pcs(
         - ``'farmcpu'``: FarmCPU via :func:`run_farmcpu`. ``use_loco``
           controls LOCO kinship in FarmCPU's MLM final scan.
     strategy : str, 'band' or 'closest_to_1'
-        'band' (default): pick the smallest k where band_lo <= λGC <= band_hi.
-            If no k falls within the band, falls back to the closest-to-1.0
-            with adaptive parsimony tolerance: the smallest k whose
-            delta_from_1 is within max(parsimony_tolerance, best_delta * 0.15)
-            of the best delta. This avoids wasting PCs when all λGC values
-            are far from 1.0 (e.g., strong QTL deflation).
+        'band' (default): edge-tolerant band selection. Recommend the
+            smallest k whose delta_from_1 is within
+            (band_edge_delta + parsimony_tolerance) of zero, where
+            band_edge_delta = max(band_hi - 1.0, 1.0 - band_lo). With
+            the defaults this is 0.05 + 0.02 = 0.07, so any k with
+            lambda_GC in [0.93, 1.07] is acceptable and the smallest
+            such k wins.
+
+            This unified rule applies parsimony uniformly across the
+            band edge — differences in delta smaller than the
+            measurement noise (~0.02 on small panels) do not justify
+            additional PCs. The earlier strict-band rule discarded
+            parsimony as soon as one k crossed the band edge, which
+            could pick k=8 over k=1 to chase a 0.01 reduction in
+            lambda_GC.
+
+            If no k is within (band_edge_delta + parsimony_tolerance)
+            of 1.0, falls back to closest-to-1.0 with adaptive
+            tolerance: smallest k whose delta is within
+            max(parsimony_tolerance, best_delta * 0.15) of the best
+            delta. This handles severe inflation where PCs cannot
+            fully control structure.
         'closest_to_1': pick the PC count with λGC nearest to 1.0.
     band_lo : float
         Lower bound of the acceptable λGC band (default 0.95).
     band_hi : float
         Upper bound of the acceptable λGC band (default 1.05).
     parsimony_tolerance : float
-        Minimum absolute tolerance for the band fallback (default 0.02).
-        The actual tolerance used is max(parsimony_tolerance, best_delta * 0.15).
+        Tolerance for treating delta-from-1 differences as noise
+        (default 0.02). Applied to both the band edge (acceptable
+        if delta <= band_edge_delta + parsimony_tolerance) and the
+        fallback (when nothing is acceptable, pick smallest k within
+        max(parsimony_tolerance, best_delta * 0.15) of best).
+    early_stop : bool
+        If True (default), the band scan stops as soon as it finds the
+        smallest acceptable k or the deflation guard fires. The
+        returned DataFrame still has max_pcs + 1 rows; un-scanned k
+        get lambda_gc=NaN and status='skipped'. Set False to force a
+        full scan for diagnostic purposes (full λ-vs-k curve).
     farmcpu_p_threshold, farmcpu_max_iterations, farmcpu_max_pseudo_qtns,
     farmcpu_final_scan : FarmCPU tuning parameters used only when
         ``model='farmcpu'``. Defaults mirror :func:`run_farmcpu`.
@@ -1419,10 +1445,29 @@ def auto_select_pcs(
     max_pcs = min(max_pcs, pcs_full.shape[1] if pcs_full is not None else 0)
     pheno_reader = PhenoData(iid=iid, val=y)
 
+    # Edge-tolerant band: a k is "acceptable" if its delta from 1.0
+    # falls within (band_edge_delta + parsimony_tolerance). With the
+    # defaults [0.95, 1.05] and parsimony=0.02 this is 0.05 + 0.02 = 0.07,
+    # so any lambda_GC in [0.93, 1.07] counts as acceptable.
+    band_edge_delta = max(band_hi - 1.0, 1.0 - band_lo)
+    acceptable_delta = band_edge_delta + parsimony_tolerance
+
     rows = []
+    K0 = None
+    K_by_chr = None
+    early_stopped = False
     for k in range(0, max_pcs + 1):
         if progress_callback:
             progress_callback(k, max_pcs + 1)
+
+        if early_stopped:
+            rows.append({
+                "n_pcs": k,
+                "lambda_gc": np.nan,
+                "delta_from_1": np.nan,
+                "status": "skipped",
+            })
+            continue
 
         # Build LOCO kernels (reused across PCs since kinship doesn't change)
         if k == 0:
@@ -1482,7 +1527,17 @@ def auto_select_pcs(
             "n_pcs": k,
             "lambda_gc": round(lam, 4) if np.isfinite(lam) else np.nan,
             "delta_from_1": round(abs(lam - 1.0), 4) if np.isfinite(lam) else np.nan,
+            "status": "evaluated",
         })
+
+        # Early-stop decision (band strategy only; finite lambda only).
+        # A failed GWAS at k=0 (lam = NaN) must NOT fire the deflation
+        # guard — the np.isfinite check below handles that.
+        if early_stop and strategy == "band" and np.isfinite(lam):
+            if k == 0 and lam < band_lo:
+                early_stopped = True   # deflation guard
+            elif abs(lam - 1.0) <= acceptable_delta:
+                early_stopped = True   # smallest acceptable k
 
     df = pd.DataFrame(rows)
 
@@ -1491,15 +1546,18 @@ def auto_select_pcs(
     valid = df["lambda_gc"].notna()
     if valid.any():
         if strategy == "band":
-            # Smallest k where λGC falls within [band_lo, band_hi].
-            # If nothing is in-band, fall back to closest-to-1.0 with
-            # adaptive parsimony tolerance so we don't waste PCs when
-            # all λGC values are far from 1.0 (e.g., strong QTL).
-            in_band = df[valid & (df["lambda_gc"] >= band_lo)
-                         & (df["lambda_gc"] <= band_hi)]
-            if len(in_band) > 0:
-                best_idx = in_band["n_pcs"].idxmin()
+            # Edge-tolerant band: pick smallest k whose delta is within
+            # acceptable_delta of 0. Parsimony tolerance is applied
+            # uniformly across the band edge, so e.g. delta=0.06 and
+            # delta=0.05 are treated as noise-equivalent (both
+            # acceptable when acceptable_delta=0.07).
+            acceptable = df[valid & (df["delta_from_1"] <= acceptable_delta)]
+            if not acceptable.empty:
+                best_idx = acceptable["n_pcs"].idxmin()
             else:
+                # Fallback: closest to 1.0 with adaptive parsimony tolerance.
+                # Only fires when every k has delta > acceptable_delta
+                # (e.g. severe inflation that PCs can't fully control).
                 best_delta = df.loc[valid, "delta_from_1"].min()
                 tol = max(parsimony_tolerance, best_delta * 0.15)
                 near_best = df[valid & (df["delta_from_1"]
@@ -1546,7 +1604,7 @@ def select_best_pc_from_lambdas(
 ):
     """Pick best PC count from a list of lambda_GC values.
 
-    Applies the same band-then-fallback logic as :func:`auto_select_pcs`,
+    Applies the same edge-tolerant band rule as :func:`auto_select_pcs`,
     plus the directional deflation guard: if ``lambdas[0] < band_lo``
     the kinship is already over-correcting and adding PCs cannot repair
     it; selection is forced to ``k=0`` so the deflation is surfaced
@@ -1557,9 +1615,11 @@ def select_best_pc_from_lambdas(
     Parameters
     ----------
     lambdas : list[float]
-        Lambda GC value for each k = 0, 1, ..., len(lambdas)-1.
+        Lambda GC value for each k = 0, 1, ..., len(lambdas)-1. NaN
+        entries (e.g. from skipped k under early-stop, or from failed
+        GWAS calls) are treated as invalid and excluded from selection.
     strategy : str
-        'band' or 'closest_to_1'.
+        'band' (edge-tolerant) or 'closest_to_1'.
 
     Returns
     -------
@@ -1578,14 +1638,19 @@ def select_best_pc_from_lambdas(
         # (guard does not apply, matching auto_select_pcs)
         return int(np.argmin(deltas))
 
+    # Edge-tolerant band: same rule as auto_select_pcs. Acceptable when
+    # delta_k <= band_edge_delta + parsimony_tolerance.
+    band_edge_delta = max(band_hi - 1.0, 1.0 - band_lo)
+    acceptable_delta = band_edge_delta + parsimony_tolerance
+
     def _pick(indices):
-        """Band-then-fallback within a set of candidate indices."""
-        in_band = [
+        """Acceptable-delta then fallback within a set of candidate indices."""
+        acceptable = [
             i for i in indices
-            if valid[i] and band_lo <= lambdas[i] <= band_hi
+            if valid[i] and deltas[i] <= acceptable_delta
         ]
-        if in_band:
-            return min(in_band)
+        if acceptable:
+            return min(acceptable)
         valid_in = [i for i in indices if valid[i]]
         if not valid_in:
             return indices[0] if indices else 0
