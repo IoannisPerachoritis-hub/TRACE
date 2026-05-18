@@ -1,6 +1,7 @@
 """Tab 6 — Peak-centric LD blocks & haplotype analysis."""
 
 import logging
+import re
 import textwrap
 import zipfile
 import numpy as np
@@ -8,6 +9,7 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
+import plotly.graph_objects as go
 from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
 from utils.pub_theme import PALETTE_CYCLE, FIGSIZE, export_matplotlib
@@ -26,6 +28,319 @@ def _hash_df(df: pd.DataFrame) -> str:
     import hashlib
     h = pd.util.hash_pandas_object(df, index=True).values
     return hashlib.blake2b(h.tobytes(), digest_size=16).hexdigest()
+
+
+def _hap_sort_key(label):
+    """Numeric sort for H1, H2, ..., H10, H11; non-H labels sort last."""
+    m = re.match(r"^H(\d+)$", str(label))
+    return (0, int(m.group(1))) if m else (1, str(label))
+
+
+def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, build_fig_fn):
+    """Display a matplotlib fig via session-state byte cache.
+
+    On cache miss, calls build_fig_fn() to construct the figure, renders to
+    PNG@120dpi (display) + PNG@600dpi + SVG + PDF byte buffers, caches them,
+    closes the fig, then displays via st.image. Subsequent reruns with the
+    same cache_key short-circuit straight to st.image with cached bytes.
+    """
+    cache = st.session_state.setdefault(cache_namespace, {})
+    cached = cache.get(cache_key)
+
+    if cached is None:
+        fig = build_fig_fn()
+        if fig is None:
+            return
+        buf_disp = BytesIO()
+        fig.savefig(buf_disp, format="png", dpi=120, bbox_inches="tight")
+        buf_png = BytesIO()
+        fig.savefig(buf_png, format="png", dpi=600, bbox_inches="tight")
+        buf_svg = BytesIO()
+        fig.savefig(buf_svg, format="svg", bbox_inches="tight")
+        buf_pdf = BytesIO()
+        fig.savefig(buf_pdf, format="pdf", bbox_inches="tight")
+        plt.close(fig)
+        cached = {
+            "display": buf_disp.getvalue(),
+            "png": buf_png.getvalue(),
+            "svg": buf_svg.getvalue(),
+            "pdf": buf_pdf.getvalue(),
+        }
+        cache[cache_key] = cached
+
+    st.image(cached["display"])
+    col_png, col_svg, col_pdf = st.columns(3)
+    col_png.download_button(
+        f"📥 {label_prefix} PNG", cached["png"],
+        file_name=f"{fname_stem}.png", mime="image/png",
+        key=f"dl_{cache_namespace}_png_{fname_stem}",
+    )
+    col_svg.download_button(
+        f"📥 {label_prefix} SVG", cached["svg"],
+        file_name=f"{fname_stem}.svg", mime="image/svg+xml",
+        key=f"dl_{cache_namespace}_svg_{fname_stem}",
+    )
+    col_pdf.download_button(
+        f"📥 {label_prefix} PDF", cached["pdf"],
+        file_name=f"{fname_stem}.pdf", mime="application/pdf",
+        key=f"dl_{cache_namespace}_pdf_{fname_stem}",
+    )
+
+
+def _render_haplotype_pca(
+    mlg_df, geno_sample_ids,
+    block_chr, block_start, block_end,
+):
+    """PC1 vs PC2 inset, one point per accession, coloured by current-block MLG_label."""
+    pcs_full = st.session_state.get("pcs_full")
+    eigenvalues = st.session_state.get("pca_eigenvalues")
+
+    if pcs_full is None or pcs_full.shape[1] < 2:
+        from gwas.kinship import _standardize_geno_for_grm
+        geno = st.session_state.get("geno_imputed")
+        if geno is None:
+            st.info("PCA panel unavailable — no cached PCs and no imputed genotype.")
+            return
+        Z = _standardize_geno_for_grm(geno)
+        U, S, _ = np.linalg.svd(Z, full_matrices=False)
+        pcs_full = (U[:, :2] * S[:2]).astype(np.float32)
+        n = Z.shape[0]
+        eigenvalues = (S ** 2) / max(n - 1, 1)
+
+    pcs_2 = np.asarray(pcs_full[:, :2], dtype=float)
+
+    if eigenvalues is not None:
+        eig = np.asarray(eigenvalues, dtype=float)
+    else:
+        eig = pcs_full.var(axis=0, ddof=1)
+    if eig.sum() <= 0:
+        pct = np.array([float("nan"), float("nan")])
+    else:
+        pct = eig[:2] / eig.sum() * 100.0
+
+    geno_iids = pd.Index(np.asarray(geno_sample_ids, dtype=str))
+    if pcs_2.shape[0] != len(geno_iids):
+        st.warning(
+            f"PCA panel: cached PC matrix has {pcs_2.shape[0]} rows but "
+            f"`geno_row_ids` has {len(geno_iids)} entries — alignment mismatch. "
+            "Skipping PCA panel."
+        )
+        return
+
+    mlg_by_iid = mlg_df.set_index(mlg_df["Sample"].astype(str))["MLG_label"].astype(str)
+    labels = pd.Series(
+        mlg_by_iid.reindex(geno_iids).fillna("Other").values,
+        name="MLG_label",
+    )
+
+    if len(mlg_df) > 0 and (labels != "Other").sum() == 0:
+        st.warning(
+            "PCA panel: 0 accessions matched between haplotype assignments "
+            f"and `geno_row_ids` ({len(mlg_df)} haplotyped samples vs "
+            f"{len(geno_iids)} genotype rows). Sample-ID format mismatch — "
+            "cannot colour by haplotype. Skipping PCA panel."
+        )
+        return
+
+    st.markdown("#### Population structure (PC1 vs PC2, coloured by haplotype)")
+
+    # Per-point arrays + colour map shared by both visualisation variants
+    present = list(pd.unique(labels))
+    hap_order = sorted([h for h in present if h != "Other"], key=_hap_sort_key)
+    color_map = {
+        h: PALETTE_CYCLE[i % len(PALETTE_CYCLE)]
+        for i, h in enumerate(hap_order)
+    }
+    color_map["Other"] = "#bdbdbd"
+    plot_order = (["Other"] if "Other" in present else []) + hap_order
+
+    def _build_static_pca_fig():
+        fig, ax = plt.subplots(figsize=(5, 5))
+        for h in plot_order:
+            m = (labels == h).values
+            if not m.any():
+                continue
+            size = 18 if h == "H1" else (14 if h == "Other" else 42)
+            ax.scatter(
+                pcs_2[m, 0], pcs_2[m, 1],
+                s=size,
+                c=color_map[h],
+                edgecolors="white" if h != "Other" else "none",
+                linewidths=0.4,
+                label=f"{h} (n={int(m.sum())})",
+                alpha=0.95 if h != "Other" else 0.55,
+            )
+
+        if np.isfinite(pct).all():
+            ax.set_xlabel(f"PC1 ({pct[0]:.1f}%)")
+            ax.set_ylabel(f"PC2 ({pct[1]:.1f}%)")
+        else:
+            ax.set_xlabel("PC1")
+            ax.set_ylabel("PC2")
+        ax.legend(fontsize=8, loc="best", frameon=False)
+        ax.set_title("Accessions in PC space")
+        return fig
+
+    def _build_interactive_pca_fig():
+        fig = go.Figure()
+        for h in plot_order:
+            m = (labels == h).values
+            n_h = int(m.sum())
+            if n_h == 0:
+                continue
+            size = 8 if h == "H1" else (6 if h == "Other" else 14)
+            accessions = geno_iids[m].astype(str).to_numpy()
+            x_vals = pcs_2[m, 0]
+            y_vals = pcs_2[m, 1]
+            fig.add_trace(go.Scatter(
+                x=x_vals,
+                y=y_vals,
+                mode="markers",
+                name=f"{h} (n={n_h})",
+                marker=dict(
+                    color=color_map[h],
+                    size=size,
+                    line=dict(
+                        color="white" if h != "Other" else "rgba(0,0,0,0.2)",
+                        width=0.7,
+                    ),
+                    opacity=0.95 if h != "Other" else 0.55,
+                ),
+                customdata=np.column_stack([accessions, np.full(n_h, h)]),
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Haplotype: %{customdata[1]}<br>"
+                    "PC1: %{x:.3f}<br>"
+                    "PC2: %{y:.3f}<extra></extra>"
+                ),
+                showlegend=True,
+            ))
+
+        x_label = f"PC1 ({pct[0]:.1f}%)" if np.isfinite(pct).all() else "PC1"
+        y_label = f"PC2 ({pct[1]:.1f}%)" if np.isfinite(pct).all() else "PC2"
+
+        # Font cascade matching matplotlib (no Arial fallback)
+        pca_font_family = "DejaVu Sans, Verdana, Geneva, sans-serif"
+
+        fig.update_layout(
+            title=dict(
+                text="<b>Accessions in PC space (interactive)</b>",
+                x=0.5,
+                xanchor="center",
+                font=dict(size=16, color="black", family=pca_font_family),
+            ),
+            xaxis=dict(
+                title=dict(
+                    text=f"<b>{x_label}</b>",
+                    font=dict(size=14, color="black", family=pca_font_family),
+                ),
+                showgrid=True,
+                gridcolor="rgba(200,200,200,0.4)",
+                zeroline=False,
+                tickfont=dict(size=12, color="black", family=pca_font_family),
+            ),
+            yaxis=dict(
+                title=dict(
+                    text=f"<b>{y_label}</b>",
+                    font=dict(size=14, color="black", family=pca_font_family),
+                ),
+                showgrid=True,
+                gridcolor="rgba(200,200,200,0.4)",
+                zeroline=False,
+                tickfont=dict(size=12, color="black", family=pca_font_family),
+                scaleanchor="x",
+                scaleratio=1,
+            ),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            height=550,
+            margin=dict(t=70, b=80, l=80, r=40),
+            hovermode="closest",
+            legend=dict(font=dict(size=12, color="black", family=pca_font_family)),
+            font=dict(family=pca_font_family, color="black", size=12),
+        )
+        return fig
+
+    # Static cache key (matplotlib only; Plotly rebuilds each fragment rerun)
+    static_cache_key = (
+        "_hap_pca_render",
+        block_chr, int(block_start), int(block_end),
+        hash(tuple(labels.values)),
+        pcs_2.shape[0],
+    )
+    cache = st.session_state.setdefault("_hap_pca_cache", {})
+
+    pca_widget_key = (
+        f"pca_viz_type_{block_chr}_{int(block_start)}_{int(block_end)}"
+    )
+
+    @st.fragment
+    def _pca_toggle_fragment():
+        with st.expander("Plot style", expanded=True):
+            viz_type = st.radio(
+                "Visualization",
+                ("Interactive", "Static"),
+                horizontal=True,
+                key=pca_widget_key,
+                help=(
+                    "Interactive (Plotly) lets you hover over each dot to see "
+                    "the accession ID — useful for identifying which carriers "
+                    "of the rare haplotype lie at which PC coordinates. "
+                    "Static (matplotlib) is publication-grade and downloadable "
+                    "as PNG / SVG / PDF."
+                ),
+            )
+
+        if viz_type == "Interactive":
+            st.plotly_chart(
+                _build_interactive_pca_fig(),
+                use_container_width=True,
+                key=(
+                    f"hap_pca_plotly_{block_chr}_"
+                    f"{int(block_start)}_{int(block_end)}"
+                ),
+            )
+        else:
+            cached = cache.get(static_cache_key)
+            if cached is None:
+                fig = _build_static_pca_fig()
+                buf_disp = BytesIO()
+                fig.savefig(buf_disp, format="png", dpi=120, bbox_inches="tight")
+                buf_png = BytesIO()
+                fig.savefig(buf_png, format="png", dpi=600, bbox_inches="tight")
+                buf_svg = BytesIO()
+                fig.savefig(buf_svg, format="svg", bbox_inches="tight")
+                buf_pdf = BytesIO()
+                fig.savefig(buf_pdf, format="pdf", bbox_inches="tight")
+                plt.close(fig)
+                cached = {
+                    "display": buf_disp.getvalue(),
+                    "png": buf_png.getvalue(),
+                    "svg": buf_svg.getvalue(),
+                    "pdf": buf_pdf.getvalue(),
+                }
+                cache[static_cache_key] = cached
+
+            st.image(cached["display"])
+            fname = f"haplotype_pca_{block_chr}_{block_start}_{block_end}"
+            col_png, col_svg, col_pdf = st.columns(3)
+            col_png.download_button(
+                "📥 Download PCA PNG", cached["png"],
+                file_name=f"{fname}.png", mime="image/png",
+                key=f"dl_pca_png_{fname}",
+            )
+            col_svg.download_button(
+                "📥 Download PCA SVG", cached["svg"],
+                file_name=f"{fname}.svg", mime="image/svg+xml",
+                key=f"dl_pca_svg_{fname}",
+            )
+            col_pdf.download_button(
+                "📥 Download PCA PDF", cached["pdf"],
+                file_name=f"{fname}.pdf", mime="application/pdf",
+                key=f"dl_pca_pdf_{fname}",
+            )
+
+    _pca_toggle_fragment()
 
 
 def render(
@@ -730,6 +1045,14 @@ def _render_block_visualization(
         block_end=block_end,
     )
 
+    _render_haplotype_pca(
+        mlg_df=mlg_df,
+        geno_sample_ids=geno_sample_ids,
+        block_chr=block_chr,
+        block_start=block_start,
+        block_end=block_end,
+    )
+
     # Store for expression panel selection
     st.session_state["pheno_vis"] = pheno_vis
     st.session_state["sample_vis"] = sample_vis
@@ -919,77 +1242,399 @@ def _render_tukey_and_boxplot(
     st.dataframe(cld_df, use_container_width=True)
 
     # --------------------------------------------------------
-    # Boxplot WITH CLD letters
+    # Boxplot WITH CLD letters (closure — rendered via the viz toggle below)
     # --------------------------------------------------------
-    fig_box2, ax2 = plt.subplots(figsize=FIGSIZE["boxplot"])
+    def _build_box_fig():
+        fig_box2, ax2 = plt.subplots(figsize=FIGSIZE["boxplot"])
 
-    sns.boxplot(
-        data=mlg_df,
-        x="MLG_label",
-        y=trait_col,
-        order=mlg_order,
-        ax=ax2,
-        width=0.6,
-        showfliers=False,
-        linewidth=1.2,
-        boxprops=dict(edgecolor="black"),
-        medianprops=dict(color="black", linewidth=2),
-        whiskerprops=dict(linewidth=1.2),
-        capprops=dict(linewidth=1.2),
-    )
+        sns.boxplot(
+            data=mlg_df,
+            x="MLG_label",
+            y=trait_col,
+            order=mlg_order,
+            ax=ax2,
+            width=0.6,
+            showfliers=False,
+            linewidth=1.2,
+            boxprops=dict(edgecolor="black"),
+            medianprops=dict(color="black", linewidth=2),
+            whiskerprops=dict(linewidth=1.2),
+            capprops=dict(linewidth=1.2),
+        )
 
-    sns.stripplot(
-        data=mlg_df,
-        x="MLG_label",
-        y=trait_col,
-        order=mlg_order,
-        ax=ax2,
-        color="black",
-        alpha=0.25,
-        size=3,
-        jitter=0.15,
-    )
+        sns.stripplot(
+            data=mlg_df,
+            x="MLG_label",
+            y=trait_col,
+            order=mlg_order,
+            ax=ax2,
+            color="black",
+            alpha=0.25,
+            size=3,
+            jitter=0.15,
+        )
 
-    ax2.tick_params(axis="both", which="both", labelsize=10, length=0)
+        ax2.tick_params(axis="both", which="both", labelsize=10, length=0)
 
-    for spine in ax2.spines.values():
-        spine.set_visible(False)
+        for spine in ax2.spines.values():
+            spine.set_visible(False)
 
-    data_min = float(mlg_df[trait_col].min())
-    data_max = float(mlg_df[trait_col].max())
-    data_range = data_max - data_min if data_max > data_min else 1.0
+        data_min = float(mlg_df[trait_col].min())
+        data_max = float(mlg_df[trait_col].max())
+        data_range = data_max - data_min if data_max > data_min else 1.0
 
-    y_text = data_max + 0.05 * data_range
-    ax2.set_ylim(data_min - 0.05 * data_range, data_max + 0.25 * data_range)
+        y_text = data_max + 0.05 * data_range
+        ax2.set_ylim(data_min - 0.05 * data_range, data_max + 0.25 * data_range)
 
-    for i, tick in enumerate(ax2.get_xticklabels()):
-        raw = tick.get_text().split("\n")[0].strip()
-        if raw in cld_strings:
-            ax2.text(
-                i,
-                y_text,
-                cld_strings[raw],
-                ha="center",
-                va="bottom",
-                fontsize=12,
-                fontweight="bold",
+        for i, tick in enumerate(ax2.get_xticklabels()):
+            raw = tick.get_text().split("\n")[0].strip()
+            if raw in cld_strings:
+                ax2.text(
+                    i,
+                    y_text,
+                    cld_strings[raw],
+                    ha="center",
+                    va="bottom",
+                    fontsize=12,
+                    fontweight="bold",
+                )
+
+        ax2.set_xlabel("Multi-locus genotype (haplotype)")
+        ax2.set_ylabel(trait_col)
+        ax2.set_title("Phenotype distribution across haplotypes")
+
+        new_xticklabels = [
+            f"{lbl.get_text()}\n(n={hap_counts.get(lbl.get_text(), 0)})"
+            for lbl in ax2.get_xticklabels()
+        ]
+
+        ax2.set_xticks(range(len(new_xticklabels)))
+        ax2.set_xticklabels(new_xticklabels, rotation=0)
+        return fig_box2
+
+    # --------------------------------------------------------
+    # Raincloud plot (half-violin + narrow box + strip + mean marker).
+    # Better suited than boxplot to visualize unbalanced-n comparisons
+    # (e.g. n=118 vs n=9), where boxplot IQR overlap can mask real mean
+    # differences. Shows distribution shape, summary stats, and individual
+    # datapoints simultaneously.
+    # --------------------------------------------------------
+    def _build_raincloud_fig():
+        fig_rain, ax_rain = plt.subplots(figsize=FIGSIZE["boxplot"])
+        rng = np.random.default_rng(42)
+
+        for i, mlg in enumerate(mlg_order):
+            data = (
+                mlg_df.loc[mlg_df["MLG_label"] == mlg, trait_col]
+                .dropna()
+                .to_numpy()
+            )
+            if data.size == 0:
+                continue
+            color = PALETTE_CYCLE[i % len(PALETTE_CYCLE)]
+
+            # Half-violin: centered at i - 0.12, density on LEFT side
+            # (flat edge faces the box at category center; density
+            # bulges away from the box — canonical Scherer/ggdist
+            # orientation: violin's flat side adjacent to box, no overlap).
+            if data.size >= 2 and np.unique(data).size >= 2:
+                parts = ax_rain.violinplot(
+                    [data],
+                    positions=[i - 0.12],
+                    widths=0.32,
+                    showmeans=False,
+                    showmedians=False,
+                    showextrema=False,
+                )
+                for pc in parts["bodies"]:
+                    pc.set_facecolor(color)
+                    pc.set_alpha(0.50)
+                    pc.set_edgecolor(color)
+                    pc.set_linewidth(0.8)
+                    for path in pc.get_paths():
+                        # Keep left half (density faces AWAY from box;
+                        # violin's flat right edge sits at i - 0.12,
+                        # box's left edge at i - 0.09, ~0.03 gap)
+                        path.vertices[:, 0] = np.clip(
+                            path.vertices[:, 0], -np.inf, i - 0.12
+                        )
+
+            # Narrow boxplot at category center (white fill, thin black
+            # outline, no outliers — dots show full distribution)
+            ax_rain.boxplot(
+                [data],
+                positions=[i],
+                widths=0.18,
+                showfliers=False,
+                patch_artist=True,
+                boxprops=dict(facecolor="white", edgecolor="black", linewidth=1.0),
+                medianprops=dict(color="black", linewidth=1.5),
+                whiskerprops=dict(linewidth=1.0, color="black"),
+                capprops=dict(linewidth=1.0, color="black"),
             )
 
-    ax2.set_xlabel("Multi-locus genotype (haplotype)")
-    ax2.set_ylabel(trait_col)
-    ax2.set_title("Phenotype distribution across haplotypes")
+            # Jittered dots AT category center (overlapping with box,
+            # haplotype-coloured, thin black outline) — the "rain"
+            jitter = rng.uniform(-0.07, 0.07, size=data.size)
+            ax_rain.scatter(
+                np.full(data.size, i) + jitter,
+                data,
+                color=color,
+                alpha=0.55,
+                s=18,
+                edgecolors="black",
+                linewidths=0.4,
+                zorder=3,
+            )
 
-    new_xticklabels = [
-        f"{lbl.get_text()}\n(n={hap_counts.get(lbl.get_text(), 0)})"
-        for lbl in ax2.get_xticklabels()
-    ]
+        ax_rain.tick_params(axis="both", which="both", labelsize=15, length=0)
+        for spine in ax_rain.spines.values():
+            spine.set_visible(False)
 
-    ax2.set_xticks(range(len(new_xticklabels)))
-    ax2.set_xticklabels(new_xticklabels, rotation=0)
+        data_min = float(mlg_df[trait_col].min())
+        data_max = float(mlg_df[trait_col].max())
+        data_range = data_max - data_min if data_max > data_min else 1.0
+        y_text = data_max + 0.05 * data_range
+        ax_rain.set_ylim(data_min - 0.05 * data_range, data_max + 0.25 * data_range)
 
-    st.pyplot(fig_box2)
-    export_matplotlib(fig_box2, f"haplotype_boxplot_{trait_col}", label_prefix="Download boxplot")
-    plt.close(fig_box2)
+        for i, mlg in enumerate(mlg_order):
+            if mlg in cld_strings:
+                ax_rain.text(
+                    i,
+                    y_text,
+                    cld_strings[mlg],
+                    ha="center",
+                    va="bottom",
+                    fontsize=18,
+                    fontweight="bold",
+                )
+
+        ax_rain.set_xlabel(
+            "Multi-locus genotype (haplotype)",
+            fontsize=16, fontweight="bold",
+        )
+        ax_rain.set_ylabel(trait_col, fontsize=16, fontweight="bold")
+        ax_rain.set_title(
+            "Phenotype distribution across haplotypes",
+            fontsize=17, fontweight="bold",
+        )
+        ax_rain.set_xticks(range(len(mlg_order)))
+        ax_rain.set_xticklabels(
+            [f"{m}\n(n={hap_counts.get(m, 0)})" for m in mlg_order],
+            rotation=0,
+            fontsize=15,
+            fontweight="bold",
+        )
+        plt.setp(ax_rain.get_yticklabels(), fontsize=15, fontweight="bold")
+        ax_rain.set_xlim(-0.5, len(mlg_order) - 0.5)
+        return fig_rain
+
+    # --------------------------------------------------------
+    # Interactive Plotly raincloud (hover shows accession ID per dot).
+    # Renders via st.plotly_chart so it's always interactive; not cached
+    # via _render_fig_or_cached because Plotly handles its own client-side
+    # rendering. Half-violin + narrow box + per-point hover, canonical
+    # ggdist / Cédric Scherer raincloud layout.
+    # --------------------------------------------------------
+    def _build_interactive_raincloud_fig():
+        fig = go.Figure()
+        rng = np.random.default_rng(42)
+
+        for i, mlg in enumerate(mlg_order):
+            mask = mlg_df["MLG_label"] == mlg
+            samples = mlg_df.loc[mask, "Sample"].astype(str).to_numpy()
+            values = mlg_df.loc[mask, trait_col].astype(float).to_numpy()
+            n = values.size
+            if n == 0:
+                continue
+            color = PALETTE_CYCLE[i % len(PALETTE_CYCLE)]
+
+            # Half-violin: centered at i - 0.12, density on LEFT side
+            if n >= 2 and np.unique(values).size >= 2:
+                fig.add_trace(go.Violin(
+                    x=np.full(n, i - 0.12),
+                    y=values,
+                    side="negative",
+                    fillcolor=color,
+                    opacity=0.50,
+                    line_color=color,
+                    line_width=1,
+                    points=False,
+                    box_visible=False,
+                    meanline_visible=False,
+                    showlegend=False,
+                    hoverinfo="skip",
+                    width=0.36,
+                    spanmode="soft",
+                    scalemode="width",
+                ))
+
+            # Narrow boxplot at category center
+            fig.add_trace(go.Box(
+                x=np.full(n, i),
+                y=values,
+                fillcolor="white",
+                line=dict(color="black", width=1.0),
+                width=0.18,
+                boxpoints=False,
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+            # Jittered dots AT category center (hover shows accession ID)
+            jitter = rng.uniform(-0.07, 0.07, size=n)
+            fig.add_trace(go.Scatter(
+                x=np.full(n, i) + jitter,
+                y=values,
+                mode="markers",
+                marker=dict(
+                    color=color,
+                    size=8,
+                    opacity=0.55,
+                    line=dict(color="black", width=0.4),
+                ),
+                customdata=np.column_stack([samples, np.full(n, mlg)]),
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Haplotype: %{customdata[1]}<br>"
+                    f"{trait_col}: " "%{y:.3f}<extra></extra>"
+                ),
+                showlegend=False,
+            ))
+
+        # CLD letters as annotations
+        data_min = float(mlg_df[trait_col].min())
+        data_max = float(mlg_df[trait_col].max())
+        data_range = data_max - data_min if data_max > data_min else 1.0
+        y_text = data_max + 0.05 * data_range
+
+        # Font cascade matching matplotlib (no Arial fallback)
+        font_family = "DejaVu Sans, Verdana, Geneva, sans-serif"
+
+        for i, mlg in enumerate(mlg_order):
+            if mlg in cld_strings:
+                fig.add_annotation(
+                    x=i,
+                    y=y_text,
+                    text=f"<b>{cld_strings[mlg]}</b>",
+                    showarrow=False,
+                    font=dict(size=18, color="black", family=font_family),
+                )
+
+        axis_title_font = dict(size=16, color="black", family=font_family)
+        tick_font = dict(size=14, color="black", family=font_family)
+        title_font = dict(size=17, color="black", family=font_family)
+
+        fig.update_layout(
+            title=dict(
+                text="<b>Phenotype distribution across haplotypes (interactive)</b>",
+                x=0.5,
+                xanchor="center",
+                font=title_font,
+            ),
+            xaxis=dict(
+                tickmode="array",
+                tickvals=list(range(len(mlg_order))),
+                ticktext=[
+                    f"<b>{m}<br>(n={hap_counts.get(m, 0)})</b>"
+                    for m in mlg_order
+                ],
+                range=[-0.5, len(mlg_order) - 0.5],
+                showgrid=False,
+                zeroline=False,
+                title=dict(
+                    text="<b>Multi-locus genotype (haplotype)</b>",
+                    font=axis_title_font,
+                ),
+                tickfont=tick_font,
+            ),
+            yaxis=dict(
+                title=dict(text=f"<b>{trait_col}</b>", font=axis_title_font),
+                showgrid=True,
+                gridcolor="rgba(200,200,200,0.4)",
+                zeroline=False,
+                range=[
+                    data_min - 0.05 * data_range,
+                    data_max + 0.25 * data_range,
+                ],
+                tickfont=tick_font,
+            ),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            height=500,
+            margin=dict(t=70, b=90, l=90, r=40),
+            showlegend=False,
+            hovermode="closest",
+            font=dict(family=font_family, color="black", size=14),
+        )
+        return fig
+
+    # --------------------------------------------------------
+    # Visualization toggle (fragment-scoped): switching plot type only
+    # reruns this fragment, not the whole page. Matplotlib variants are
+    # byte-cached on first build for instant toggle; Plotly variant is
+    # rebuilt each rerun (cheap) but the fragment scope keeps that local.
+    # --------------------------------------------------------
+    box_cache_base = (
+        "HAP_BOX",
+        block_chr, int(block_start), int(block_end),
+        _hash_df(mlg_df[["MLG_label", trait_col]].copy()),
+        tuple(mlg_order),
+        trait_col,
+    )
+
+    viz_widget_key = (
+        f"hap_viz_type_{block_chr}_{int(block_start)}_{int(block_end)}_{trait_col}"
+    )
+
+    @st.fragment
+    def _viz_toggle_fragment():
+        with st.expander("Plot style", expanded=True):
+            viz_type = st.radio(
+                "Visualization",
+                ("Raincloud", "Interactive raincloud", "Boxplot"),
+                horizontal=True,
+                key=viz_widget_key,
+                help=(
+                    "Raincloud (half-violin + narrow box + jittered points) is "
+                    "recommended for unbalanced-n comparisons. "
+                    "Interactive raincloud (Plotly) adds hover-over per point "
+                    "showing the accession ID — useful for identifying which "
+                    "samples drive the H2 distribution. Boxplot is the legacy "
+                    "view kept for compatibility with prior figures."
+                ),
+            )
+
+        if viz_type == "Boxplot":
+            _render_fig_or_cached(
+                cache_namespace="_hap_box_cache",
+                cache_key=box_cache_base + ("boxplot",),
+                fname_stem=(
+                    f"haplotype_boxplot_{trait_col}_{block_chr}_"
+                    f"{block_start}_{block_end}"
+                ),
+                label_prefix="Download boxplot",
+                build_fig_fn=_build_box_fig,
+            )
+        elif viz_type == "Interactive raincloud":
+            st.plotly_chart(
+                _build_interactive_raincloud_fig(),
+                use_container_width=True,
+                key=f"hap_plotly_{block_chr}_{int(block_start)}_{int(block_end)}_{trait_col}",
+            )
+        else:
+            _render_fig_or_cached(
+                cache_namespace="_hap_box_cache",
+                cache_key=box_cache_base + ("raincloud",),
+                fname_stem=(
+                    f"haplotype_raincloud_{trait_col}_{block_chr}_"
+                    f"{block_start}_{block_end}"
+                ),
+                label_prefix="Download raincloud",
+                build_fig_fn=_build_raincloud_fig,
+            )
+
+    _viz_toggle_fragment()
 
     # --------------------------------------------------------
     # Forest plot
