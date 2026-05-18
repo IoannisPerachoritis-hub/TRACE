@@ -289,7 +289,7 @@ LA1589,12.8,7.3
         st.markdown("**Genotype QC thresholds**")
 
         qc_preset = st.selectbox(
-            "QC preset (tomato panel)",
+            "QC preset",
             ["Standard GWAS", "Rare-variant friendly", "Conservative (very clean)"],
             index=0,
             help="Preset sets sensible defaults; you can still override with sliders."
