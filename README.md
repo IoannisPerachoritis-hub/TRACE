@@ -256,7 +256,7 @@ TRACE/
 │   ├── pub_theme.py                    # Publication-ready plot theme (Matplotlib + Plotly)
 │   └── species_files.py               # Species-specific file paths and gene models
 │
-├── tests/                              # Automated test suite (367 tests)
+├── tests/                              # Automated test suite (378 tests)
 │   ├── conftest.py                     # Shared fixtures
 │   ├── test_ld.py                      # r², LD blocks, IoU, decay, SNP membership
 │   ├── test_models.py                  # OLS, F-test, one-hot encoding, auto PC
@@ -394,19 +394,19 @@ python -m pytest tests/test_ld.py -v
 
 | Module              | Tests | Coverage                                         |
 |---------------------|-------|--------------------------------------------------|
-| `gwas/ld.py`        | 31    | r², LD blocks, IoU, decay, SNP membership        |
-| `gwas/models.py`    | 39    | OLS effects, F-test, one-hot encoding, auto PC selection |
+| `gwas/ld.py`        | 39    | r², LD blocks, IoU, decay, SNP membership        |
+| `gwas/models.py`    | 48    | OLS effects, F-test, one-hot encoding, auto PC selection |
 | `gwas/haplotype.py` | 14    | Block GWAS, Freedman-Lane, η²                    |
 | `gwas/kinship.py`   | 15    | GRM construction, standardization, LOCO          |
 | `gwas/qc.py`        | 22    | Allele frequency, AF masks, call rate, INFO score, chr guards |
 | `gwas/plotting.py`  | 15    | λGC, r² to lead SNP, M_eff                      |
-| `gwas/reports.py`   | 18    | HTML report generation, sig labels, per-model sections |
+| `gwas/reports.py`   | 17    | HTML report generation, sig labels, per-model sections |
 | `gwas/io.py`        | 43    | VCF I/O, genotype loading, INFO score extraction, multi-species chr parsing |
 | `gwas/subsampling.py` | 9   | Subsampling aggregation, block-level stability   |
 | `gwas/stability.py` | 16    | GWAS stability metrics                           |
 | `gwas/utils.py`     | 11    | Mean imputation, rank INT, seeds                 |
 | `annotation.py`     | 39    | Chr normalization, LD block annotation, IoU      |
-| `cli.py`            | 29    | CLI arg parsing, defaults, model selection, e2e  |
+| `cli.py`            | 28    | CLI arg parsing, defaults, model selection, e2e  |
 | Upload/edge cases   | 15    | BOM handling, ID normalization, encoding edge cases |
 | Integration         | 45    | End-to-end GWAS, FarmCPU, MLMM, consensus, pipeline stages, INFO scores |
 | Null calibration    | 2     | End-to-end λGC in [0.85, 1.15] on permuted null, zero genome-wide hits |
