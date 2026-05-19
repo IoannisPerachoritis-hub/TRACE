@@ -270,11 +270,12 @@ def _pipeline_harmonize_ids(genotypes, samples, chroms, positions, vid, ref, alt
     pheno_ids = pd.Series(pheno.index.astype(str)).str.strip()
 
     if geno_ids.duplicated().any():
-        geno_df = geno_df[~geno_ids.duplicated()].copy()
-        geno_ids = pd.Series(geno_df.index.astype(str))
+        geno_df = geno_df.loc[(~geno_ids.duplicated()).to_numpy()].copy()
+        geno_ids = pd.Series(geno_df.index.astype(str)).str.strip()
 
     if pheno_ids.duplicated().any():
-        pheno = pheno.loc[~pheno_ids.duplicated()].copy()
+        pheno = pheno.loc[(~pheno_ids.duplicated()).to_numpy()].copy()
+        pheno_ids = pd.Series(pheno.index.astype(str)).str.strip()
 
     # Force numpy string dtype on indices — pd.Series.values can return
     # ArrowStringArray on newer pandas+pyarrow, which propagates through
