@@ -17,9 +17,13 @@ TRACE takes a VCF and a phenotype file and returns annotated candidate loci. One
 
 ![GWAS Analysis](docs/screenshot_gwas.png)
 
-**LD & Haplotype Analysis** — Peak-centric LD block detection, haplotype effect testing, and forest plots:
+**LD & Haplotype Analysis** — Peak-centric LD block detection, haplotype effect testing (Tukey HSD + CLD, raincloud, forest plot), and haplotype-coloured PCA:
 
 ![LD Analysis](docs/screenshot_ld.png)
+
+**Local LD heatmap** — Lead-SNP-centric LD heatmap with optional snap-to-block and configurable buffer:
+
+![Local LD](docs/screenshot_local_ld.png)
 
 ---
 
