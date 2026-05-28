@@ -4122,7 +4122,11 @@ if vcf_file and phe_file:
     # MLM always runs (foundational), so include it in the tag even though
     # it is no longer in the user-facing multiselect.
     _models_tag = "_".join(sorted(["MLM"] + [m.split()[0] for m in model_choices]))
-    zip_key = f"gwas_zip_{pheno_label}__{trait_col}__{_models_tag}"
+    # Fingerprint binds the cached ZIP to the current run — any change
+    # to PCs/LOCO/QC shifts len(gwas_df) or lambda_gc and invalidates
+    # the cache, so the download always matches what's on screen.
+    _gwas_fp = f"n{len(gwas_df)}_lam{lambda_gc:.4f}"
+    zip_key = f"gwas_zip_{pheno_label}__{trait_col}__{_models_tag}__{_gwas_fp}"
 
     if zip_key not in st.session_state:
         # Collect extra model results for ZIP
@@ -4239,7 +4243,8 @@ if vcf_file and phe_file:
     # MLM always runs (foundational), so include it in the tag even though
     # it is no longer in the user-facing multiselect.
     _models_tag = "_".join(sorted(["MLM"] + [m.split()[0] for m in model_choices]))
-    zip_key = f"gwas_zip_{pheno_label}__{trait_col}__{_models_tag}"
+    _gwas_fp = f"n{len(gwas_df)}_lam{lambda_gc:.4f}"
+    zip_key = f"gwas_zip_{pheno_label}__{trait_col}__{_models_tag}__{_gwas_fp}"
 
     if zip_key in st.session_state:
 
