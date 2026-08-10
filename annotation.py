@@ -28,6 +28,17 @@ def canon_chr(x) -> str:
 _canon_chr = canon_chr  # backward-compat alias
 
 
+# ============================================================
+# Isolated-SNP evidence vocabulary (T-44 / shared with T-23)
+# ------------------------------------------------------------
+# Additive constants only — no function body in this module changes. They give the
+# isolated-SNP rescue and the significant-SNP table one shared, closed vocabulary
+# for the evidence columns, so "distance_only" means the same thing on both tracks.
+INTERVAL_EVIDENCE_CLASSES = ("ld_supported", "distance_only")   # class of evidence delimiting an interval
+LOCALIZATION_SUPPORT = ("block_member_snps", "flanking_markers_only")  # how the interval bounds were set
+GENE_RELATIONS = ("overlapping", "flanking_upstream", "flanking_downstream")  # gene ↔ interval relation
+
+
 def load_gene_model(path) -> pd.DataFrame:
     """
     Load Sol_genes.csv (or similar gene coordinate file).
