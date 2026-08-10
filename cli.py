@@ -125,6 +125,19 @@ def _build_parser():
     ld_grp.add_argument("--species", default="tomato", choices=["tomato", "custom"],
                          help="Species for annotation files (default: tomato)")
     ld_grp.add_argument("--gene-model", help="Gene coordinate CSV (required if --species custom)")
+    # ── Isolated-SNP rescue (T-45) ──
+    ld_grp.add_argument("--no-isolated-rescue", action="store_true",
+                         help="Disable the isolated-SNP rescue (reporting-significant SNPs that "
+                              "form no LD block). Rescue is ON by default; this is the byte-exact "
+                              "reproduction escape hatch.")
+    ld_grp.add_argument("--isolated-max-interval-mb", type=float, default=5.0,
+                         help="Max flanking-marker interval width (Mb) before clamping (default: 5.0).")
+    ld_grp.add_argument("--isolated-edge-flank-kb", type=int, default=None,
+                         help="Flank (kb) for chromosome-edge isolated intervals "
+                              "(default: the run's LD flank, else 300).")
+    ld_grp.add_argument("--isolated-low-res-kb", type=int, default=None,
+                         help="Interval width (kb) above which an isolated interval is flagged "
+                              "low-resolution (default: max(2x LD decay, 400)).")
 
     # ── Output options ────────────────────────────────────
     parser.add_argument("--no-report", action="store_true", help="Skip HTML report generation")
@@ -838,10 +851,51 @@ def run_pipeline(args):
     _heatmap_done = set()  # deduplicate LD heatmaps across models
     chroms_canon = np.array([canon_chr(str(c)) for c in chroms])
 
+    # ── Isolated-SNP rescue setup (T-45) ──────────────────
+    # Reporting rule + gene model resolved ONCE, before the per-model loop, so the
+    # rescue can mine genes even for models with no LD blocks. The rescue is a
+    # positional set difference against the FINAL emitted block table and NEVER
+    # calls the block detector (gwas/isolated.py has no gwas.ld import).
+    from gwas import isolated as _iso
+    from gwas.significance import rule_from_cli_args
+    _sig_rule_obj = rule_from_cli_args(args, geno_df.shape[1], _meff_val)
+    _do_rescue = not getattr(args, "no_isolated_rescue", False)
+    _iso_edge_flank_bp = (
+        int(args.isolated_edge_flank_kb) * 1000 if getattr(args, "isolated_edge_flank_kb", None)
+        else (int(ld_flank_kb) * 1000 if ld_flank_kb else 300_000)
+    )
+    _iso_max_interval_bp = int(float(getattr(args, "isolated_max_interval_mb", 5.0)) * 1_000_000)
+    _iso_low_res_bp = (int(args.isolated_low_res_kb) * 1000
+                       if getattr(args, "isolated_low_res_kb", None) else None)
+    _iso_ld_decay_bp = int(ld_decay_kb * 1000) if ld_decay_kb else None
+    _iso_counts = {}
+    _iso_genes_df = None
+    if _do_rescue and not args.no_annotation:
+        try:
+            from annotation import load_gene_annotation as _iso_load_genes
+            _iso_data_dir = Path(__file__).resolve().parent / "data"
+            _iso_build = getattr(args, "genome_build", "SL3")
+            _iso_sp = {
+                "tomato": {
+                    "gm": (_iso_data_dir / "Sol_genes_SL3.csv" if _iso_build == "SL3"
+                           else _iso_data_dir / "Sol_genes.csv"),
+                    "desc": (_iso_data_dir / "SL3.1_descriptions.txt" if _iso_build == "SL3"
+                             else _iso_data_dir / "ITAG4.0_annotation.txt"),
+                },
+            }.get(args.species, {})
+            _iso_gm = Path(args.gene_model) if args.gene_model else _iso_sp.get("gm")
+            _iso_desc = _iso_sp.get("desc")
+            if _iso_gm and _iso_gm.exists():
+                _iso_genes_df = _iso_load_genes(
+                    str(_iso_gm), str(_iso_desc) if _iso_desc and _iso_desc.exists() else None)
+        except Exception as e:
+            log.warning("Isolated rescue: gene model load failed (%s); intervals will lack genes.", e)
+
     for model_name, model_df in post_gwas_models:
         log.info("Post-GWAS: %s", model_name)
         m_hap_gwas = None
         m_ld_annotated = None
+        m_ld_blocks = pd.DataFrame()   # always defined; empty => no blocks (rescue still runs)
 
         # LD block detection
         has_seeds = (model_df["PValue"] < args.ld_seed_p).any()
@@ -851,8 +905,8 @@ def run_pipeline(args):
                 log.info("  No seed SNPs at p < %.1e; using top-%d seeding.",
                          args.ld_seed_p, args.ld_top_n)
             else:
-                log.info("  No seed SNPs (p < %.1e) — skipping.", args.ld_seed_p)
-                continue
+                log.info("  No seed SNPs (p < %.1e) and no top-N seeding — no LD blocks "
+                         "(isolated-SNP rescue still runs).", args.ld_seed_p)
 
         try:
             m_ld_blocks = ld.find_ld_clusters_genomewide(
@@ -865,12 +919,38 @@ def run_pipeline(args):
             m_ld_blocks, _ = ld.filter_contained_blocks(m_ld_blocks, min_contained=2)
         except Exception as e:
             log.warning("  LD block detection failed for %s: %s", model_name, e)
-            continue
+            m_ld_blocks = pd.DataFrame()
 
         log.info("  %d LD blocks detected", len(m_ld_blocks))
 
         if model_name == "MLM":
             ld_blocks_mlm = m_ld_blocks
+
+        # ── Isolated-SNP rescue (T-45): runs for EVERY model, with or without
+        #    blocks. Set difference vs the FINAL block table; the block detector
+        #    is untouched. Emits parallel CSVs; never writes into m_ld_blocks. ──
+        if _do_rescue:
+            try:
+                _rescue = _iso.run_isolated_snp_rescue(
+                    model_df, m_ld_blocks, _sig_rule_obj, chroms, positions, sid,
+                    genes=_iso_genes_df, seed_p_used=args.ld_seed_p, top_n_used=args.ld_top_n,
+                    edge_flank_bp=_iso_edge_flank_bp, max_interval_bp=_iso_max_interval_bp,
+                    low_res_bp=_iso_low_res_bp, ld_decay_bp=_iso_ld_decay_bp,
+                )
+                if _rescue.n_uncovered > 0:
+                    extra_csvs[f"Isolated_SNP_intervals_{model_name}.csv"] = _rescue.intervals
+                    if _rescue.genes_long is not None and not _rescue.genes_long.empty:
+                        extra_csvs[f"Isolated_SNP_candidate_genes_{model_name}.csv"] = _rescue.genes_long
+                _iso_counts[model_name] = {
+                    "n_uncovered": _rescue.n_uncovered, "n_intervals": _rescue.n_intervals,
+                    "n_seeding_path": _rescue.n_seeding_path, "n_block_path": _rescue.n_block_path,
+                }
+                log.info("  Isolated-SNP rescue: %d significant SNP(s) with no LD block "
+                         "(%d seeding-threshold, %d block-formation) -> %d interval(s)",
+                         _rescue.n_uncovered, _rescue.n_seeding_path,
+                         _rescue.n_block_path, _rescue.n_intervals)
+            except Exception as e:
+                log.warning("  Isolated-SNP rescue failed for %s: %s", model_name, e)
 
         if m_ld_blocks.empty:
             continue
@@ -1132,6 +1212,13 @@ def run_pipeline(args):
             "Samples": int(geno_df.shape[0]),
             "SNPs (post-QC)": int(geno_df.shape[1]),
             "SNPs (raw)": int(n_raw),
+            "Isolated SNPs (no LD block)": (
+                "; ".join(
+                    f"{m}: {c['n_uncovered']} ({c['n_seeding_path']} seeding-threshold, "
+                    f"{c['n_block_path']} block-formation) -> {c['n_intervals']} interval(s)"
+                    for m, c in _iso_counts.items()
+                ) if _iso_counts else ("off" if not _do_rescue else "0")
+            ),
             "Lambda GC": round(lambda_gc, 4),
             "Kinship model": kinship_model,
             "LD decay (kb)": round(ld_decay_kb, 1) if ld_decay_kb else "N/A",
@@ -1186,6 +1273,7 @@ def run_pipeline(args):
         "geno_imputed": geno_imputed,
         "y": y,
         "meff_val": _meff_val,
+        "isolated_counts": _iso_counts,
     }
 
 
