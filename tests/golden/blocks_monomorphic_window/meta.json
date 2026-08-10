@@ -1,0 +1,24 @@
+{
+  "case": "blocks_monomorphic_window",
+  "tier": "A",
+  "generator_seed": 20260425,
+  "input_sha256": "bbe153bb9b1e40f70cfe0240e4c363727160d3efc288300b415ea46272b4172a",
+  "trace_commit": "375d80b2c5286a131b9b43c0267921b990782346",
+  "generated_utc": "2026-08-10T09:45:49Z",
+  "reason": "Window of >=2 markers that collapses to <2 after the variance filter -> emits nothing (monomorphic-window path).",
+  "params": {
+    "ld_threshold": 0.6,
+    "flank_kb": 300,
+    "min_snps": 3,
+    "top_n": 0,
+    "sig_thresh": 1e-05,
+    "adj_r2_min": 0.2,
+    "min_pair_n": 20,
+    "merge_iou": 0.3,
+    "gap_factor": 10.0
+  },
+  "comparison": {
+    "mode": "exact",
+    "float_tolerance": null
+  }
+}

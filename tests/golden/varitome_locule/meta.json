@@ -1,0 +1,26 @@
+{
+  "case": "varitome_locule",
+  "tier": "B",
+  "trait": "locule_number",
+  "source": "benchmarks/qc_data/tomato_locule_number (Varitome, 165x43974) \u2014 genotypes NOT committed",
+  "gwas_csv": "platform_GWAS_locule_number.csv",
+  "reproduces": "Supp Table S8 (six MLM LD blocks), read back from an actual run at the reproducing params \u2014 not from the PDF",
+  "median_decay_kb": 72.17,
+  "params": {
+    "flank_kb": 144,
+    "ld_decay_kb": 72.17,
+    "ld_threshold": 0.6,
+    "adj_r2_min": 0.2,
+    "min_snps": 3,
+    "top_n": 10,
+    "sig_thresh": 1e-05,
+    "gap_factor": 10.0,
+    "merge_iou": 0.3,
+    "min_pair_n": 20,
+    "min_contained": 2
+  },
+  "produced_by": "T-61 benchmarks/reconstruct_table_s8_params.py + benchmarks/capture_golden.py",
+  "comparison": {
+    "mode": "canonical_block_table"
+  }
+}

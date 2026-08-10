@@ -1,0 +1,24 @@
+{
+  "case": "blocks_single_typed_marker",
+  "tier": "A",
+  "generator_seed": 20260426,
+  "input_sha256": "2a43b2a4a65b650e4c0cdf65df5ef9518ad8c36e5881593fc2acc0b10d2eda11",
+  "trace_commit": "375d80b2c5286a131b9b43c0267921b990782346",
+  "generated_utc": "2026-08-10T09:45:49Z",
+  "reason": "A significant SNP alone in its flank window (m<2) -> the isolated/single-typed-marker skip -> emits nothing.",
+  "params": {
+    "ld_threshold": 0.6,
+    "flank_kb": 300,
+    "min_snps": 3,
+    "top_n": 0,
+    "sig_thresh": 1e-05,
+    "adj_r2_min": 0.2,
+    "min_pair_n": 20,
+    "merge_iou": 0.3,
+    "gap_factor": 10.0
+  },
+  "comparison": {
+    "mode": "exact",
+    "float_tolerance": null
+  }
+}

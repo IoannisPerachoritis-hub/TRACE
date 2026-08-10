@@ -53,6 +53,9 @@ outputs/
 *.pickle
 *.npy
 *.npz
+# Tier-A golden fixtures are small, engineered LD inputs committed on purpose
+# (the algorithmic regression pin — see tests/golden/README.md).
+!tests/golden/*/input.npz
 __pycache__/
 
 # OS files

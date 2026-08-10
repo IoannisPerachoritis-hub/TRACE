@@ -1,0 +1,24 @@
+{
+  "case": "blocks_gap_split",
+  "tier": "A",
+  "generator_seed": 20260423,
+  "input_sha256": "60a3647e880cf9e7350b73b7c111761ddd019897785ad896802eea2d8f5fc7a3",
+  "trace_commit": "375d80b2c5286a131b9b43c0267921b990782346",
+  "generated_utc": "2026-08-10T09:45:49Z",
+  "reason": "One connected component split into two segments by a physical gap exceeding gap_factor x median gap (contiguous_segments_by_adjacent).",
+  "params": {
+    "ld_threshold": 0.6,
+    "flank_kb": 300,
+    "min_snps": 3,
+    "top_n": 0,
+    "sig_thresh": 1e-05,
+    "adj_r2_min": 0.2,
+    "min_pair_n": 20,
+    "merge_iou": 0.3,
+    "gap_factor": 10.0
+  },
+  "comparison": {
+    "mode": "exact",
+    "float_tolerance": null
+  }
+}

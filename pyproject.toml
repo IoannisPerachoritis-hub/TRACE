@@ -95,3 +95,9 @@ py-modules = ["cli", "annotation", "app"]
 
 [tool.setuptools.package-data]
 "*" = ["*.csv", "*.tsv", "*.txt", "*.gff.gz", "*.fam", "*.vcf", "*.html.j2"]
+
+[tool.pytest.ini_options]
+markers = [
+    "golden: real-data published-output regression pin (T-94); needs benchmarks/qc_data/, excluded from CI with -m 'not golden'",
+    "manuscript: Tier-B manuscript block-table pin (T-71); needs TRACE_VARITOME_DIR, opt-in",
+]
