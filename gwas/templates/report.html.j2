@@ -175,6 +175,23 @@ interval and gene evidence. This table is complete &mdash; no significant SNP is
 <div style="overflow-x:auto">{{ significant_snps_html | safe }}</div>
 {% endif %}
 
+<!-- ── Per-SNP effect plots (T-21) ───────────────────── -->
+{% if snp_plots %}
+<h2>Per-SNP effect plots</h2>
+<p>Genotype-class phenotype distributions for the top significant SNPs. A box is
+drawn only for classes with n&nbsp;&ge;&nbsp;5; the structure-adjusted &beta;<sub>MLM</sub>,
+the raw-vs-adjusted effect flag, and the per-SNP &eta;<sup>2</sup> are annotated. Plots are
+capped for report size &mdash; the significant-SNP table above is complete.</p>
+<div style="display:flex;flex-wrap:wrap;gap:10px">
+{% for p in snp_plots %}
+<figure style="margin:0;text-align:center">
+  <img src="data:image/png;base64,{{ p.b64 }}" alt="{{ p.snp }}" style="max-width:280px">
+  <figcaption style="font-size:0.8em">{{ p.caption }}</figcaption>
+</figure>
+{% endfor %}
+</div>
+{% endif %}
+
 <!-- ── Isolated significant SNPs (no LD block) ───────── -->
 {% if isolated_intervals_html %}
 <h2>Significant SNPs with no LD block</h2>

@@ -16,15 +16,17 @@ from jinja2 import Environment, FileSystemLoader
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 
-def _fig_to_b64(fig_or_bytes):
-    """Convert a matplotlib Figure or raw PNG bytes to base64 string."""
+def _fig_to_b64(fig_or_bytes, dpi=150):
+    """Convert a matplotlib Figure or raw PNG bytes to base64 string. ``dpi``
+    governs the raster size of Figure inputs — lower it for the many small
+    per-SNP boxplots to keep the self-contained report under the size cap."""
     if fig_or_bytes is None:
         return None
     if isinstance(fig_or_bytes, (bytes, bytearray)):
         return base64.b64encode(fig_or_bytes).decode("ascii")
     # Assume matplotlib Figure
     buf = BytesIO()
-    fig_or_bytes.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    fig_or_bytes.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("ascii")
 
@@ -66,6 +68,7 @@ def generate_gwas_report(
     significant_snps_df=None,
     unblocked_snps_df=None,
     isolated_intervals_df=None,
+    snp_boxplots=None,
 ):
     """
     Generate a self-contained HTML report for GWAS results.
@@ -158,6 +161,15 @@ def generate_gwas_report(
     significant_snps_html = _df_to_html(significant_snps_df, max_rows=None)
     isolated_intervals_html = _df_to_html(isolated_intervals_df, max_rows=50)
 
+    # Per-SNP effect boxplots (T-21). Many small figures -> lower dpi to bound the
+    # self-contained report size; the table above stays complete regardless.
+    snp_plots = []
+    for _sp in (snp_boxplots or []):
+        _sid, _fig, _cap = _sp
+        _b64 = _fig_to_b64(_fig, dpi=90)
+        if _b64:
+            snp_plots.append({"snp": _sid, "b64": _b64, "caption": _cap})
+
     # Metadata JSON
     metadata_json = json.dumps(metadata or {}, indent=2, default=str)
 
@@ -183,6 +195,7 @@ def generate_gwas_report(
         sig_label=_sig_label,
         significant_snps_html=significant_snps_html,
         isolated_intervals_html=isolated_intervals_html,
+        snp_plots=snp_plots,
     )
 
     return html
