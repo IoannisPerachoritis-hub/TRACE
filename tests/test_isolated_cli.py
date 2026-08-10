@@ -37,13 +37,15 @@ def _run_cli(data_dir, out_dir, extra):
 # ---- AC-N5: additive at the bundle level ----
 def test_rescue_is_additive_and_escape_hatch_is_clean(tmp_path):
     """rescue ON vs OFF: every member present in both is byte-identical, and the
-    only new members are Isolated_SNP_* files."""
+    only new members are the post-GWAS-visibility tables (Isolated_SNP_* /
+    Significant_SNPs_* / Unblocked_SNPs_*), all gated by --no-isolated-rescue."""
     d = tmp_path / "data"
     on = _run_cli(d, tmp_path / "on", [])                          # rescue ON (default)
     off = _run_cli(d, tmp_path / "off", ["--no-isolated-rescue"])  # rescue OFF
 
+    _allowed = ("Isolated_SNP", "Significant_SNPs", "Unblocked_SNPs")
     new = set(on) - set(off)
-    assert all("Isolated_SNP" in n for n in new), f"rescue added non-isolated members: {new}"
+    assert all(any(p in n for p in _allowed) for n in new), f"unexpected new members: {new}"
 
     for n in set(on) & set(off):
         if any(s in n for s in _SKIP_NONDETERMINISTIC):

@@ -952,6 +952,29 @@ def run_pipeline(args):
             except Exception as e:
                 log.warning("  Isolated-SNP rescue failed for %s: %s", model_name, e)
 
+        # ── Significant-SNP table (T-20): every reporting-significant SNP, marked
+        #    in_block/unblocked with candidate interval + gene evidence. Same escape
+        #    hatch as the rescue so --no-isolated-rescue stays byte-clean. Runs for
+        #    every model (block or not) before the empty-block skip below. ──
+        if _do_rescue:
+            try:
+                from gwas.sigtable import build_significant_snp_table, project_unblocked
+                _sigtab = build_significant_snp_table(
+                    model_df, m_ld_blocks, _sig_rule_obj, chroms, positions, sid,
+                    geno_dosage_raw=geno_dosage_raw, genes=_iso_genes_df,
+                    seed_p_used=args.ld_seed_p, top_n_used=args.ld_top_n,
+                    edge_flank_bp=_iso_edge_flank_bp, max_interval_bp=_iso_max_interval_bp,
+                    low_res_bp=_iso_low_res_bp, ld_decay_bp=_iso_ld_decay_bp,
+                    genome_build=getattr(args, "genome_build", "SL3"), species=args.species,
+                )
+                if not _sigtab.empty:
+                    extra_csvs[f"Significant_SNPs_{model_name}.csv"] = _sigtab
+                    extra_csvs[f"Unblocked_SNPs_{model_name}.csv"] = project_unblocked(_sigtab)
+                    log.info("  Significant-SNP table: %d rows (%d unblocked) for %s",
+                             len(_sigtab), int((_sigtab["Block_Status"] != "in_block").sum()), model_name)
+            except Exception as e:
+                log.warning("  Significant-SNP table failed for %s: %s", model_name, e)
+
         if m_ld_blocks.empty:
             continue
 
