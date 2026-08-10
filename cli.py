@@ -891,6 +891,17 @@ def run_pipeline(args):
         except Exception as e:
             log.warning("Isolated rescue: gene model load failed (%s); intervals will lack genes.", e)
 
+    # ── Post-GWAS frames captured for the HTML report (T-80) ─────────────
+    # The report previously omitted every post-GWAS table (defect 0.2). Capture
+    # the primary model's frames (MLM if run, else the first model) plus each
+    # model's annotation/haplotype. Additive: when a frame is absent the report
+    # renders exactly as before (every report section is {% if %}-guarded).
+    _primary_model = "MLM" if any(m == "MLM" for m, _ in post_gwas_models) else (
+        post_gwas_models[0][0] if post_gwas_models else None)
+    _report_sig_table = _report_unblocked = _report_isolated = None
+    _report_ld_annotated = _report_hap_gwas = None
+    _per_model_post = {}
+
     for model_name, model_df in post_gwas_models:
         log.info("Post-GWAS: %s", model_name)
         m_hap_gwas = None
@@ -941,6 +952,8 @@ def run_pipeline(args):
                     extra_csvs[f"Isolated_SNP_intervals_{model_name}.csv"] = _rescue.intervals
                     if _rescue.genes_long is not None and not _rescue.genes_long.empty:
                         extra_csvs[f"Isolated_SNP_candidate_genes_{model_name}.csv"] = _rescue.genes_long
+                    if model_name == _primary_model:
+                        _report_isolated = _rescue.intervals
                 _iso_counts[model_name] = {
                     "n_uncovered": _rescue.n_uncovered, "n_intervals": _rescue.n_intervals,
                     "n_seeding_path": _rescue.n_seeding_path, "n_block_path": _rescue.n_block_path,
@@ -968,8 +981,11 @@ def run_pipeline(args):
                     genome_build=getattr(args, "genome_build", "SL3"), species=args.species,
                 )
                 if not _sigtab.empty:
+                    _unb = project_unblocked(_sigtab)
                     extra_csvs[f"Significant_SNPs_{model_name}.csv"] = _sigtab
-                    extra_csvs[f"Unblocked_SNPs_{model_name}.csv"] = project_unblocked(_sigtab)
+                    extra_csvs[f"Unblocked_SNPs_{model_name}.csv"] = _unb
+                    if model_name == _primary_model:
+                        _report_sig_table, _report_unblocked = _sigtab, _unb
                     log.info("  Significant-SNP table: %d rows (%d unblocked) for %s",
                              len(_sigtab), int((_sigtab["Block_Status"] != "in_block").sum()), model_name)
             except Exception as e:
@@ -1092,6 +1108,18 @@ def run_pipeline(args):
                 extra_csvs[f"LD_blocks_annotated_{model_name}.csv"] = m_consolidated
         except Exception as e:
             log.warning("  LD block consolidation failed for %s: %s", model_name, e)
+
+        # Capture per-model annotation/haplotype frames for the HTML report (T-80)
+        _mp = {}
+        if m_ld_annotated is not None and not getattr(m_ld_annotated, "empty", True):
+            _mp["ld_blocks_annotated_df"] = m_ld_annotated
+        if m_hap_gwas is not None and not getattr(m_hap_gwas, "empty", True):
+            _mp["haplotype_gwas_df"] = m_hap_gwas
+        if _mp:
+            _per_model_post[model_name] = _mp
+        if model_name == _primary_model:
+            _report_ld_annotated = m_ld_annotated
+            _report_hap_gwas = m_hap_gwas
 
     # ── Subsampling GWAS ───────────────────────────────────
     boot_disc_df = None
@@ -1259,6 +1287,16 @@ def run_pipeline(args):
             metadata=meta,
             mlmm_df=cofactor_tables.get("MLMM"),
             farmcpu_df=cofactor_tables.get("FarmCPU"),
+            ld_blocks_df=ld_blocks_mlm,
+            ld_blocks_annotated_df=_report_ld_annotated,
+            haplotype_gwas_df=_report_hap_gwas,
+            per_model_post_gwas=_per_model_post or None,
+            significant_snps_df=_report_sig_table,
+            unblocked_snps_df=_report_unblocked,
+            isolated_intervals_df=_report_isolated,
+            sig_label=_sig_rule_obj.label,
+            n_significant_override=(
+                len(_report_sig_table) if _report_sig_table is not None else None),
             lambda_gc=lambda_gc,
             n_samples=int(geno_df.shape[0]),
             n_snps=int(geno_df.shape[1]),

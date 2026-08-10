@@ -33,7 +33,9 @@ def _df_to_html(df, max_rows=30):
     """Convert DataFrame to HTML table string."""
     if df is None or df.empty:
         return None
-    df_display = df.head(max_rows).copy()
+    # max_rows=None -> render the whole table (the significant-SNP table must never
+    # be truncated; a large table gets a scrollable div in CSS, never a cap).
+    df_display = df.copy() if max_rows is None else df.head(max_rows).copy()
     # Format float columns
     for col in df_display.select_dtypes(include=[np.floating]).columns:
         df_display[col] = df_display[col].map(
@@ -61,6 +63,9 @@ def generate_gwas_report(
     per_model_post_gwas=None,
     sig_label=None,
     n_significant_override=None,
+    significant_snps_df=None,
+    unblocked_snps_df=None,
+    isolated_intervals_df=None,
 ):
     """
     Generate a self-contained HTML report for GWAS results.
@@ -149,6 +154,10 @@ def generate_gwas_report(
             ]):
                 model_sections.append(section)
 
+    # Significant-SNP table (complete; T-20) + isolated intervals (T-45/46)
+    significant_snps_html = _df_to_html(significant_snps_df, max_rows=None)
+    isolated_intervals_html = _df_to_html(isolated_intervals_df, max_rows=50)
+
     # Metadata JSON
     metadata_json = json.dumps(metadata or {}, indent=2, default=str)
 
@@ -172,6 +181,8 @@ def generate_gwas_report(
         model_sections=model_sections,
         metadata_json=metadata_json,
         sig_label=_sig_label,
+        significant_snps_html=significant_snps_html,
+        isolated_intervals_html=isolated_intervals_html,
     )
 
     return html
