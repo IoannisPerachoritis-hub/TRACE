@@ -1,0 +1,24 @@
+{
+  "case": "blocks_two_separated",
+  "tier": "A",
+  "generator_seed": 20260422,
+  "input_sha256": "280d85477de31764e9fa147721dfb74c717ef8a0a94fa44934c0c71ecb73e30b",
+  "trace_commit": "375d80b2c5286a131b9b43c0267921b990782346",
+  "generated_utc": "2026-08-10T09:45:49Z",
+  "reason": "Two internally-correlated groups with no cross-group LD in one seed window -> two disjoint components -> two blocks.",
+  "params": {
+    "ld_threshold": 0.6,
+    "flank_kb": 300,
+    "min_snps": 3,
+    "top_n": 0,
+    "sig_thresh": 1e-05,
+    "adj_r2_min": 0.2,
+    "min_pair_n": 20,
+    "merge_iou": 0.3,
+    "gap_factor": 10.0
+  },
+  "comparison": {
+    "mode": "exact",
+    "float_tolerance": null
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "case": "blocks_dense_ld",
+  "tier": "A",
+  "generator_seed": 20260421,
+  "input_sha256": "9bd4336c610e136b83cc086c0afafeac16d6338f65d88a42f617bc86bbbba106",
+  "trace_commit": "375d80b2c5286a131b9b43c0267921b990782346",
+  "generated_utc": "2026-08-10T09:45:49Z",
+  "reason": "One dense connected component -> a single 5-SNP block; exercises component detection with no contiguity or gap split.",
+  "params": {
+    "ld_threshold": 0.6,
+    "flank_kb": 300,
+    "min_snps": 3,
+    "top_n": 0,
+    "sig_thresh": 1e-05,
+    "adj_r2_min": 0.2,
+    "min_pair_n": 20,
+    "merge_iou": 0.3,
+    "gap_factor": 10.0
+  },
+  "comparison": {
+    "mode": "exact",
+    "float_tolerance": null
+  }
+}

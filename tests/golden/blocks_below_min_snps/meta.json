@@ -1,0 +1,24 @@
+{
+  "case": "blocks_below_min_snps",
+  "tier": "A",
+  "generator_seed": 20260424,
+  "input_sha256": "e33480bf8e5509e27c4dd9ff8a98dbad466a6115256aae138b39d25c7016e515",
+  "trace_commit": "375d80b2c5286a131b9b43c0267921b990782346",
+  "generated_utc": "2026-08-10T09:45:49Z",
+  "reason": "A component of size min_snps-1 (=2) that must emit NOTHING at min_snps=3; the discriminating case for the min-SNP gate.",
+  "params": {
+    "ld_threshold": 0.6,
+    "flank_kb": 300,
+    "min_snps": 3,
+    "top_n": 0,
+    "sig_thresh": 1e-05,
+    "adj_r2_min": 0.2,
+    "min_pair_n": 20,
+    "merge_iou": 0.3,
+    "gap_factor": 10.0
+  },
+  "comparison": {
+    "mode": "exact",
+    "float_tolerance": null
+  }
+}
