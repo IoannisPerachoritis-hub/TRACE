@@ -19,6 +19,7 @@ from pages._ld_tabs import tab_local_ld
 from pages._ld_tabs import tab_gene_annotation
 from pages._ld_tabs import tab_decay
 from pages._ld_tabs import tab_genome_wide
+from pages._ld_tabs import tab_significant_snps
 
 
 
@@ -679,18 +680,25 @@ def ld_analysis_page():
         geno_encoding=geno_encoding,
         show_ld_labels=st.session_state.get("show_ld_labels", False),
         has_annotation=_HAS_ANNOTATION,
+        geno_dosage_raw=st.session_state.get("geno_dosage_raw"),
+        meff_val=st.session_state.get("meff_val"),
+        sig_rule_label=st.session_state.get("sig_rule", ""),
     )
 
     # ============================================================
     # Tabs
     # ============================================================
-    tab_blocks, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
+    tab_sig, tab_blocks, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
+        "Significant SNPs",
         "Block Heatmaps",
         "Local LD",
         "Gene Annotation",
         "LD Decay",
         "LD Blocks & Haplotypes",
     ])
+    with tab_sig:
+        tab_significant_snps.render(_ld_ctx)
+
     with tab_blocks:
         tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
 
