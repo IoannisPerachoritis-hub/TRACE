@@ -36,6 +36,20 @@ def test_haplotype_section_renders_the_previously_orphaned_var():
     assert "0.35" in html
 
 
+def test_snp_boxplot_section_renders():
+    import matplotlib
+    matplotlib.use("Agg")
+    import numpy as np
+    from gwas.snpplots import render_snp_boxplot
+    fig = render_snp_boxplot("s0", np.array([0, 0, 0, 0, 0, 1, 1, 2, 2, 2], dtype=float),
+                             np.arange(10.0), beta_mlm=0.4, se_mlm=0.1, beta_ols=0.5)
+    html = _render(snp_boxplots=[("s0", fig, "s0 · in_block · concordant")])
+    assert "Per-SNP effect plots" in html
+    assert "data:image/png;base64," in html
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+
+
 def test_isolated_section_renders():
     iso = pd.DataFrame({"Chr": ["2"], "Start (bp)": [100], "End (bp)": [200],
                         "interval_bp": [100], "n_typed_markers_interior": [0]})

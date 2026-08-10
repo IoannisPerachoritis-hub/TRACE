@@ -138,6 +138,15 @@ def _build_parser():
     ld_grp.add_argument("--isolated-low-res-kb", type=int, default=None,
                          help="Interval width (kb) above which an isolated interval is flagged "
                               "low-resolution (default: max(2x LD decay, 400)).")
+    ld_grp.add_argument("--snp-plots", choices=("none", "capped", "all"), default="capped",
+                         help="Per-SNP effect boxplots in the HTML report: none, capped "
+                              "(top --max-snp-plots), or all (default: capped). The "
+                              "Significant_SNPs table is always complete regardless.")
+    ld_grp.add_argument("--max-snp-plots", type=int, default=24,
+                         help="Max per-SNP boxplots embedded when --snp-plots=capped (default: 24).")
+    ld_grp.add_argument("--collapse-r2", type=float, default=0.9,
+                         help="PLOTS ONLY: collapse near-redundant significant SNPs (r2 >= this to a "
+                              "representative) before plotting; the table is unaffected (default: 0.9).")
 
     # ── Output options ────────────────────────────────────
     parser.add_argument("--no-report", action="store_true", help="Skip HTML report generation")
@@ -1241,6 +1250,52 @@ def run_pipeline(args):
             )
             figures["PCA_scatter.png"] = fig_pca
 
+    # ── Per-SNP effect boxplots + plotting ledger (T-21/T-84–86) ──────────
+    # Primary model only. The significant-SNP table stays complete — this only
+    # bounds how many figures the report embeds (--snp-plots / --max-snp-plots),
+    # and --collapse-r2 thins near-redundant SNPs for PLOTTING only. Emits
+    # SNP_view_index; gated by --no-isolated-rescue (no _report_sig_table).
+    # (Block_sample_retention is deferred to the LD-triage sub-batch, where the
+    # haplotype test's frac_retained is hoisted into its output frame.)
+    _snp_boxplots = []
+    if (_do_rescue and _report_sig_table is not None and not _report_sig_table.empty
+            and geno_dosage_raw is not None):
+        try:
+            from gwas.snpplots import (build_snp_view_index, render_snp_boxplot,
+                                       select_snps_for_plotting)
+            from gwas.snpview import collapse_snps_for_plotting, effect_flag
+            _collapse = collapse_snps_for_plotting(
+                _report_sig_table, geno_dosage_raw, sid, r2_threshold=args.collapse_r2)
+            _rep_ids = set(_collapse.loc[
+                _collapse["SNP"] == _collapse["Representative_SNP"], "SNP"].astype(str))
+            _rep_table = _report_sig_table[_report_sig_table["SNP"].astype(str).isin(_rep_ids)]
+            _plot_ids = select_snps_for_plotting(
+                _rep_table, mode=args.snp_plots, max_plots=args.max_snp_plots)
+            extra_csvs[f"SNP_view_index_{_primary_model}.csv"] = build_snp_view_index(
+                _report_sig_table, _plot_ids, _collapse)
+            if _plot_ids and not args.no_report:
+                _sid_arr = np.asarray(sid).astype(str)
+                _geno_raw = np.asarray(geno_dosage_raw, dtype=float)
+                _yv = np.asarray(y, dtype=float).ravel()
+                for _pid in _plot_ids:
+                    _mi = np.where(_sid_arr == str(_pid))[0]
+                    _rowsel = _report_sig_table[_report_sig_table["SNP"].astype(str) == str(_pid)]
+                    if len(_mi) == 0 or _rowsel.empty:
+                        continue
+                    _row = _rowsel.iloc[0]
+                    _bm = _row.get("Beta_MLM"); _bo = _row.get("Beta_OLS"); _se = _row.get("SE_MLM")
+                    _bm = float(_bm) if pd.notna(_bm) else None
+                    _bo = float(_bo) if pd.notna(_bo) else None
+                    _se = float(_se) if pd.notna(_se) else None
+                    _flag = effect_flag(_bm if _bm is not None else np.nan,
+                                        _bo if _bo is not None else np.nan)
+                    _cap = f"{_pid} · {_row.get('Block_Status', '')} · {_flag}"
+                    _fig = render_snp_boxplot(str(_pid), _geno_raw[:, int(_mi[0])], _yv,
+                                              beta_mlm=_bm, se_mlm=_se, beta_ols=_bo)
+                    _snp_boxplots.append((str(_pid), _fig, _cap))
+        except Exception as e:
+            log.warning("Per-SNP boxplots/ledger failed: %s", e)
+
     # ── Build HTML report (in-memory) ────────────────────
     report_html = None
     if not args.no_report:
@@ -1294,6 +1349,7 @@ def run_pipeline(args):
             significant_snps_df=_report_sig_table,
             unblocked_snps_df=_report_unblocked,
             isolated_intervals_df=_report_isolated,
+            snp_boxplots=_snp_boxplots or None,
             sig_label=_sig_rule_obj.label,
             n_significant_override=(
                 len(_report_sig_table) if _report_sig_table is not None else None),

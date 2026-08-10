@@ -43,7 +43,7 @@ def test_rescue_is_additive_and_escape_hatch_is_clean(tmp_path):
     on = _run_cli(d, tmp_path / "on", [])                          # rescue ON (default)
     off = _run_cli(d, tmp_path / "off", ["--no-isolated-rescue"])  # rescue OFF
 
-    _allowed = ("Isolated_SNP", "Significant_SNPs", "Unblocked_SNPs")
+    _allowed = ("Isolated_SNP", "Significant_SNPs", "Unblocked_SNPs", "SNP_view_index")
     new = set(on) - set(off)
     assert all(any(p in n for p in _allowed) for n in new), f"unexpected new members: {new}"
 
