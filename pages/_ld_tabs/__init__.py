@@ -50,3 +50,8 @@ class LDContext:
     geno_encoding: str | None = None
     show_ld_labels: bool = False
     has_annotation: bool = False
+
+    # --- significant-SNP tab (R1.6/R3.7): raw dosage + the resolved reporting rule ---
+    geno_dosage_raw: np.ndarray | None = None
+    meff_val: int | None = None
+    sig_rule_label: str = ""
