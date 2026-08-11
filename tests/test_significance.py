@@ -135,3 +135,13 @@ def test_custom_rule_prefers_boolean_column_when_present():
     r = rule_from_cli_args(SimpleNamespace(sig_thresh=5e-8), 100, MEFF)
     df = pd.DataFrame({"PValue": [1e-9, 0.5], "Significant_Custom": [False, True]})
     assert list(r.significant_mask(df)) == [False, True]
+
+
+def test_rule_from_streamlit_custom():
+    r = rule_from_streamlit("Custom p-value (e.g. 5e-8)", N_SNPS, MEFF, custom_thresh=5e-8)
+    assert r.rule == "custom" and r.p_threshold == 5e-8
+    assert r.boolean_column == "Significant_Custom"
+    # named labels still resolve (no threshold needed)
+    assert rule_from_streamlit("FDR (q<0.05)", N_SNPS, MEFF).rule == "fdr"
+    assert rule_from_streamlit("Bonferroni (alpha=0.05)", N_SNPS, MEFF).rule == "bonferroni"
+    assert rule_from_streamlit("M_eff - Li & Ji", N_SNPS, MEFF).rule == "meff"

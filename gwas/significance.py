@@ -127,10 +127,14 @@ def rule_from_cli_args(args, n_snps: int, meff_val) -> SignificanceRule:
     return _build(rule, n_snps, meff_val)
 
 
-def rule_from_streamlit(sig_rule_label: str, n_snps: int, meff_val) -> SignificanceRule:
-    """Resolve the rule from the GUI's label string — mirrors
-    ``pages/GWAS_analysis.py:3462-3473`` (the ``startswith`` tests)."""
+def rule_from_streamlit(sig_rule_label, n_snps, meff_val, custom_thresh=None) -> SignificanceRule:
+    """Resolve the rule from the GUI's reporting-rule label (the ``startswith``
+    tests in ``pages/GWAS_analysis.py``). A ``"Custom…"`` label with a numeric
+    ``custom_thresh`` resolves to the ``custom`` rule — parity with the CLI numeric
+    ``--sig-thresh``."""
     s = str(sig_rule_label)
+    if s.startswith("Custom") and custom_thresh is not None:
+        return _build_custom(float(custom_thresh))
     if s.startswith("FDR"):
         rule = "fdr"
     elif s.startswith("M_eff"):
