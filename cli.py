@@ -68,7 +68,7 @@ def _build_parser():
 
     # Significance threshold
     parser.add_argument(
-        "--sig-thresh", default="meff",
+        "--sig-thresh", default="bonferroni",
         choices=["meff", "bonferroni", "fdr"],
         help="Significance threshold: meff (LD-aware, default), bonferroni, fdr (q<0.05)",
     )
@@ -233,7 +233,7 @@ def _build_equivalent_command(args):
         parts.append(f"--subsampling --boot-reps {args.boot_reps}")
         if args.boot_jobs != 1:
             parts.append(f"--boot-jobs {args.boot_jobs}")
-    if getattr(args, "sig_thresh", "meff") != "meff":
+    if getattr(args, "sig_thresh", "bonferroni") != "meff":
         parts.append(f"--sig-thresh {args.sig_thresh}")
     if args.maf != 0.05:
         parts.append(f"--maf {args.maf}")
@@ -708,7 +708,7 @@ def run_pipeline(args):
     bonf_thresh_naive = 0.05 / geno_df.shape[1]
 
     # Primary threshold based on user choice
-    sig_rule = getattr(args, "sig_thresh", "meff")
+    sig_rule = getattr(args, "sig_thresh", "bonferroni")
     if sig_rule == "bonferroni":
         primary_thresh = bonf_thresh_naive
         log.info("Significance: Bonferroni %.2e (%d SNPs)", primary_thresh, geno_df.shape[1])

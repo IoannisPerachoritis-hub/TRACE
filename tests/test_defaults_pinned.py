@@ -293,7 +293,7 @@ def test_const_gui_r2_cache_capacity():
 # 3. CLI defaults (4) — parser introspection
 # ===========================================================================
 CLI_DEFAULTS = [
-    ("sig_thresh", "meff", "cli.py --sig-thresh"),
+    ("sig_thresh", "bonferroni", "cli.py --sig-thresh"),
     ("species", "tomato", "cli.py --species"),
     ("genome_build", "SL3", "cli.py --genome-build"),
     ("seed", 42, "cli.py:104 --seed"),
