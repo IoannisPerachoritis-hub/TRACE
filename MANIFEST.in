@@ -1,0 +1,6 @@
+# Ship the annotation data + example dataset in the source distribution so a
+# build from sdist has the default gene models and a runnable example.
+recursive-include data *.csv *.tsv *.txt *.gff.gz *.fam
+recursive-include examples *
+recursive-include gwas *.html.j2
+include README.md
