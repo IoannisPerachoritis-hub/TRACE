@@ -201,7 +201,7 @@ class TestCLIArgParsing:
         args = parser.parse_args([
             "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/",
         ])
-        assert args.sig_thresh == "meff"
+        assert args.sig_thresh == "bonferroni"
 
     def test_sig_thresh_choices(self):
         parser = _build_parser()
@@ -275,14 +275,14 @@ class TestInteractiveHelpers:
         args.pheno = "pheno.csv"
         args.trait = "Yield"
         args.output = "results/"
-        # default meff — should NOT appear
-        args.sig_thresh = "meff"
+        # default bonferroni — should NOT appear
+        args.sig_thresh = "bonferroni"
         cmd = _build_equivalent_command(args)
         assert "--sig-thresh" not in cmd
         # non-default — should appear
-        args.sig_thresh = "bonferroni"
+        args.sig_thresh = "meff"
         cmd = _build_equivalent_command(args)
-        assert "--sig-thresh bonferroni" in cmd
+        assert "--sig-thresh meff" in cmd
 
     def test_peek_phenotype_missing_file(self):
         from cli import _peek_phenotype
