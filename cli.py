@@ -120,8 +120,10 @@ def _build_parser():
     ld_grp.add_argument("--no-annotation", action="store_true",
                          help="Skip gene annotation")
     ld_grp.add_argument("--genome-build", default="SL3", choices=["SL3", "SL4"],
-                         help="Genome build for tomato gene annotation: SL3 (matches Varitome "
-                              "(matches Varitome SNP coords, default) or SL4 = ITAG4.0.")
+                         help="Tomato gene-model assembly: SL3 = SL3.1 (default), SL4 = ITAG4.0. "
+                              "Note: Varitome SNPs are in SL2.5, so gene coordinates in either build are "
+                              "offset from the SNP positions (SL3 by ~0.5 Mb, SL4 more) and annotation is "
+                              "positional, not coordinate-exact.")
     ld_grp.add_argument("--species", default="tomato", choices=["tomato", "custom"],
                          help="Species for annotation files (default: tomato)")
     ld_grp.add_argument("--gene-model", help="Gene coordinate CSV (required if --species custom)")

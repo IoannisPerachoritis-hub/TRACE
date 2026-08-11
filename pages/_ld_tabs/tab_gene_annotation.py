@@ -39,7 +39,9 @@ def render(ctx: LDContext):
     if _ld_has_build:
         _ld_build = st.selectbox(
             "Genome build", ["SL3", "SL4"], key="ld_genome_build",
-            help="SL3 = SL3.1 gene models (matches Varitome / SL2.5 SNP coordinates). SL4 = ITAG4.0.",
+            help="SL3 = SL3.1 gene models (default); SL4 = ITAG4.0. Varitome SNPs are in SL2.5, so "
+                 "gene coordinates in either build are offset from the SNP positions (SL3 by ~0.5 Mb, "
+                 "SL4 more); annotation is positional, not coordinate-exact.",
         )
         _ld_gm_auto = _ld_auto.get(f"gene_model_{_ld_build}")
         _ld_desc_auto = _ld_auto.get(f"gene_desc_{_ld_build}")
