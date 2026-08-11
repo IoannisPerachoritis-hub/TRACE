@@ -62,6 +62,14 @@ def _build_parser():
     parser.add_argument("--n-pcs-mlmm", type=int, default=None, help="PCs for MLMM (overrides --n-pcs)")
     parser.add_argument("--n-pcs-farmcpu", type=int, default=None, help="PCs for FarmCPU (overrides --n-pcs)")
     parser.add_argument(
+        "--covar",
+        help="CSV/TSV of user covariates: first column = sample ID (matching the VCF), "
+             "remaining columns = numeric covariates. Added as fixed effects to every "
+             "model, alongside the PCs. Samples missing a covariate value are dropped.")
+    parser.add_argument(
+        "--covar-cols",
+        help="Comma-separated subset of covariate columns to use (default: all columns).")
+    parser.add_argument(
         "--farmcpu-final-scan", default="mlm", choices=["ols", "mlm"],
         help="FarmCPU final scan: mlm (LOCO-corrected, default) or ols (standard)",
     )
@@ -517,6 +525,30 @@ def run_pipeline(args):
     )
     log.info("  %d samples after phenotype QC", geno_df.shape[0])
 
+    # ── Optional user covariates: load + align to the phenotype-QC'd sample set,
+    #    dropping samples that lack a covariate value BEFORE PCA/kinship so every
+    #    downstream array (iid/geno/K/PCs) is built on the covar-complete set ──
+    covar_df_sel = None
+    if getattr(args, "covar", None):
+        from gwas.covariates import (
+            load_covariate_frame, select_covariate_columns, align_covariates,
+        )
+        _cov_cols = ([c.strip() for c in args.covar_cols.split(",")]
+                     if getattr(args, "covar_cols", None) else None)
+        covar_df_sel = select_covariate_columns(
+            load_covariate_frame(args.covar), _cov_cols)
+        _cov_M, _cov_names, _cov_ok = align_covariates(covar_df_sel, geno_df.index)
+        _n_drop = int((~_cov_ok).sum())
+        if _n_drop:
+            log.warning("  --covar: dropping %d sample(s) missing covariate values", _n_drop)
+            geno_df = geno_df.iloc[_cov_ok]
+            pheno = pheno.iloc[_cov_ok]
+            y = y[_cov_ok]
+        if geno_df.shape[0] == 0:
+            raise SystemExit("No samples remain after dropping covariate-missing rows.")
+        log.info("  --covar: %d covariate(s) [%s] on %d samples",
+                 covar_df_sel.shape[1], ", ".join(_cov_names), geno_df.shape[0])
+
     log.info("SNP QC (MAF=%.3f, miss=%.2f, MAC=%d, INFO=%.2f)…",
              args.maf, args.miss, args.mac, args.info_thresh)
     canonical = (tuple(str(i) for i in range(1, args.n_chromosomes + 1))
@@ -558,10 +590,24 @@ def run_pipeline(args):
     from gwas.utils import PhenoData, CovarData
     pheno_reader = PhenoData(iid, y)
 
+    # Aligned user-covariate matrix (in iid order); None unless --covar was given.
+    user_covar_mat = None
+    user_covar_names = None
+    if covar_df_sel is not None:
+        from gwas.covariates import align_covariates as _align_cov
+        user_covar_mat, user_covar_names, _ = _align_cov(covar_df_sel, iid[:, 0])
+
     def _make_covar(k):
-        if pcs_full is None or k <= 0:
-            return None
-        return CovarData(iid, pcs_full[:, :k])
+        if user_covar_mat is None:
+            # original path — byte-identical when no user covariates are supplied
+            if pcs_full is None or k <= 0:
+                return None
+            return CovarData(iid, pcs_full[:, :k])
+        _pc = pcs_full[:, :k] if (pcs_full is not None and k > 0) else None
+        if _pc is None:
+            return CovarData(iid, user_covar_mat, names=list(user_covar_names))
+        return CovarData(iid, np.c_[_pc, user_covar_mat],
+                         names=[f"PC{i + 1}" for i in range(int(k))] + list(user_covar_names))
 
     extra_csvs = {}  # additional CSVs to include in ZIP
     figures = {}     # figures to include in ZIP
@@ -726,6 +772,7 @@ def run_pipeline(args):
         gwas_df = _run_gwas_impl(
             geno_imputed, y, pcs_full, n_pcs_mlm, sid, positions,
             chroms, chroms_num, iid, K0, K_by_chr, pheno_reader, args.trait,
+            user_covar=user_covar_mat, user_covar_names=user_covar_names,
         )
         gwas_df["PValue"] = np.clip(gwas_df["PValue"].astype(float), 1e-300, 1.0)
         gwas_df["-log10p"] = -np.log10(gwas_df["PValue"])

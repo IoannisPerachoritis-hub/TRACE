@@ -27,6 +27,8 @@ def _run_gwas_impl(
     _K_by_chr,
     pheno_reader,
     trait_name=None,
+    user_covar=None,
+    user_covar_names=None,
 ):
     """Pure computation for LOCO GWAS. No Streamlit dependency."""
     geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
@@ -55,15 +57,34 @@ def _run_gwas_impl(
                 f"PCA rows ({pcs_full.shape[0]}) do not match sample count ({iid.shape[0]})."
             )
 
-    # Build covariates
-    if int(n_pcs) > 0 and pcs_full is not None:
-        covar_reader = CovarData(
-            iid=iid_str,
-            val=pcs_full[:, :int(n_pcs)],
-            names=[f"PC{i + 1}" for i in range(int(n_pcs))],
-        )
+    # Build covariates (principal components + optional user covariates)
+    if user_covar is None:
+        # original path — byte-identical when no user covariates are supplied
+        if int(n_pcs) > 0 and pcs_full is not None:
+            covar_reader = CovarData(
+                iid=iid_str,
+                val=pcs_full[:, :int(n_pcs)],
+                names=[f"PC{i + 1}" for i in range(int(n_pcs))],
+            )
+        else:
+            covar_reader = None
     else:
-        covar_reader = None
+        _uc = np.asarray(user_covar, dtype=np.float32)
+        if _uc.ndim == 1:
+            _uc = _uc.reshape(-1, 1)
+        if _uc.shape[0] != iid_str.shape[0]:
+            raise ValueError(
+                f"user_covar rows ({_uc.shape[0]}) do not match sample count ({iid_str.shape[0]})."
+            )
+        _uc_names = (list(user_covar_names) if user_covar_names is not None
+                     else [f"COVAR{i + 1}" for i in range(_uc.shape[1])])
+        if int(n_pcs) > 0 and pcs_full is not None:
+            _val = np.c_[pcs_full[:, :int(n_pcs)], _uc]
+            _names = [f"PC{i + 1}" for i in range(int(n_pcs))] + _uc_names
+        else:
+            _val = _uc
+            _names = _uc_names
+        covar_reader = CovarData(iid=iid_str, val=_val, names=_names)
 
 
 
