@@ -17,6 +17,20 @@ import matplotlib
 matplotlib.use("Agg")
 
 
+def _sig_thresh_type(s):
+    """argparse type for --sig-thresh: a named rule or a numeric p-value in (0, 1]."""
+    if s in ("meff", "bonferroni", "fdr"):
+        return s
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"--sig-thresh must be meff/bonferroni/fdr or a p-value like 5e-8 (got {s!r})")
+    if not (0.0 < v <= 1.0):
+        raise argparse.ArgumentTypeError(f"--sig-thresh p-value must be in (0, 1] (got {v})")
+    return v
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(
         description="TRACE — Trait Resolution and Candidate Evaluation (CLI)",
@@ -76,9 +90,10 @@ def _build_parser():
 
     # Significance threshold
     parser.add_argument(
-        "--sig-thresh", default="bonferroni",
-        choices=["meff", "bonferroni", "fdr"],
-        help="Significance threshold: meff (LD-aware, default), bonferroni, fdr (q<0.05)",
+        "--sig-thresh", default="bonferroni", type=_sig_thresh_type,
+        metavar="{meff,bonferroni,fdr,PVALUE}",
+        help="Significance reporting threshold: bonferroni (default), meff (LD-aware), "
+             "fdr (q<0.05), or a numeric p-value such as 5e-8.",
     )
 
     # Auto PC selection
@@ -757,6 +772,7 @@ def run_pipeline(args):
 
     # Primary threshold based on user choice
     sig_rule = getattr(args, "sig_thresh", "bonferroni")
+    _sig_is_numeric = isinstance(sig_rule, (int, float)) and not isinstance(sig_rule, bool)
     if sig_rule == "bonferroni":
         primary_thresh = bonf_thresh_naive
         log.info("Significance: Bonferroni %.2e (%d SNPs)", primary_thresh, geno_df.shape[1])
@@ -766,6 +782,11 @@ def run_pipeline(args):
     else:  # meff (default)
         primary_thresh = meff_thresh
         log.info("Significance: M_eff %.2e (M_eff=%d)", primary_thresh, _meff_val)
+
+    if _sig_is_numeric:
+        # a user-specified fixed p-value threshold overrides the named-rule value
+        primary_thresh = float(sig_rule)
+        log.info("Significance: p < %.2e (user-specified)", primary_thresh)
 
     if "mlm" in args.model:
         log.info("Running MLM (LOCO)…")
@@ -785,6 +806,8 @@ def run_pipeline(args):
         gwas_df["Significant_FDR"] = _rej
         gwas_df["Significant_Bonf"] = gwas_df["PValue"] < bonf_thresh_naive
         gwas_df["Significant_Meff"] = gwas_df["PValue"] < meff_thresh
+        if _sig_is_numeric:
+            gwas_df["Significant_Custom"] = gwas_df["PValue"] < primary_thresh
         gwas_df["Model"] = "MLM"
 
         # Imputation rate
@@ -840,7 +863,9 @@ def run_pipeline(args):
         try:
             _sig_by_model = {}
             for _mname, _mdf in _consensus_models:
-                if sig_rule == "fdr" and "FDR" in _mdf.columns:
+                if _sig_is_numeric:
+                    _sig_by_model[_mname] = set(_mdf.loc[_mdf["PValue"] < primary_thresh, "SNP"].astype(str))
+                elif sig_rule == "fdr" and "FDR" in _mdf.columns:
                     _sig_by_model[_mname] = set(_mdf.loc[_mdf["FDR"] < 0.05, "SNP"].astype(str))
                 elif sig_rule == "bonferroni":
                     _sig_by_model[_mname] = set(_mdf.loc[_mdf["PValue"] < bonf_thresh_naive, "SNP"].astype(str))
@@ -1072,7 +1097,8 @@ def run_pipeline(args):
                 import seaborn as sns
                 import matplotlib.pyplot as plt
                 _sig_col_name = (
-                    "Significant_Meff" if sig_rule == "meff"
+                    "Significant_Custom" if _sig_is_numeric
+                    else "Significant_Meff" if sig_rule == "meff"
                     else ("Significant_FDR" if sig_rule == "fdr" else "Significant_Bonf")
                 )
                 _sig_snps = set()

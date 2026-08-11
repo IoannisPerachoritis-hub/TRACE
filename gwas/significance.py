@@ -29,6 +29,7 @@ _BOOLEAN_COLUMN = {
     "meff": "Significant_Meff",
     "bonferroni": "Significant_Bonf",
     "fdr": "Significant_FDR",
+    "custom": "Significant_Custom",
 }
 
 
@@ -54,8 +55,8 @@ class SignificanceRule:
     label: str
 
     def __post_init__(self):
-        if self.rule not in REPORTING_RULES:
-            raise ValueError(f"unknown reporting rule {self.rule!r}; expected one of {REPORTING_RULES}")
+        if self.rule not in _BOOLEAN_COLUMN:
+            raise ValueError(f"unknown reporting rule {self.rule!r}; expected one of {tuple(_BOOLEAN_COLUMN)}")
         if (self.p_threshold is None) != (self.rule == "fdr"):
             raise ValueError("p_threshold must be None iff rule == 'fdr'")
         if self.boolean_column != _BOOLEAN_COLUMN[self.rule]:
@@ -100,14 +101,27 @@ def _build(rule: str, n_snps: int, meff_val) -> SignificanceRule:
     return SignificanceRule("meff", thr, "Significant_Meff", m, f"M_eff (M={m})")
 
 
+def _build_custom(thr: float) -> SignificanceRule:
+    """A user-specified fixed p-value threshold (e.g. ``--sig-thresh 5e-8``).
+
+    ``n_tests`` is ``None`` — the threshold is fixed by the user, not derived from a
+    multiple-testing count. ``significant_mask`` resolves it via ``PValue < thr``.
+    """
+    thr = float(thr)
+    return SignificanceRule("custom", thr, "Significant_Custom", None, f"p < {thr:.1e}")
+
+
 def rule_from_cli_args(args, n_snps: int, meff_val) -> SignificanceRule:
     """Resolve the rule from a CLI ``args`` namespace — mirrors ``cli.py`` exactly.
 
     ``meff_val`` is the ``compute_meff_li_ji`` result (cli.py:834); pass ``None`` if
     the M_eff computation raised (cli.py:837-840), and the fallback threshold
-    ``0.05 / n_snps`` is used.
+    ``0.05 / n_snps`` is used. A numeric ``sig_thresh`` (e.g. ``5e-8``) resolves to a
+    ``custom`` rule.
     """
     rule = getattr(args, "sig_thresh", "meff")
+    if isinstance(rule, (int, float)) and not isinstance(rule, bool):
+        return _build_custom(float(rule))
     if rule not in REPORTING_RULES:
         rule = "meff"
     return _build(rule, n_snps, meff_val)

@@ -112,3 +112,26 @@ def test_post_init_rejects_inconsistent_construction():
 
 def test_reporting_rules_constant():
     assert REPORTING_RULES == ("meff", "bonferroni", "fdr")
+
+
+# --- numeric --sig-thresh (custom rule) ---
+
+def test_numeric_sig_thresh_builds_custom_rule():
+    r = rule_from_cli_args(SimpleNamespace(sig_thresh=5e-8), N_SNPS, MEFF)
+    assert r.rule == "custom"
+    assert r.p_threshold == 5e-8
+    assert r.boolean_column == "Significant_Custom"
+    assert r.n_tests is None
+    assert r.label == "p < 5.0e-08"
+
+
+def test_custom_rule_mask_uses_pvalue_threshold():
+    r = rule_from_cli_args(SimpleNamespace(sig_thresh=1e-6), 100, MEFF)
+    df = pd.DataFrame({"PValue": [1e-9, 1e-7, 1e-5, 0.4]})
+    assert list(r.significant_mask(df)) == [True, True, False, False]
+
+
+def test_custom_rule_prefers_boolean_column_when_present():
+    r = rule_from_cli_args(SimpleNamespace(sig_thresh=5e-8), 100, MEFF)
+    df = pd.DataFrame({"PValue": [1e-9, 0.5], "Significant_Custom": [False, True]})
+    assert list(r.significant_mask(df)) == [False, True]
