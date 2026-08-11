@@ -21,6 +21,11 @@ def render(ctx: LDContext):
         "Reports the distance at which r² drops below 0.2 and 0.1 — "
         "these values justify your LD block detection window sizes."
     )
+    st.caption(
+        "The genome-wide median decay computed here also sets the **default window "
+        "buffer (≈ decay × 2)** for the Regional Plot and Local LD tabs — so this "
+        "estimate justifies the window sizes used across the page, not only block detection."
+    )
 
     col_d1, col_d2, col_d3 = st.columns(3)
     with col_d1:

@@ -10,7 +10,6 @@ Behaviour-preserving extraction of the inline selector that used to live in
 ``tab_local_ld.py``: the same lead-SNP selectbox, snap-to-block checkbox, buffer
 slider, and region-determination logic, so the local-LD window is unchanged.
 """
-import re
 import dataclasses
 
 import pandas as pd
@@ -124,8 +123,11 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
             lead_pos=int(lead_pos), buffer_kb=int(buffer_kb), block_snp_ids=block_snp_ids,
         )
 
-    # ----- Lead-SNP mode (default): SNP-centered, optionally snapped to its block -----
-    col_lead, col_snap, col_buf = st.columns([2, 1, 1])
+    # ----- Lead-SNP mode (default): SNP-centered window -----
+    # The old "Snap to LD block" checkbox is gone — the radio's "Detected block"
+    # source expresses that intent, and the Regional Plot now derives block shading
+    # from whether the lead sits inside a detected block (no two controls to disagree).
+    col_lead, col_buf = st.columns([2, 1])
     with col_lead:
         lead_snp = st.selectbox(
             "Lead SNP (top 200 by P-value):",
@@ -133,13 +135,6 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
             index=0,
             key="ld_window_lead_snp",
             help="Shared by the Regional Plot and Local LD tabs.",
-        )
-    with col_snap:
-        use_block_if_available = st.checkbox(
-            "Snap to LD block",
-            value=bool(has_blocks),
-            key="ld_window_snap_block",
-            help="If LD blocks have been computed, use the LD block containing the lead SNP.",
         )
     with col_buf:
         buffer_kb = _buffer_slider()
@@ -149,36 +144,11 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         st.warning(f"SNP {lead_snp} not found in GWAS table.")
         return None
 
-    chr_snp = str(snp_row.iloc[0]["Chr"])
+    chr_sel = str(snp_row.iloc[0]["Chr"])
     pos_snp = int(snp_row.iloc[0]["Pos"])
-
-    # Default: SNP-centered window (identical to the old tab_local_ld fallback).
-    use_block = False
-    core_start = core_end = None
-    chr_sel = chr_snp
     start_bp = pos_snp - buffer_kb * 1000
     end_bp = pos_snp + buffer_kb * 1000
     label = f"SNP-centered window: Chr{chr_sel}:{pos_snp:,} ± {buffer_kb} kb"
-
-    if use_block_if_available and has_blocks:
-        lead_pat = re.escape(str(lead_snp))
-        block_rows = ctx.haplo_df_auto[
-            ctx.haplo_df_auto[lead_col].astype(str).str.contains(
-                rf"(^|[;,\s|]){lead_pat}($|[;,\s|])", regex=True
-            )
-        ]
-        if not block_rows.empty:
-            r = block_rows.iloc[0]
-            core_start = int(r["Start (bp)"])
-            core_end = int(r["End (bp)"])
-            extra = buffer_kb * 1000
-            start_bp = max(0, core_start - extra)
-            end_bp = core_end + extra
-            chr_sel = str(r["Chr"])
-            label = (
-                f"LD block Chr{chr_sel}:{core_start:,}-{core_end:,} ± {buffer_kb} kb buffer"
-            )
-            use_block = True
 
     st.markdown(f"**Window:** {label}")
     return RegionWindow(
@@ -186,10 +156,11 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         chr=chr_sel,
         start_bp=int(start_bp),
         end_bp=int(end_bp),
-        core_start=core_start,
-        core_end=core_end,
-        use_block=use_block,
+        core_start=None,
+        core_end=None,
+        use_block=False,
         label=label,
         lead_pos=pos_snp,
         buffer_kb=int(buffer_kb),
+        block_snp_ids="",
     )

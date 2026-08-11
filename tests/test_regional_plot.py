@@ -166,6 +166,49 @@ def test_ld_pairs_long_shape_and_values():
     assert bc.r2 == 0.8
 
 
+def test_clamp_block_span_modes():
+    """Round-2 fix 2: clamp a block span to the plotted x-range + fill/edges/none."""
+    from gwas.plotting import _clamp_block_span
+    bs, be, mode = _clamp_block_span(1.2, 1.5, 1.0, 2.0)   # inside, small
+    assert mode == "fill" and bs == 1.2 and be == 1.5
+    bs, be, mode = _clamp_block_span(0.0, 5.0, 1.0, 2.0)   # far wider than the axis
+    assert mode == "edges" and bs == 1.0 and be == 2.0     # clamped to [xlo, xhi]
+    _, _, mode = _clamp_block_span(3.0, 4.0, 1.0, 2.0)     # entirely outside
+    assert mode == "none"
+
+
+def test_static_wide_block_does_not_blow_out_axis():
+    """A block far wider than the data must not expand the panel (clamped + edges)."""
+    df, r2 = _window()
+    fig = plot_regional_association_static(df, r2, "s0", 5e-8, block_interval=(0, 50_000_000))
+    x0, x1 = fig.axes[0].get_xlim()
+    xhi = df["Pos"].max() / 1e6
+    assert x1 < xhi + 1.0, "axis expanded to the unclamped block span"
+
+
+def test_block_for_window_derives_from_lead_containing_block():
+    """Round-2 fix 3: with no explicit block bounds, shade the block CONTAINING the lead."""
+    import types
+    from pages._ld_tabs.tab_regional import _block_for_window
+    from pages._ld_tabs._window import RegionWindow
+    hd = pd.DataFrame({
+        "Chr": ["2"], "Start (bp)": [1_100_000], "End (bp)": [1_600_000],
+        "SNP_IDs": ["s5,s6,s7"],
+    })
+    ctx = types.SimpleNamespace(haplo_df_auto=hd)
+    win = RegionWindow(lead_snp="s6", chr="2", start_bp=1_000_000, end_bp=1_700_000,
+                       core_start=None, core_end=None, use_block=False, label="",
+                       lead_pos=1_300_000, buffer_kb=200)
+    interval, members = _block_for_window(ctx, win)
+    assert interval == (1_100_000, 1_600_000)
+    assert members == {"s5", "s6", "s7"}
+    # a lead NOT in any block -> no span (flank fallback happens in the caller)
+    win2 = RegionWindow(lead_snp="zzz", chr="2", start_bp=5_000_000, end_bp=6_000_000,
+                        core_start=None, core_end=None, use_block=False, label="",
+                        lead_pos=5_500_000, buffer_kb=200)
+    assert _block_for_window(ctx, win2) == (None, None)
+
+
 def test_extract_by_snp_ids_is_member_aware():
     """Fix 4: snp_ids extraction returns block MEMBERS only (reproduces Block
     Heatmaps), while positional extraction returns the whole interval."""

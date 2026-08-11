@@ -1,7 +1,6 @@
 """Tab 1 — LD-block Heatmaps (Primary)."""
 
 import numpy as np
-import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -212,13 +211,8 @@ def render(ctx: LDContext, get_r2_cached):
         # --- Export buttons ---
         export_matplotlib(fig, f"LD_block_segment_Chr{chr_block}_{seg_start_bp}_{seg_end_bp}",
                           label_prefix="Download LD heatmap")
-
-        st.download_button(
-            "Download LD matrix (CSV)",
-            pd.DataFrame(r2, index=axis_labels, columns=axis_labels).to_csv().encode(),
-            file_name=f"LD_block_matrix_Chr{chr_block}_{start_bp}_{end_bp}.csv",
-            mime="text/csv"
-        )
+        st.caption("Numeric r² export moved to the **Local LD** tab — pick this block via the "
+                   "region selector's *Detected block* mode for the long + square r² CSVs.")
 
     except StopException:
         pass

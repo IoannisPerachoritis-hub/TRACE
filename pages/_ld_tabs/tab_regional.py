@@ -35,25 +35,41 @@ def _split_ids(raw):
     return {s.strip() for s in re.split(r"[;,\s|]+", str(raw)) if s.strip()}
 
 
+def _members_by_bounds(hd, core_start, core_end):
+    """Member SNP_IDs of the block whose interval matches (core_start, core_end)."""
+    if isinstance(hd, pd.DataFrame) and not hd.empty and "SNP_IDs" in hd.columns:
+        rows = hd[
+            (pd.to_numeric(hd["Start (bp)"], errors="coerce") == int(core_start))
+            & (pd.to_numeric(hd["End (bp)"], errors="coerce") == int(core_end))
+        ]
+        if not rows.empty:
+            return _split_ids(rows.iloc[0]["SNP_IDs"])
+    return None
+
+
 def _block_for_window(ctx, window):
     """(interval, members) for the shaded LD-block span, or (None, None).
 
-    Snapped-to-block windows carry the block start/end; look the block row back up
-    by its interval to recover the member SNP_IDs. A non-snapped window returns
-    ``(None, None)`` and the caller shades the flanking-marker interval instead.
+    Detected-block mode carries explicit bounds (``window.core_start`` set) → use
+    them. In lead-SNP mode, shade the detected block CONTAINING the lead (membership
+    first, else positional containment) so a span appears with no checkbox. No
+    containing block → (None, None) and the caller shades the flanking interval.
     """
-    if not window.use_block or window.core_start is None:
-        return None, None
     hd = ctx.haplo_df_auto
-    members = None
-    if isinstance(hd, pd.DataFrame) and not hd.empty and "SNP_IDs" in hd.columns:
-        rows = hd[
-            (pd.to_numeric(hd["Start (bp)"], errors="coerce") == int(window.core_start))
-            & (pd.to_numeric(hd["End (bp)"], errors="coerce") == int(window.core_end))
-        ]
-        if not rows.empty:
-            members = _split_ids(rows.iloc[0]["SNP_IDs"])
-    return (int(window.core_start), int(window.core_end)), members
+    if window.core_start is not None:
+        return ((int(window.core_start), int(window.core_end)),
+                _members_by_bounds(hd, window.core_start, window.core_end))
+    if isinstance(hd, pd.DataFrame) and not hd.empty and {"Chr", "Start (bp)", "End (bp)"}.issubset(hd.columns):
+        chr_c = canon_chr(window.chr)
+        has_ids = "SNP_IDs" in hd.columns
+        for _, r in hd.iterrows():
+            if canon_chr(str(r["Chr"])) != chr_c:
+                continue
+            ids = _split_ids(r["SNP_IDs"]) if has_ids else set()
+            s, e = int(r["Start (bp)"]), int(r["End (bp)"])
+            if str(window.lead_snp) in ids or (s <= window.lead_pos <= e):
+                return (s, e), (ids or None)
+    return None, None
 
 
 def _flank_interval(positions_in_window, lead_pos):
@@ -170,6 +186,12 @@ def render(ctx: LDContext, window):
     if is_flank:
         st.caption("No LD block here — the shaded span is the **flanking-marker interval** "
                    "around the SNP, not an LD block.")
+    elif block_interval is not None:
+        _b0, _b1 = block_interval
+        if _b0 < int(wdf["Pos"].min()) or _b1 > int(wdf["Pos"].max()):
+            st.caption(f"LD block Chr{window.chr}:{_b0:,}–{_b1:,} "
+                       f"({(_b1 - _b0) / 1000:,.0f} kb) extends beyond the plotted window; "
+                       "the shaded span is clipped to the view.")
     if n_typed_r2 == 0:
         st.caption("r² to the lead is not computable for these markers (e.g. a single typed "
                    "marker); points are shown in grey.")
@@ -180,10 +202,11 @@ def render(ctx: LDContext, window):
         wdf, r2_final, window.lead_snp, sig_threshold,
         block_interval=block_interval, block_members=block_members,
         seed_threshold=seed_threshold, uirevision=_winsig)
-    # key= forces a fresh element per window so Plotly's client-side zoom/pan
-    # cannot hold stale axes across a buffer/window change (uirevision handles
-    # the reset within Plotly; the two together fix the "ignores buffer" bug).
-    st.plotly_chart(fig_i, use_container_width=True, key=f"regional_{_winsig}")
+    # uirevision (a per-window signature) makes Plotly reset the axes on a window
+    # change and keep zoom within one. The key MUST be constant: a key that varies
+    # with the window is a new widget that re-inits its value= default and forces
+    # an extra rerun (that was the round-1 stale-render bug).
+    st.plotly_chart(fig_i, use_container_width=True, key="regional_chart")
 
     st.caption(
         f"r² is computed from your own genotypes (not a reference panel). Threshold: "
@@ -200,7 +223,7 @@ def render(ctx: LDContext, window):
         "Download regional data (CSV)",
         _export_df.to_csv(index=False).encode(),
         file_name=f"Regional_data_Chr{window.chr}_{window.start_bp}_{window.end_bp}_{window.lead_snp}.csv",
-        mime="text/csv", key=f"dl_regional_csv_{_winsig}",
+        mime="text/csv", key="dl_regional_csv",
     )
 
     # --- static (matplotlib) — the downloadable / report figure, with gene track ---
@@ -210,7 +233,7 @@ def render(ctx: LDContext, window):
         if n_genes:
             gene_labels = st.checkbox(
                 "Show gene labels", value=(n_genes <= MAX_GENE_LABELS),
-                key=f"regional_gene_labels_{_winsig}",
+                key="regional_gene_labels",
                 help="Gene names on the track. Off by default in dense windows to avoid overprinting.")
             if not gene_labels:
                 st.caption(f"{n_genes} genes in window; labels hidden — see the Gene Annotation tab "
