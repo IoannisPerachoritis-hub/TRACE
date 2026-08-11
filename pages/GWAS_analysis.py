@@ -304,6 +304,24 @@ def _rehydrate_or_stop(msg=None, level="error"):
     elif msg:
         getattr(st, level, st.error)(msg)
     st.stop()
+
+
+_CLEAR_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "VCF_BYTES::", "gwas_zip_")
+_CLEAR_KEYS = (
+    "_persist_vcf_bytes", "_persist_pheno", "_persist_is_gz", "_persist_covar",
+    "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
+    "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
+    "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
+    "pheno_reader", "covar_reader", "pheno_aligned", "pheno", "y", "iid",
+    "sid", "chroms", "chroms_num", "positions", "GWAS_CTX", "pheno_raw",
+)
+
+
+def _clear_session_data():
+    """Release the genotype/phenotype held in memory and reset all run outputs."""
+    for _k in list(st.session_state.keys()):
+        if isinstance(_k, str) and (_k.startswith(_CLEAR_PREFIXES) or _k in _CLEAR_KEYS):
+            st.session_state.pop(_k, None)
 # =========================
 # 1. Data upload & basic QC
 # =========================
@@ -318,7 +336,9 @@ with st.container():
                 st.warning(
                     f"VCF file is {_vcf_size_mb:.0f} MB. Large files may cause slow "
                     "processing or memory issues. Consider pre-filtering to keep only "
-                    "target chromosomes and MAF > 0.01 variants."
+                    "target chromosomes and MAF > 0.01 variants. Note: the genotype is "
+                    "kept in session memory so runs can repeat without re-uploading — "
+                    "use **Clear session data** (right) to release it."
                 )
         phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"], key="pheno_upload")
         # ------------------------------------------------------------
@@ -376,6 +396,15 @@ LA1589,12.8,7.3
 """)
 
     with col_qc:
+        if st.button(
+            "Clear session data",
+            help="Release the genotype/phenotype held in memory and reset all results "
+                 "(frees RAM; you will need to re-upload to run again).",
+        ):
+            _clear_session_data()
+            st.success("Session data cleared.")
+            st.rerun()
+
         st.markdown("**Genotype QC thresholds**")
 
         qc_preset = st.selectbox(

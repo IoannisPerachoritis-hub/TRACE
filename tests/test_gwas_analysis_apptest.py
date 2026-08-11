@@ -89,6 +89,18 @@ def test_covariate_from_memory_runs():
     assert "gwas_df" in at.session_state and len(at.session_state["gwas_df"]) > 0
 
 
+def test_clear_session_data_releases_memory():
+    at = AppTest.from_file(_PAGE, default_timeout=200)
+    _seed_from_memory(at)
+    at.run()
+    assert "_persist_vcf_bytes" in at.session_state
+    btns = [b for b in at.button if "Clear session data" in b.label]
+    assert btns, "Clear session data button not found"
+    btns[0].click().run()
+    assert "_persist_vcf_bytes" not in at.session_state
+    assert "_persist_pheno" not in at.session_state
+
+
 def test_custom_sig_thresh_runs_from_memory():
     """The Custom-p-value path (selectbox -> number_input -> Significant_Custom
     column -> active threshold) runs end-to-end without a real error. Column
