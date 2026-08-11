@@ -125,6 +125,20 @@ def _build_parser():
     ld_grp.add_argument("--species", default="tomato", choices=["tomato", "custom"],
                          help="Species for annotation files (default: tomato)")
     ld_grp.add_argument("--gene-model", help="Gene coordinate CSV (required if --species custom)")
+    ld_grp.add_argument("--no-triage", action="store_true",
+                         help="Disable the LD-quality triage table (per-block view recommendation). Triage is "
+                              "ON by default; --no-triage reproduces byte-identical output (no LD_triage_*.csv).")
+    ld_grp.add_argument("--triage-r2-coherent", type=float, default=None,
+                         help="Triage LD-coherence gate (default: the run's --ld-r2). Binding it to the edge "
+                              "threshold makes triage a self-consistency check on the detector, not a new opinion.")
+    ld_grp.add_argument("--triage-lead-r2-frac", type=float, default=0.5,
+                         help="Triage: fraction of block members that must track the lead SNP (CONVENTION, not "
+                              "a derived quantity; default 0.5).")
+    ld_grp.add_argument("--hap-min-count", type=int, default=5,
+                         help="Min samples for a multi-locus genotype to be tested (else labelled 'Other'; "
+                              "default 5).")
+    ld_grp.add_argument("--hap-min-group-size", type=int, default=3,
+                         help="Min tested-group size for the haplotype F-test (default 3).")
     # ── Isolated-SNP rescue (T-45) ──
     ld_grp.add_argument("--no-isolated-rescue", action="store_true",
                          help="Disable the isolated-SNP rescue (reporting-significant SNPs that "
@@ -1062,6 +1076,7 @@ def run_pipeline(args):
                 geno_imputed=_geno_float, sid=sid,
                 geno_df=geno_df, pheno_df=pheno_clean, trait_col=args.trait,
                 pcs=_hap_pcs, n_perm=args.hap_perms, n_pcs_used=n_pcs_mlm,
+                min_hap_count=args.hap_min_count, min_group_size=args.hap_min_group_size,
             )
             if m_hap_gwas is not None and not m_hap_gwas.empty:
                 n_sig_hap = int((m_hap_gwas.get("FDR_BH", pd.Series(dtype=float)) < 0.05).sum())
@@ -1117,6 +1132,56 @@ def run_pipeline(args):
                 extra_csvs[f"LD_blocks_annotated_{model_name}.csv"] = m_consolidated
         except Exception as e:
             log.warning("  LD block consolidation failed for %s: %s", model_name, e)
+
+        # ── LD-quality triage (T-36): Layer 1 (predictive) + Layer 2 (mlg_*) ->
+        #    router -> a NEW supplementary LD_triage_{model}.csv. Additive + gated
+        #    by --no-triage (existing outputs byte-identical when off). Never a
+        #    filter; changes no p/F/eta2/boundary. N1 safe: consolidate drops mlg_*. ──
+        if not args.no_triage and m_ld_blocks is not None and not m_ld_blocks.empty:
+            try:
+                import numpy as _np
+                from annotation import canon_chr as _cc
+                from gwas.ld import compute_block_ld_quality as _cblq, maf_from_matrix as _maf
+                from gwas.triage import (TriageThresholds as _TT, triage_blocks as _tb,
+                                         add_eta2_comparability as _eta)
+                _ldq = _cblq(m_ld_blocks, chroms, positions, sid, _geno_float, model_df,
+                             geno_dosage_raw=geno_dosage_raw, r2_coherent=args.ld_r2)
+                _m = _ldq.copy()
+                _m["_c"] = _m["Chr"].astype(str).map(_cc)
+                _m["_s"] = _m["Start (bp)"].astype(int); _m["_e"] = _m["End (bp)"].astype(int)
+                if m_hap_gwas is not None and not m_hap_gwas.empty:
+                    _h = m_hap_gwas.rename(columns={"Start": "Start (bp)", "End": "End (bp)"}).copy()
+                    _h["_c"] = _h["Chr"].astype(str).map(_cc)
+                    _h["_s"] = _h["Start (bp)"].astype(int); _h["_e"] = _h["End (bp)"].astype(int)
+                    _l2 = ["_c", "_s", "_e"] + [c for c in _h.columns if c.startswith("mlg_") or c in (
+                        "eta2", "df1", "df2", "F_perm", "F_param", "n_samples_tested",
+                        "n_samples_block", "n_tested_haplotypes")]
+                    _m = _m.merge(_h[_l2], on=["_c", "_s", "_e"], how="left")
+                _m = _m.drop(columns=["_c", "_s", "_e"])
+                _m = _eta(_m)
+                # per-row lead usability (n_lead_classes_ge, lead_maf) from raw dosage
+                _sida = _np.asarray(sid).astype(str)
+                _G = _np.asarray(geno_dosage_raw, float) if geno_dosage_raw is not None else None
+                _nc, _mf = [], []
+                for _lead in _m["ldq_lead_snp"].astype(str):
+                    _c1, _m1 = _np.nan, _np.nan
+                    if _G is not None and _lead:
+                        _ix = _np.where(_sida == _lead)[0]
+                        if len(_ix):
+                            _col = _G[:, int(_ix[0])]
+                            _gg = _np.rint(_col[_np.isfinite(_col)])
+                            _c1 = int(sum(int((_gg == _k).sum()) >= args.hap_min_group_size for _k in (0, 1, 2)))
+                            _m1 = float(_maf(_G[:, [int(_ix[0])]], "dosage012")[0])
+                    _nc.append(_c1); _mf.append(_m1)
+                _m["n_lead_classes_ge"] = _nc
+                _m["lead_maf"] = _mf
+                _thr = _TT(
+                    r2_coherent=(args.triage_r2_coherent if args.triage_r2_coherent is not None else args.ld_r2),
+                    lead_r2_frac=args.triage_lead_r2_frac, min_group_n=args.hap_min_group_size, enabled=True)
+                extra_csvs[f"LD_triage_{model_name}.csv"] = _tb(_m, _thr)
+                log.info("  Triage: %d blocks -> LD_triage_%s.csv", len(_m), model_name)
+            except Exception as e:
+                log.warning("  LD-quality triage failed for %s: %s", model_name, e)
 
         # Capture per-model annotation/haplotype frames for the HTML report (T-80)
         _mp = {}
