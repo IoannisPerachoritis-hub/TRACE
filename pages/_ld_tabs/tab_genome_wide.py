@@ -693,14 +693,6 @@ def _render_haplotype_gwas(
         "Permutation-calibrated p-values (optional, below) provide an empirical robustness check."
     )
 
-    show_cols = [c for c in [
-        "Chr", "Start", "End", "Lead SNP", "n_snps",
-        "n_haplotypes", "n_tested_haplotypes",
-        "df1", "df2", "F_param", "PValue_param",
-        "F_perm", "P_perm", "PValue", "FDR_qvalue",
-        "eta2",
-    ] if c in hap_gwas_df.columns]
-
     if hap_gwas_df is None or hap_gwas_df.empty:
         st.info(
             "No haplotype blocks had enough variation "
@@ -708,15 +700,8 @@ def _render_haplotype_gwas(
         )
         return
 
-    st.success(
-        f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
-    )
-    st.dataframe(
-        hap_gwas_df.sort_values("PValue")[show_cols].head(50),
-        use_container_width=True
-    )
-
-    # Auto-compute block QC metrics (η², MAF)
+    # T-34 (§2.8 fix): enrich BEFORE display so η²/Frac_other/Block_length_kb/MAF
+    # reach the on-screen table, not only the downloaded CSV/ZIP.
     with st.spinner("Computing block effect sizes (η²) and MAF…"):
         hap_gwas_df = compute_block_qc_effects(
             hap_gwas_df=hap_gwas_df,
@@ -732,6 +717,23 @@ def _render_haplotype_gwas(
             geno_encoding=st.session_state.get("geno_encoding", "dosage012"),
         )
     st.session_state["hap_gwas_df_enriched"] = hap_gwas_df
+
+    show_cols = [c for c in [
+        "Chr", "Start", "End", "Lead SNP", "n_snps",
+        "n_haplotypes", "n_tested_haplotypes",
+        "n_samples_block", "n_samples_tested",          # T-34: the two view denominators, now visible
+        "df1", "df2", "F_param", "PValue_param",
+        "F_perm", "P_perm", "PValue", "FDR_qvalue",
+        "eta2", "EtaSq", "Frac_other", "Block_length_kb", "maf_median",  # T-34: enriched, now on screen
+    ] if c in hap_gwas_df.columns]
+
+    st.success(
+        f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
+    )
+    st.dataframe(
+        hap_gwas_df.sort_values("PValue")[show_cols].head(50),
+        use_container_width=True
+    )
 
     # ============================================================
     # BLOCK-LEVEL VISUALIZATION: MLG boxplots + Tukey HSD + Table
@@ -1030,6 +1032,33 @@ def _render_block_visualization(
         key=f"dl_mlg_summary_{selected_block}"
     )
 
+    # ── T-34: make the two views' differing sample sets VISIBLE, not implied ──
+    # (the reviewer concern). Show the haplotype view's denominator + how many
+    # accessions it excluded; the lead-SNP view uses a different sample set.
+    _n_tested = block_row.get("n_samples_tested")
+    _n_block = block_row.get("n_samples_block")
+    _n_other = block_row.get("mlg_n_other")
+    if _n_tested is not None and pd.notna(_n_tested):
+        _bits = [f"**Haplotype (MLG) view** tested **{int(_n_tested)}** samples"]
+        if _n_block is not None and pd.notna(_n_block) and int(_n_block) > 0:
+            _bits.append(f"of {int(_n_block)} in the block ({int(_n_tested) / int(_n_block):.0%} retained)")
+        if _n_other is not None and pd.notna(_n_other) and int(_n_other) > 0:
+            _bits.append(f"— {int(_n_other)} sample(s) fell into rare genotypes ('Other') and were excluded")
+        st.caption(" ".join(_bits) + ". A lead-SNP view of this locus uses a different sample set.")
+    # per-sample MLG ledger: which accession -> which MLG -> in the haplotype test?
+    _valid_groups = set(
+        hap_counts.loc[lambda s: (s.index != "Other") & (s >= int(min_group_size))].index)
+    _ledger = mlg_df[["Sample", "MLG_label", "Allele_sequence"]].rename(
+        columns={"MLG_label": "Haplotype"}).copy()
+    _ledger["in_haplotype_test"] = _ledger["Haplotype"].isin(_valid_groups)
+    st.download_button(
+        "Download per-sample MLG ledger (CSV)",
+        _ledger.to_csv(index=False).encode(),
+        file_name=f"sample_ledger_block_{block_chr}_{block_start}_{block_end}.csv",
+        mime="text/csv",
+        key=f"dl_ledger_{selected_block}",
+    )
+
     # --------------------------------------------------------
     # Tukey HSD + CLD
     # --------------------------------------------------------
@@ -1300,7 +1329,7 @@ def _render_tukey_and_boxplot(
                 )
 
         ax2.set_xlabel("Multi-locus genotype (haplotype)")
-        ax2.set_ylabel(trait_col)
+        ax2.set_ylabel(trait_label)   # T-34: values are PC-adjusted; label must say so (P3)
         ax2.set_title("Phenotype distribution across haplotypes")
 
         new_xticklabels = [
