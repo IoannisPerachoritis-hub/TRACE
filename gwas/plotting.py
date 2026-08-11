@@ -753,6 +753,22 @@ def _draw_gene_track(ax, genes, label=True):
     ax.set_ylabel("genes", fontsize=8)
 
 
+def _clamp_block_span(b0_mb, b1_mb, xlo, xhi, edge_frac=0.9):
+    """Clamp a block span (in Mb) to the plotted x-range and decide how to draw it.
+
+    Returns ``(bs, be, mode)`` where ``mode`` is ``'none'`` (span falls outside the
+    view), ``'edges'`` (the clamped span exceeds ``edge_frac`` of the axis, so drawing
+    a fill would swamp the panel — draw the two edges instead), or ``'fill'``."""
+    bs = max(float(b0_mb), float(xlo))
+    be = min(float(b1_mb), float(xhi))
+    if be <= bs:
+        return bs, be, "none"
+    width = xhi - xlo
+    if width > 0 and (be - bs) / width > edge_frac:
+        return bs, be, "edges"
+    return bs, be, "fill"
+
+
 def plot_regional_association_static(
     window_df, r2_to_lead, lead_snp, sig_threshold,
     block_interval=None, block_members=None, genes=None, seed_threshold=None,
@@ -789,9 +805,15 @@ def plot_regional_association_static(
 
     marker_handles = []
     if block_interval is not None:
-        _s, _e = block_interval
-        ax.axvspan(_s / 1e6, _e / 1e6, color=PALETTE["cyan"], alpha=0.12, zorder=0)
-        marker_handles.append(Patch(facecolor=PALETTE["cyan"], alpha=0.25, label="LD block"))
+        _bs, _be, _mode = _clamp_block_span(block_interval[0] / 1e6, block_interval[1] / 1e6,
+                                            float(pos_mb.min()), float(pos_mb.max()))
+        if _mode == "fill":
+            ax.axvspan(_bs, _be, color=PALETTE["cyan"], alpha=0.12, zorder=0)
+            marker_handles.append(Patch(facecolor=PALETTE["cyan"], alpha=0.25, label="LD block"))
+        elif _mode == "edges":
+            for _x in (_bs, _be):
+                ax.axvline(_x, color=PALETTE["cyan"], ls=":", lw=1.2, zorder=1)
+            marker_handles.append(Line2D([0], [0], color=PALETTE["cyan"], ls=":", label="LD block edges"))
 
     is_lead = snp_ids == str(lead_snp)
     nl = ~is_lead
@@ -877,8 +899,14 @@ def plot_regional_association_interactive(
 
     fig = go.Figure()
     if block_interval is not None:
-        fig.add_vrect(x0=block_interval[0] / 1e6, x1=block_interval[1] / 1e6,
-                      fillcolor=PALETTE["cyan"], opacity=0.12, line_width=0, layer="below")
+        _bs, _be, _mode = _clamp_block_span(block_interval[0] / 1e6, block_interval[1] / 1e6,
+                                            float(pos_mb.min()), float(pos_mb.max()))
+        if _mode == "fill":
+            fig.add_vrect(x0=_bs, x1=_be, fillcolor=PALETTE["cyan"], opacity=0.12,
+                          line_width=0, layer="below")
+        elif _mode == "edges":
+            fig.add_vline(x=_bs, line_color=PALETTE["cyan"], line_dash="dot")
+            fig.add_vline(x=_be, line_color=PALETTE["cyan"], line_dash="dot")
     nl = ~is_lead
     fig.add_trace(go.Scatter(
         x=pos_mb[nl], y=logp[nl], mode="markers",

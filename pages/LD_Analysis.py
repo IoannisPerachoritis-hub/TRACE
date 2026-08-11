@@ -698,10 +698,9 @@ def ld_analysis_page():
     with st.expander("Region / lead-SNP selection (Regional Plot + Local LD)", expanded=True):
         _ld_window = select_window(_ld_ctx)
 
-    tab_sig, tab_reg, tab_blocks, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
+    tab_sig, tab_reg, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
         "Significant SNPs",
         "Regional Plot",
-        "Block Heatmaps",
         "Local LD",
         "Gene Annotation",
         "LD Decay",
@@ -712,9 +711,6 @@ def ld_analysis_page():
 
     with tab_reg:
         tab_regional.render(_ld_ctx, _ld_window)
-
-    with tab_blocks:
-        tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
 
     with tab1:
         tab_local_ld.render(_ld_ctx, get_r2_cached, _ld_window)
@@ -733,6 +729,12 @@ def ld_analysis_page():
             compute_block_qc_effects=compute_block_qc_effects,
             run_haplotype_block_gwas_cached_fn=run_haplotype_block_gwas_cached,
         )
+
+    # Block Heatmaps is superseded by the region selector's "Detected block" mode +
+    # the Local LD tab (D-36). Kept behind a legacy expander for continuity; to be
+    # retired in a later release.
+    with st.expander("Legacy views", expanded=False):
+        tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
 
 
 
