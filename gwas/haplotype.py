@@ -11,6 +11,23 @@ from gwas.utils import _mean_impute_cols
 from gwas.models import _ols_fit, _nested_f_test, _one_hot_drop_first
 from gwas.ld import get_block_snp_mask
 
+def _inv_simpson_from_counts(counts) -> float:
+    """1 / sum(p_i^2) on a value_counts Series (T-31). NaN when empty.
+
+    Inverse Simpson on the pre-collapse MLG frequency vector: the number of
+    equally-frequent MLGs that would produce the same homozygosity. Insensitive
+    to the singleton tail, unlike the raw MLG count.
+    """
+    if counts is None or len(counts) == 0:
+        return float("nan")
+    total = float(np.asarray(counts, dtype=float).sum())
+    if total <= 0:
+        return float("nan")
+    p = np.asarray(counts, dtype=float) / total
+    denom = float(np.sum(p * p))
+    return (1.0 / denom) if denom > 0 else float("nan")
+
+
 def run_haplotype_block_gwas(
     haplo_df,
     chroms,
@@ -99,6 +116,8 @@ def run_haplotype_block_gwas(
                 "F_perm", "P_perm",
                 "PValue",
                 "MidPos", "-log10p",
+                "mlg_n_observed", "mlg_top1_freq", "mlg_eff_inv_simpson",
+                "mlg_n_other", "mlg_frac_retained", "mlg_min_group_n", "n_samples_tested",
             ]
         ), {}
 
@@ -300,6 +319,7 @@ def run_haplotype_block_gwas(
         df_test = df_test[df_test["MLG"].isin(valid_haps)].copy()
 
         # Warn when rare-haplotype filtering discards too many samples
+        frac_retained = np.nan  # T-31: always bound (drives the warning; reported as mlg_frac_retained)
         if n_samples_block_used > 0:
             frac_retained = len(df_test) / n_samples_block_used
             if frac_retained < 0.75:
@@ -387,6 +407,16 @@ def run_haplotype_block_gwas(
                 "PValue": float(pval_perm) if np.isfinite(pval_perm) else np.nan,
                 "eta2": hap_effects["eta2"],
                 "hap_stats_json": json.dumps(hap_effects["hap_stats"]),
+                # T-31 Layer 2 — MLG fragmentation + sample retention. Additive:
+                # every value reuses names already in scope; no new estimation, no
+                # second genotype pass, exclusion chain untouched (§2.5 frozen).
+                "mlg_n_observed": int(hap_counts.shape[0]),
+                "mlg_top1_freq": float(hap_counts.iloc[0] / hap_counts.sum()) if hap_counts.size else np.nan,
+                "mlg_eff_inv_simpson": _inv_simpson_from_counts(hap_counts),
+                "mlg_n_other": int((hap_labels == "Other").sum()),
+                "mlg_frac_retained": float(len(df_test) / n_samples_block_used) if n_samples_block_used > 0 else np.nan,
+                "mlg_min_group_n": int(counts.loc[valid_haps].min()),
+                "n_samples_tested": int(len(df_test)),
             }
         )
 
@@ -400,6 +430,8 @@ def run_haplotype_block_gwas(
                 "F_perm", "P_perm",
                 "PValue",
                 "MidPos", "-log10p",
+                "mlg_n_observed", "mlg_top1_freq", "mlg_eff_inv_simpson",
+                "mlg_n_other", "mlg_frac_retained", "mlg_min_group_n", "n_samples_tested",
             ]
         ), {}
 
