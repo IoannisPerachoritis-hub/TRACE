@@ -247,6 +247,8 @@ def run_gwas_cached(
     _K_by_chr,
     _pheno_reader_key,
     trait_name=None,
+    user_covar=None,
+    user_covar_names=None,
 ):
     """Cached wrapper: resolves session-state keys, delegates to _run_gwas_impl."""
     if isinstance(geno_imputed, str) and geno_imputed.startswith("ARRKEY::"):
@@ -264,6 +266,7 @@ def run_gwas_cached(
     return _run_gwas_impl(
         geno_imputed, y, pcs_full, n_pcs, sid, positions, chroms,
         chroms_num, iid, _K0, _K_by_chr, pheno_reader, trait_name,
+        user_covar=user_covar, user_covar_names=user_covar_names,
     )
 
 if st is not None:
