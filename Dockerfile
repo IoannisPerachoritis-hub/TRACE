@@ -14,6 +14,11 @@ COPY . .
 
 RUN pip install --no-cache-dir .
 
+# Run as a non-root user (least privilege)
+RUN useradd --create-home --uid 1000 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8501
 
 HEALTHCHECK CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1

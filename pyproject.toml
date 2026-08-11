@@ -31,7 +31,6 @@ dependencies = [
     "statsmodels>=0.14,<1",
     "fastlmm>=0.6.12,<1",
     "pysnptools>=0.5.14,<1",
-    "numba>=0.60,<1",
     # Plotting / IO: looser pins acceptable
     "matplotlib>=3.9,<4",
     "seaborn>=0.13,<1",
