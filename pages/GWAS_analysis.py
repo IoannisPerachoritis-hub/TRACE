@@ -76,6 +76,7 @@ _COLUMN_RENAME = {
     "Significant_FDR": "Sig (FDR)",
     "Significant_Bonf": "Sig (Bonf)",
     "Significant_Meff": "Sig (M_eff)",
+    "Significant_Custom": "Sig (custom)",
     "eta2": "Var Explained",
     "Hap_eta2": "Hap Var Explained",
 }
@@ -522,8 +523,10 @@ if "FarmCPU (multi-locus)" in model_choices:
 st.sidebar.subheader("Significance threshold")
 sig_rule = st.sidebar.selectbox(
     "Significance threshold",
-    ["FDR (q < 0.05)", "Bonferroni (α = 0.05)", "M_eff — Li & Ji (LD-aware Bonferroni)"],
+    ["FDR (q < 0.05)", "Bonferroni (α = 0.05)", "M_eff — Li & Ji (LD-aware Bonferroni)",
+     "Custom p-value"],
     index=1,
+    key="sig_rule_select",
     help=(
         "**M_eff**: Corrects for correlated SNPs in LD "
         "— less conservative than Bonferroni. Best for breeding panels "
@@ -531,9 +534,18 @@ sig_rule = st.sidebar.selectbox(
         "**Bonferroni**: Assumes all SNPs are independent — most conservative. "
         "May miss real signals in panels with extended LD.\n\n"
         "**FDR**: Controls the false discovery rate at 5% — least conservative. "
-        "Good for exploratory screening when you expect many true associations."
+        "Good for exploratory screening when you expect many true associations.\n\n"
+        "**Custom p-value**: flag SNPs below a fixed p-value you set (e.g. 5e-8)."
     ),
 )
+custom_sig_thresh = None
+if sig_rule.startswith("Custom"):
+    custom_sig_thresh = st.sidebar.number_input(
+        "Custom p-value threshold",
+        min_value=1e-300, max_value=1.0, value=5e-8, format="%.1e",
+        key="custom_sig_thresh_input",
+        help="SNPs with p < this value are flagged significant (e.g. 5e-8).",
+    )
 show_secondary_threshold = st.sidebar.checkbox(
     "Also show secondary threshold line on Manhattans",
     value=False,
@@ -3094,6 +3106,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     gwas_df["FDR"] = p_fdr
     gwas_df["Significant_FDR"] = reject
     gwas_df["Significant_Bonf"] = gwas_df["PValue"] < bonf_thresh
+    if sig_rule.startswith("Custom") and custom_sig_thresh is not None:
+        gwas_df["Significant_Custom"] = gwas_df["PValue"] < float(custom_sig_thresh)
 
     # M_eff (Li & Ji 2005) — computed once, cached by SNP count
     meff_val = None
@@ -3112,7 +3126,11 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 meff_thresh = bonf_thresh
 
     # active threshold
-    if sig_rule.startswith("FDR"):
+    if sig_rule.startswith("Custom") and custom_sig_thresh is not None:
+        active_lod = -np.log10(float(custom_sig_thresh))
+        active_label = f"p < {float(custom_sig_thresh):.1e}"
+        _active_sig_col = "Significant_Custom"
+    elif sig_rule.startswith("FDR"):
         active_lod = None
         active_label = "FDR q<0.05"
         _active_sig_col = "Significant_FDR"
@@ -3131,7 +3149,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     secondary_lod = None
     secondary_label = None
     if show_secondary_threshold:
-        if sig_rule.startswith("Bonferroni") and meff_thresh is not None:
+        if sig_rule.startswith("Custom"):
+            secondary_lod = -np.log10(bonf_thresh)
+            secondary_label = "Bonferroni α=0.05"
+        elif sig_rule.startswith("Bonferroni") and meff_thresh is not None:
             secondary_lod = -np.log10(meff_thresh)
             secondary_label = f"M_eff (M={meff_val:,})"
         elif sig_rule.startswith("M_eff"):
