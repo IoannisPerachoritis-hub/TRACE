@@ -358,6 +358,15 @@ def render(
             "These reflect LD at association peaks, not population-level LD block structure."
         )
 
+        # Haplotype permutation control (tab-local: only this tab consumes n_perm_hap).
+        st.number_input(
+            "Haplotype permutations",
+            min_value=100, max_value=10000, value=1000, step=100,
+            key="n_perm_hap",
+            help="Number of Freedman-Lane permutations for haplotype block analysis. "
+                 "Higher = finer p-values but slower. Max -log10(p) ≈ log10(n_perm).",
+        )
+
         # Local aliases
         gwas_df = ctx.gwas_df
         chroms = ctx.chroms

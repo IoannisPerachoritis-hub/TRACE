@@ -345,42 +345,9 @@ def ld_analysis_page():
     st.title("Post-GWAS Analysis")
     check_data_version("ld_analysis")
 
-    # ---- Sidebar: mega-block filter ----
-    st.sidebar.subheader("Mega-block filter")
-    mega_mode = st.sidebar.radio(
-        "Mega-block handling",
-        ["Remove", "Flag only"],
-        index=0,
-        key="mega_block_mode",
-    )
-    mega_min = st.sidebar.number_input(
-        "Min contained blocks",
-        min_value=1, max_value=10, value=2,
-        key="mega_min_contained",
-    )
-    mega_ratio = st.sidebar.number_input(
-        "Size ratio threshold",
-        min_value=1.5, max_value=20.0, value=3.0, step=0.5,
-        key="mega_size_ratio",
-    )
-
-    # ---- Sidebar: haplotype / MLG analysis settings ----
-    st.sidebar.subheader("Haplotype / MLG Analysis")
-    st.sidebar.number_input(
-        "Haplotype permutations",
-        min_value=100, max_value=10000, value=1000, step=100,
-        key="n_perm_hap",
-        help="Number of Freedman-Lane permutations for haplotype block analysis. "
-             "Higher = finer p-values but slower. Max -log10(p) ≈ log10(n_perm).",
-    )
-
-    # ---- Sidebar: display options ----
-    st.sidebar.subheader("Display")
-    st.sidebar.checkbox(
-        "Show numeric LD values in heatmaps",
-        value=False,
-        key="show_ld_labels",
-    )
+    # Page-scoped controls (mega-block filter, haplotype permutations) are rendered
+    # in the page body / their tabs, not the sidebar — see the "Block table filter"
+    # row above the tabs and the LD Blocks & Haplotypes tab.
 
     required_keys = ["geno_dosage_raw", "geno_imputed", "chroms", "positions", "sid", "geno_df"]
 
@@ -640,8 +607,29 @@ def ld_analysis_page():
         haplo_df_auto = auto_store
 
     # --------------------------------------------------------
-    # Apply mega-block filter (sidebar controls)
+    # Page-scoped control: mega-block filter (applies to ALL tabs).
+    # Rendered above the tab bar (not in a tab) because it reshapes the block
+    # table every tab consumes; must render BEFORE filter_contained_blocks below.
     # --------------------------------------------------------
+    st.markdown("#### Block table filter (applies to all tabs)")
+    _mc1, _mc2, _mc3 = st.columns([1.3, 1, 1])
+    mega_mode = _mc1.radio(
+        "Mega-block handling", ["Remove", "Flag only"], index=0,
+        key="mega_block_mode", horizontal=True,
+    )
+    mega_min = _mc2.number_input(
+        "Min contained blocks", min_value=1, max_value=10, value=2,
+        key="mega_min_contained",
+    )
+    mega_ratio = _mc3.number_input(
+        "Size ratio threshold", min_value=1.5, max_value=20.0, value=3.0, step=0.5,
+        key="mega_size_ratio",
+    )
+    st.caption(
+        "Removing mega-blocks changes the block set **every tab uses** — the Regional Plot's "
+        "shaded span, the annotated gene set, and significant-SNP block membership all follow this filter."
+    )
+
     if isinstance(haplo_df_auto, pd.DataFrame) and not haplo_df_auto.empty:
         haplo_df_auto, n_removed = filter_contained_blocks(
             haplo_df_auto,
@@ -680,7 +668,6 @@ def ld_analysis_page():
         ld_trait=ld_trait,
         pcs=pcs,
         geno_encoding=geno_encoding,
-        show_ld_labels=st.session_state.get("show_ld_labels", False),
         has_annotation=_HAS_ANNOTATION,
         geno_dosage_raw=st.session_state.get("geno_dosage_raw"),
         meff_val=st.session_state.get("meff_val"),
