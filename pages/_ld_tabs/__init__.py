@@ -55,3 +55,4 @@ class LDContext:
     geno_dosage_raw: np.ndarray | None = None
     meff_val: int | None = None
     sig_rule_label: str = ""
+    custom_thresh: float | None = None

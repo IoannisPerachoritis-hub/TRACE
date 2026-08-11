@@ -584,6 +584,9 @@ if sig_rule.startswith("Custom"):
         key="custom_sig_thresh_input",
         help="SNPs with p < this value are flagged significant (e.g. 5e-8).",
     )
+# propagate the reporting rule + custom threshold to downstream pages (LD tab)
+st.session_state["sig_rule"] = sig_rule
+st.session_state["custom_sig_thresh"] = custom_sig_thresh
 show_secondary_threshold = st.sidebar.checkbox(
     "Also show secondary threshold line on Manhattans",
     value=False,
@@ -3877,7 +3880,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         return CovarData(iid=iid, val=_val, names=_names)
 
     # covariate fingerprint so the cached reader key changes when covars change
-    _covar_fp = "nocov" if user_covar_mat is None else f"cov{abs(hash(user_covar_mat.tobytes()))}"
+    _covar_fp = "nocov" if user_covar_mat is None else f"cov{hash_bytes(user_covar_mat.tobytes(), digest_size=8)}"
     covar_reader_mlmm = _build_covar_for_model(int(n_pcs_mlmm))
     covar_reader_farmcpu = _build_covar_for_model(int(n_pcs_farmcpu))
     covar_reader_mlmm_key = put_object_in_session(

@@ -114,3 +114,6 @@ def test_custom_sig_thresh_runs_from_memory():
     at.run()
     assert _only_harness_error(at)
     assert "gwas_df" in at.session_state and len(at.session_state["gwas_df"]) > 0
+    # the rule + custom threshold are propagated to downstream pages (LD tab)
+    assert at.session_state["sig_rule"] == "Custom p-value"
+    assert float(at.session_state["custom_sig_thresh"]) == 5e-8

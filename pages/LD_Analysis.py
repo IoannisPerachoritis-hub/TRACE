@@ -683,6 +683,7 @@ def ld_analysis_page():
         geno_dosage_raw=st.session_state.get("geno_dosage_raw"),
         meff_val=st.session_state.get("meff_val"),
         sig_rule_label=st.session_state.get("sig_rule", ""),
+        custom_thresh=st.session_state.get("custom_sig_thresh"),
     )
 
     # ============================================================
