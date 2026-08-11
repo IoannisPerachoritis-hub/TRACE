@@ -20,6 +20,8 @@ from pages._ld_tabs import tab_gene_annotation
 from pages._ld_tabs import tab_decay
 from pages._ld_tabs import tab_genome_wide
 from pages._ld_tabs import tab_significant_snps
+from pages._ld_tabs import tab_regional
+from pages._ld_tabs._window import select_window
 
 
 
@@ -689,8 +691,16 @@ def ld_analysis_page():
     # ============================================================
     # Tabs
     # ============================================================
-    tab_sig, tab_blocks, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
+    # Shared window selector — rendered ONCE above the tab bar so the Regional
+    # Plot and Local LD tabs consume ONE selection. Streamlit forbids the same
+    # keyed widget in two st.tabs bodies (DuplicateWidgetID), and every tab body
+    # executes on each rerun, so the selector cannot live inside either tab.
+    with st.expander("Region / lead-SNP selection (Regional Plot + Local LD)", expanded=True):
+        _ld_window = select_window(_ld_ctx)
+
+    tab_sig, tab_reg, tab_blocks, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
         "Significant SNPs",
+        "Regional Plot",
         "Block Heatmaps",
         "Local LD",
         "Gene Annotation",
@@ -700,11 +710,14 @@ def ld_analysis_page():
     with tab_sig:
         tab_significant_snps.render(_ld_ctx)
 
+    with tab_reg:
+        tab_regional.render(_ld_ctx, _ld_window)
+
     with tab_blocks:
         tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
 
     with tab1:
-        tab_local_ld.render(_ld_ctx, get_r2_cached)
+        tab_local_ld.render(_ld_ctx, get_r2_cached, _ld_window)
 
     with tab_genes:
         tab_gene_annotation.render(_ld_ctx)
