@@ -335,6 +335,15 @@ with st.container():
             )
             st.session_state["pheno_file_label"] = pheno_file_label
 
+        covar_file = st.file_uploader(
+            "Upload covariates (optional; .csv/.tsv)",
+            type=["csv", "txt", "tsv"], key="covar_upload",
+            help="Numeric covariates (batch, environment, ...) added as fixed effects "
+                 "to the single-trait models alongside the PCs. First column = sample "
+                 "ID matching the VCF; remaining columns = numeric covariates. "
+                 "Covariates must be complete for the analysis samples.",
+        )
+
     # ---- Data format guidance (collapsible) ----
     with st.expander("Data format requirements", expanded=False):
         _fmt1, _fmt2 = st.columns(2)
@@ -632,6 +641,24 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     pheno[accession_col] = pheno[accession_col].astype(str).str.strip()
     pheno = pheno.set_index(accession_col)
     pheno.index = pheno.index.astype(str).str.strip()
+
+    # --- Optional user covariates (parity with CLI --covar); resolved from the
+    #     upload or from memory (run-from-memory), applied in the single-trait view ---
+    from gwas.covariates import (
+        load_covariate_frame as _load_cov,
+        select_covariate_columns as _sel_cov,
+        align_covariates as _align_cov,
+    )
+    covar_df = None
+    if covar_file is not None:
+        try:
+            covar_file.seek(0)
+            covar_df = _sel_cov(_load_cov(covar_file))
+            st.session_state["_persist_covar"] = covar_df
+        except Exception as _cov_err:
+            _rehydrate_or_stop(f"Could not read covariate file: {_cov_err}")
+    elif "_persist_covar" in st.session_state:
+        covar_df = st.session_state["_persist_covar"]
     # Store RAW phenotype immediately (before zero-handling or transformations)
     # Always refresh pheno_raw when a new phenotype file is loaded
     st.session_state["pheno_raw"] = pheno.copy()
@@ -914,6 +941,21 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     geno_df = results["geno_df"]
     pcs = results["pcs"]
     y = results["y"]
+
+    # Aligned user covariates (iid order); applied only when complete for every
+    # analysis sample (else warn + run without — the CLI --covar drops instead).
+    user_covar_mat = None
+    user_covar_names = None
+    if covar_df is not None:
+        _cov_M, _cov_names, _cov_ok = _align_cov(covar_df, iid[:, 0])
+        if not _cov_ok.all():
+            st.warning(
+                f"{int((~_cov_ok).sum())} of {len(_cov_ok)} analysis samples are missing "
+                "covariate values — covariates NOT applied. Provide covariates for all "
+                "samples, or use the CLI --covar (which drops incomplete samples)."
+            )
+        else:
+            user_covar_mat, user_covar_names = _cov_M, _cov_names
     y_key = put_array_in_session(
         np.asarray(y),
         "Y_VEC",
@@ -1005,15 +1047,20 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         trait_col
     )
 
-    # Covariates
-    if pcs is not None:
-        covar_reader = CovarData(
-            iid=iid,
-            val=pcs,
-            names=[f"PC{i + 1}" for i in range(pcs.shape[1])]
-        )
+    # Covariates (PCs + optional user covariates)
+    if user_covar_mat is None:
+        if pcs is not None:
+            covar_reader = CovarData(
+                iid=iid,
+                val=pcs,
+                names=[f"PC{i + 1}" for i in range(pcs.shape[1])]
+            )
+        else:
+            covar_reader = None
     else:
-        covar_reader = None
+        _pc_names = [f"PC{i + 1}" for i in range(pcs.shape[1])] if pcs is not None else []
+        _val = np.column_stack([pcs, user_covar_mat]) if pcs is not None else user_covar_mat
+        covar_reader = CovarData(iid=iid, val=_val, names=_pc_names + list(user_covar_names))
     # ============================================================
     # SAVE FastLMM objects to session_state (CRITICAL)
     # ============================================================
@@ -3024,6 +3071,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             _K_by_chr=K_by_chr,
             _pheno_reader_key=pheno_reader_key,
             trait_name=trait_col,
+            user_covar=user_covar_mat,
+            user_covar_names=user_covar_names,
         )
     except np.linalg.LinAlgError:
         logging.exception("MLM GWAS failed (singular matrix)")
@@ -3783,24 +3832,32 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # MLMM and FarmCPU may use different PC counts than MLM. Build dedicated
     # CovarData objects here so each model sees its own fixed-effect design.
     def _build_covar_for_model(k_pcs):
-        if pcs_full is None or k_pcs <= 0:
+        _pc = None
+        if pcs_full is not None and k_pcs > 0:
+            _pc = pcs_full[:, :int(min(k_pcs, pcs_full.shape[1]))]
+        if _pc is None and user_covar_mat is None:
             return None
-        k = int(min(k_pcs, pcs_full.shape[1]))
-        return CovarData(
-            iid=iid,
-            val=pcs_full[:, :k],
-            names=[f"PC{i + 1}" for i in range(k)],
-        )
+        if user_covar_mat is None:
+            return CovarData(
+                iid=iid,
+                val=_pc,
+                names=[f"PC{i + 1}" for i in range(_pc.shape[1])],
+            )
+        _val = np.column_stack([_pc, user_covar_mat]) if _pc is not None else user_covar_mat
+        _names = ([f"PC{i + 1}" for i in range(_pc.shape[1])] if _pc is not None else []) + list(user_covar_names)
+        return CovarData(iid=iid, val=_val, names=_names)
 
+    # covariate fingerprint so the cached reader key changes when covars change
+    _covar_fp = "nocov" if user_covar_mat is None else f"cov{abs(hash(user_covar_mat.tobytes()))}"
     covar_reader_mlmm = _build_covar_for_model(int(n_pcs_mlmm))
     covar_reader_farmcpu = _build_covar_for_model(int(n_pcs_farmcpu))
     covar_reader_mlmm_key = put_object_in_session(
         covar_reader_mlmm, "COVAR_READER",
-        vcf_hash, pheno_hash, trait_col, int(n_pcs_mlmm),
+        vcf_hash, pheno_hash, trait_col, int(n_pcs_mlmm), _covar_fp,
     )
     covar_reader_farmcpu_key = put_object_in_session(
         covar_reader_farmcpu, "COVAR_READER",
-        vcf_hash, pheno_hash, trait_col, int(n_pcs_farmcpu),
+        vcf_hash, pheno_hash, trait_col, int(n_pcs_farmcpu), _covar_fp,
     )
 
     if "MLMM (iterative cofactors)" in model_choices:

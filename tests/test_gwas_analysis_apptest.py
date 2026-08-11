@@ -74,6 +74,21 @@ def test_run_from_memory_produces_results():
     assert "gwas_df" in at.session_state and len(at.session_state["gwas_df"]) > 0
 
 
+def test_covariate_from_memory_runs():
+    """A covariate (seeded via _persist_covar) is aligned + applied in a
+    from-memory run without crashing. Covariate correctness is covered by the
+    unit tests (test_covariates, run_gwas_cached user_covar)."""
+    at = AppTest.from_file(_PAGE, default_timeout=300)
+    samples = _seed_from_memory(at, run=True)
+    rng = np.random.default_rng(7)
+    at.session_state["_persist_covar"] = pd.DataFrame(
+        {"batch": rng.normal(0, 1, len(samples))}, index=samples
+    )
+    at.run()
+    assert _only_harness_error(at)
+    assert "gwas_df" in at.session_state and len(at.session_state["gwas_df"]) > 0
+
+
 def test_custom_sig_thresh_runs_from_memory():
     """The Custom-p-value path (selectbox -> number_input -> Significant_Custom
     column -> active threshold) runs end-to-end without a real error. Column
