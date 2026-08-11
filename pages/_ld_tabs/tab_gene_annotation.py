@@ -22,6 +22,7 @@ def render(ctx: LDContext):
         load_gene_annotation,
         annotate_ld_blocks,
         format_annotation_summary,
+        summarize_gene_model,
     )
 
     st.markdown(
@@ -59,14 +60,25 @@ def render(ctx: LDContext):
         st.write(f"Gene descriptions: `{_ld_desc_auto.name}`")
         desc_file = _ld_desc_auto
 
-    with st.expander("Override gene files"):
+    with st.expander(
+        "Upload a gene model (for a non-tomato species or a custom build)",
+        expanded=(_ld_species == "Other (upload files)"),
+    ):
         _ld_gm_ov = st.file_uploader(
-            "Gene coordinates (Sol_genes.csv)",
+            "Gene coordinates CSV (columns: Chr, Start, End, [Strand,] Gene_ID)",
             type=["csv", "tsv", "txt"],
             key="gene_model_upload",
+            help=(
+                "Overrides the bundled gene model if provided. Accepted column "
+                "aliases: CHROM/Chr/chr, START/Start/start_pos, END/End/end_pos, "
+                "GENE/Gene_ID/name/gene_name. Coordinates must be in the SAME "
+                "assembly as your VCF (check the per-chromosome ranges shown "
+                "after upload). For a new species, derive this from your GFF3 "
+                "with a short pandas script. See docs/gene_model_upload.md."
+            ),
         )
         _ld_desc_ov = st.file_uploader(
-            "Gene descriptions (SL3.1 or ITAG4.0)",
+            "Gene descriptions TSV (optional: gene_id \\t description)",
             type=["txt", "tsv"],
             key="gene_desc_upload",
         )
@@ -99,10 +111,13 @@ def render(ctx: LDContext):
         try:
             genes_df = load_gene_annotation(gene_tmp, desc_tmp)
             st.session_state["genes_df"] = genes_df
-            st.write(
+            _gm_summary = summarize_gene_model(genes_df)
+            st.success(
                 f"Loaded {len(genes_df):,} genes across "
-                f"{genes_df['Chr'].nunique()} chromosomes."
+                f"{len(_gm_summary)} chromosomes. Confirm the coordinate ranges "
+                f"below are in the same assembly as your VCF."
             )
+            st.dataframe(_gm_summary, use_container_width=True)
         except Exception as e:
             logging.exception("Gene file loading failed")
             st.error(f"Error loading gene file: {e}")

@@ -150,6 +150,42 @@ def _find_flanking_genes(genes_chr, block_start, block_end, n_flank=2, max_dist_
     return upstream, downstream
 
 
+def summarize_gene_model(genes_df):
+    """Per-chromosome summary of a loaded gene model, for upload-time validation.
+
+    Given the normalised frame from :func:`load_gene_annotation` (columns
+    Chr/Start/End/Gene_ID), return a tidy per-chromosome table so a user can
+    sanity-check that an uploaded gene model is in the same coordinate frame /
+    assembly as their genotype data. A coordinate range that does not cover the
+    same span as the SNP positions is the visible symptom of a wrong build.
+
+    Returns
+    -------
+    DataFrame with columns: Chr, n_genes, min_start, max_end, span_Mb
+    (one row per chromosome, ordered by chromosome number).
+    """
+    cols = ["Chr", "n_genes", "min_start", "max_end", "span_Mb"]
+    if genes_df is None or len(genes_df) == 0:
+        return pd.DataFrame(columns=cols)
+    g = genes_df.copy()
+    g["Chr"] = g["Chr"].astype(str).map(canon_chr)
+    g["Start"] = pd.to_numeric(g["Start"], errors="coerce")
+    g["End"] = pd.to_numeric(g["End"], errors="coerce")
+    rows = []
+    for ch, sub in g.groupby("Chr"):
+        mn = int(sub["Start"].min())
+        mx = int(sub["End"].max())
+        rows.append({
+            "Chr": ch, "n_genes": int(len(sub)),
+            "min_start": mn, "max_end": mx,
+            "span_Mb": round((mx - mn) / 1e6, 2),
+        })
+    out = pd.DataFrame(rows, columns=cols)
+    out["_ord"] = pd.to_numeric(out["Chr"], errors="coerce")
+    out = out.sort_values(["_ord", "Chr"]).drop(columns="_ord").reset_index(drop=True)
+    return out
+
+
 def annotate_ld_blocks(
     ld_blocks,
     genes,
