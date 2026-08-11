@@ -201,8 +201,8 @@ Genes are listed by physical position only, in genomic order.</p>
 <div style="overflow-x:auto">{{ isolated_intervals_html | safe }}</div>
 {% endif %}
 
-<!-- ── Post-GWAS: LD blocks + annotation + haplotypes ── -->
 {% if ld_blocks_html or ld_blocks_annotated_html or haplotype_gwas_html %}
+<!-- ── Post-GWAS: LD blocks + annotation + haplotypes ── -->
 <h2>Post-GWAS: LD Blocks &amp; Haplotypes</h2>
 {% if ld_blocks_html %}<h3>LD blocks</h3><div style="overflow-x:auto">{{ ld_blocks_html | safe }}</div>{% endif %}
 {% if ld_blocks_annotated_html %}<h3>Annotated LD blocks</h3><div style="overflow-x:auto">{{ ld_blocks_annotated_html | safe }}</div>{% endif %}
