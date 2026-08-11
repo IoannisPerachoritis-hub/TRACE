@@ -223,6 +223,78 @@ def _compute_ld_decay_for_gwas_page(geno_key: str, chroms_tuple: tuple,
 # Streamlit App UI
 # -----------------
 st.title("TRACE GWAS")
+
+
+# ---------------------------------------------------------------------------
+# Session rehydration: re-display the persisted results of the last completed
+# run (figures + table + downloads) instead of blanking the page when the user
+# navigates back or an input gate would stop the run. Nothing is recomputed.
+# ---------------------------------------------------------------------------
+def _has_persisted_gwas():
+    _g = st.session_state.get("gwas_df")
+    return _g is not None and not (hasattr(_g, "empty") and _g.empty)
+
+
+def _render_last_run_results():
+    _g = st.session_state.get("gwas_df")
+    _summ = st.session_state.get("gwas_run_summary", {})
+    _figs = st.session_state.get("gwas_figures", {})
+    _trait = (_summ.get("trait") or st.session_state.get("active_trait")
+              or st.session_state.get("trait_col", "?"))
+    _bits = [f"trait **{_trait}**"]
+    if _summ.get("n_samples"):
+        _bits.append(f"{_summ['n_samples']} samples")
+    if _summ.get("n_snps"):
+        _bits.append(f"{_summ['n_snps']:,} SNPs")
+    if _summ.get("models"):
+        _bits.append(", ".join(_summ["models"]))
+    if _summ.get("lambda_gc") is not None:
+        _bits.append(f"λGC={_summ['lambda_gc']:.3f}")
+    if _summ.get("timestamp"):
+        _bits.append(_summ["timestamp"])
+    st.info(
+        "\U0001F4CB **Showing your last completed run** (restored from this session "
+        "— not recomputed): " + " · ".join(_bits) +
+        ".  Upload files and click **Run GWAS** below to run a new analysis."
+    )
+    for _name, _obj in _figs.items():
+        try:
+            if _name.endswith(".png"):
+                st.pyplot(_obj)
+            elif _name.endswith(".html"):
+                import streamlit.components.v1 as _components
+                _html = _obj.decode("utf-8") if isinstance(_obj, (bytes, bytearray)) else str(_obj)
+                _components.html(_html, height=520, scrolling=True)
+        except Exception:
+            pass
+    if _g is not None:
+        st.markdown("#### Results table")
+        st.dataframe(_g, use_container_width=True)
+        st.download_button(
+            "Download results (CSV)", _g.to_csv(index=False).encode("utf-8"),
+            file_name=f"GWAS_{_trait}.csv", mime="text/csv", key="rehydrate_csv",
+        )
+    for _zk in list(st.session_state.keys()):
+        if isinstance(_zk, str) and _zk.startswith("gwas_zip_"):
+            _zv = st.session_state.get(_zk)
+            if isinstance(_zv, dict) and "data" in _zv:
+                st.download_button(
+                    "Download GWAS results (ZIP)", _zv["data"],
+                    file_name=_zv.get("name", "gwas_results.zip"),
+                    mime="application/zip", key="rehydrate_zip",
+                )
+                break
+
+
+def _rehydrate_or_stop(msg=None, level="error"):
+    """Show the persisted last-run results (if any) instead of blanking, then stop."""
+    if _has_persisted_gwas():
+        if msg:
+            st.warning(f"{msg}  — showing your last completed run below instead.")
+        _render_last_run_results()
+    elif msg:
+        getattr(st, level, st.error)(msg)
+    st.stop()
 # =========================
 # 1. Data upload & basic QC
 # =========================
@@ -230,7 +302,7 @@ with st.container():
     col_files, col_qc = st.columns([2, 3])
 
     with col_files:
-        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"])
+        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key="vcf_upload")
         if vcf_file is not None:
             _vcf_size_mb = vcf_file.size / (1024 * 1024)
             if _vcf_size_mb > 200:
@@ -239,7 +311,7 @@ with st.container():
                     "processing or memory issues. Consider pre-filtering to keep only "
                     "target chromosomes and MAF > 0.01 variants."
                 )
-        phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"])
+        phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"], key="pheno_upload")
         # ------------------------------------------------------------
         # Store phenotype file label for reproducible exports
         # ------------------------------------------------------------
@@ -502,11 +574,9 @@ if vcf_file and phe_file:
                 "Consider re-saving as UTF-8 for best compatibility."
             )
         except Exception as _enc_err:
-            st.error(f"Could not read phenotype file: {_enc_err}")
-            st.stop()
+            _rehydrate_or_stop(f"Could not read phenotype file: {_enc_err}")
     except Exception as _read_err:
-        st.error(f"Could not parse phenotype file: {_read_err}")
-        st.stop()
+        _rehydrate_or_stop(f"Could not parse phenotype file: {_read_err}")
     with st.expander("Phenotype file preview", expanded=True):
         st.dataframe(pheno.head())
 
@@ -692,8 +762,7 @@ if vcf_file and phe_file:
             "(`cli.py`) for production runs."
         )
     if not selected_traits:
-        st.info("Select at least one numeric trait to proceed.")
-        st.stop()
+        _rehydrate_or_stop("Select at least one numeric trait to proceed.", level="info")
     # Primary trait drives the pre-Run setup/preview (QC, PCA, data summary).
     # Inside the one-click loop, each trait refreshes its own pipeline outputs.
     # The single-trait detailed view below the one-click expander always uses
@@ -1011,11 +1080,10 @@ if vcf_file and phe_file:
     _n_geno = results["geno_df"].shape[0]
     _n_pheno = len(pheno)
     if _n_geno < 10:
-        st.error(
+        _rehydrate_or_stop(
             f"Only {_n_geno} samples overlap between genotype and phenotype "
             f"({_n_pheno} phenotype samples). Check that sample IDs match between files."
         )
-        st.stop()
     elif _n_geno < _n_pheno * 0.5:
         st.warning(
             f"Only {_n_geno}/{_n_pheno} phenotype samples found in genotype data. "
@@ -2888,10 +2956,17 @@ if vcf_file and phe_file:
     # Reset trigger when trait changes so user must re-click
     if st.session_state.get("_last_gwas_trait") != trait_col:
         st.session_state["gwas_triggered"] = False
-    if st.button("Run GWAS", type="primary", help="Click to start the GWAS analysis with current parameters."):
+    _run_clicked = st.button("Run GWAS", type="primary", help="Click to start the GWAS analysis with current parameters.")
+    if _run_clicked:
         st.session_state["gwas_triggered"] = True
-    if not st.session_state.get("gwas_triggered", False):
+    # Navigated back (did not click Run this rerun) and results already exist for
+    # this trait -> re-display them without recomputing.
+    if (not _run_clicked and _has_persisted_gwas()
+            and st.session_state.get("gwas_run_summary", {}).get("trait") == trait_col):
+        _render_last_run_results()
         st.stop()
+    if not st.session_state.get("gwas_triggered", False):
+        _rehydrate_or_stop()
     st.session_state["_last_gwas_trait"] = trait_col
 
     # ------------------------------------------------------------
@@ -4113,6 +4188,14 @@ if vcf_file and phe_file:
     # Trait pointers
     st.session_state["active_trait"] = trait_col
     st.session_state["trait_col"] = trait_col
+    st.session_state["gwas_run_summary"] = {
+        "trait": trait_col,
+        "n_samples": int(geno_df.shape[0]) if "geno_df" in locals() else None,
+        "n_snps": int(len(st.session_state["gwas_df"])),
+        "models": sorted(set(["MLM"] + [m.split()[0] for m in model_choices])) if "model_choices" in locals() else ["MLM"],
+        "lambda_gc": float(lambda_gc) if "lambda_gc" in locals() else None,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
     bump_data_version()  # GWAS complete — notify downstream pages
     # ============================================================
     # Auto-build GWAS-only ZIP (once per trait, no LD content)
