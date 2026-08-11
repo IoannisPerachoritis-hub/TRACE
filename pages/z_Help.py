@@ -15,7 +15,7 @@ st.markdown("""
 1. **Prepare your VCF file** -- Biallelic SNPs, numbered chromosomes. Compressed (`.vcf.gz`) supported. Max 1 GB.
 2. **Prepare your phenotype file** -- CSV/TSV with sample IDs in the first column, numeric traits in subsequent columns. Sample IDs must match VCF sample names exactly.
 3. **Navigate to GWAS Analysis** -- Upload both files, adjust QC parameters (or use a preset), select a trait. Use **Auto-select PCs** to find the optimal PC count (lambda_GC near 1.0), or set it manually. Click **Run GWAS** for step-by-step results, or **One-Click Full Analysis** for an automated pipeline with ZIP download.
-4. **Explore LD structure** -- After GWAS, go to LD & Haplotype Analysis. Significant loci are pre-loaded from your GWAS results.
+4. **Explore LD structure** -- After GWAS, go to Post-GWAS Analysis. Significant loci are pre-loaded from your GWAS results.
 5. **Download results** -- Each page offers ZIP downloads with all tables, figures, and metadata.
 
 **Data format examples:**

@@ -342,7 +342,7 @@ def compute_block_qc_effects(
 # --------------------------------------------------------
 
 def ld_analysis_page():
-    st.title("LD & Haplotype Analysis")
+    st.title("Post-GWAS Analysis")
     check_data_version("ld_analysis")
 
     # ---- Sidebar: mega-block filter ----

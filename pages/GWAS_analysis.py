@@ -1533,7 +1533,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 ["Suggestive (p-threshold + top N)", "Significant only (chosen threshold)"],
                 key="pipe_ld_seed",
                 horizontal=True,
-                help="'Suggestive' finds LD blocks around top peaks (same as LD Analysis page). "
+                help="'Suggestive' finds LD blocks around top peaks (same as Post-GWAS Analysis page). "
                      "'Significant only' restricts to SNPs passing your genome-wide threshold.",
             )
             if _pipe_ld_seed.startswith("Suggestive"):
@@ -2377,7 +2377,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             if _median_decay is not None:
                                 _pipe_ld_decay_kb = float(_median_decay)
                                 _pipe_ld_flank = int(2 * _pipe_ld_decay_kb)
-                                # Publish to session_state so LD Analysis page shows
+                                # Publish to session_state so Post-GWAS Analysis page shows
                                 # the accurate value (and the "from Decay tab" label).
                                 st.session_state["ld_decay_df"] = _decay_df
                                 st.session_state["ld_decay_summary"] = _summary_df
@@ -3822,7 +3822,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     # ============================================================
     # 6. Genome-wide LD DECAY — accurate per-chromosome computation
-    # (same function as LD Analysis > Decay tab)
+    # (same function as Post-GWAS Analysis > Decay tab)
     try:
         _manual_decay_df, _manual_summary_df, _manual_median = _compute_ld_decay_for_gwas_page(
             geno_key=geno_key,
@@ -4485,7 +4485,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     st.markdown("### Next steps")
     _nav_col1, _nav_col2 = st.columns(2)
     with _nav_col1:
-        st.page_link("pages/LD_Analysis.py", label="LD & Haplotype Analysis →")
+        st.page_link("pages/Post_GWAS_Analysis.py", label="Post-GWAS Analysis →")
 
 
 

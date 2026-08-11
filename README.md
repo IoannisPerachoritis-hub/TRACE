@@ -17,11 +17,11 @@ TRACE takes a VCF and a phenotype file and returns annotated candidate loci. One
 
 ![GWAS Analysis](docs/screenshot_gwas.png)
 
-**LD & Haplotype Analysis** — Peak-centric LD block detection, haplotype effect testing (Tukey HSD + CLD, raincloud, forest plot), and haplotype-coloured PCA:
+**Post-GWAS Analysis** — Peak-centric LD block detection, haplotype effect testing (Tukey HSD + CLD, raincloud, forest plot), and haplotype-coloured PCA:
 
-![LD Analysis](docs/screenshot_ld.png)
+![Post-GWAS Analysis](docs/screenshot_ld.png)
 
-**Local LD heatmap** — Lead-SNP-centric LD heatmap with optional snap-to-block and configurable buffer:
+**Local LD heatmap** — Lead-SNP-centric LD heatmap with a configurable buffer; pick a detected block via the region selector:
 
 ![Local LD](docs/screenshot_local_ld.png)
 
@@ -62,7 +62,7 @@ VCF + Phenotypes → QC → GWAS (LOCO-MLM / MLMM / FarmCPU) → LD blocks → G
 - **Block-level aggregation**: discovery frequency, lead SNP consistency, and stability metrics
 - Quantifies **signal reproducibility** across subsets of accessions
 
-### LD & Haplotype Analysis
+### Post-GWAS Analysis
 - **Graph-based LD block detection** 
 - Haplotype grouping via multi-locus genotype (MLG) 
 - Block-level nested F-test with **Freedman-Lane permutation p-values**
@@ -122,8 +122,8 @@ CLI flag, so headless / HPC runs produce the same artifacts as the UI.
 | Auto-PC selection (band)                | GWAS Analysis            | `--pc-strategy band` (default), `--n-pcs INT` to override |
 | QC: MAF / MAC / missingness / INFO      | GWAS Analysis            | `--maf`, `--mac`, `--miss`, `--info`                      |
 | Significance threshold                  | GWAS Analysis            | `--sig-rule {meff,bonferroni,fdr}`                        |
-| LD blocks + haplotype testing           | LD Analysis              | `--ld-blocks`, `--haplotype-test`                         |
-| Gene annotation                         | LD Analysis              | `--annotate`, `--gene-window-kb`                          |
+| LD blocks + haplotype testing           | Post-GWAS Analysis       | `--ld-blocks`, `--haplotype-test`                         |
+| Gene annotation                         | Post-GWAS Analysis       | `--annotate`, `--gene-window-kb`                          |
 | Subsampling stability                   | GWAS Analysis            | `--subsample`, `--n-subsamples`, `--retain-frac`          |
 | Reproducible RNG                        | (deterministic by build) | `--seed INT` (default 42)                                 |
 | HTML report                             | GWAS Analysis            | enabled by default; suppress with `--no-report`           |
@@ -131,7 +131,7 @@ CLI flag, so headless / HPC runs produce the same artifacts as the UI.
 | Export QC matrices for cross-tool runs  | (not in UI)              | `--export-qc`                                             |
 
 Deep-dive interactive features (per-block LD heatmaps, decay curves) live
-in the LD Analysis page and have no CLI counterpart by design — the CLI
+in the Post-GWAS Analysis page and have no CLI counterpart by design — the CLI
 emits the underlying CSVs so the same plots can be regenerated externally.
 
 ---
@@ -227,7 +227,7 @@ TRACE/
 │
 ├── pages/
 │   ├── GWAS_analysis.py                # GWAS analysis page (MLM, LOCO, MLMM, FarmCPU, subsampling)
-│   ├── LD_Analysis.py                  # LD blocks, haplotypes, annotation, decay
+│   ├── Post_GWAS_Analysis.py          # LD blocks, haplotypes, annotation, decay
 │   ├── z_Help.py                       # In-app help and quick start
 │   └── _ld_tabs/                        # LD page submodules
 │       ├── __init__.py                 # LDContext dataclass
@@ -356,7 +356,7 @@ Upload VCF + phenotype CSV. Configure QC thresholds (MAF, MAC, missingness), sel
 
 Results include the Manhattan and QQ plots, the significant-SNP table, OLS effect sizes, λGC, and the M_eff threshold. Subsampling GWAS is optional and reports signal stability.
 
-### 2. LD & Haplotype Analysis
+### 2. Post-GWAS Analysis
 
 After GWAS, open the LD page. LD blocks are detected with a graph-based algorithm using adaptive r² thresholds. Haplotype groups are tested against the trait with a nested F-test and Freedman-Lane permutation p-values. η² reports the variance explained by each haplotype group, and LD decay is computed per chromosome.
 
