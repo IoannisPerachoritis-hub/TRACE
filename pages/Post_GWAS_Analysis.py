@@ -714,6 +714,11 @@ def ld_analysis_page():
 
     with tab1:
         tab_local_ld.render(_ld_ctx, get_r2_cached, _ld_window)
+        # Block Heatmaps is superseded by the region selector's "Detected block"
+        # mode (rendered in this Local LD tab). Kept behind a legacy expander here
+        # for continuity; to be retired in a later release (D-36).
+        with st.expander("Legacy views — per-block LD heatmap", expanded=False):
+            tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
 
     with tab_genes:
         tab_gene_annotation.render(_ld_ctx)
@@ -729,12 +734,6 @@ def ld_analysis_page():
             compute_block_qc_effects=compute_block_qc_effects,
             run_haplotype_block_gwas_cached_fn=run_haplotype_block_gwas_cached,
         )
-
-    # Block Heatmaps is superseded by the region selector's "Detected block" mode +
-    # the Local LD tab (D-36). Kept behind a legacy expander for continuity; to be
-    # retired in a later release.
-    with st.expander("Legacy views", expanded=False):
-        tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
 
 
 
