@@ -691,4 +691,201 @@ def plot_maf_histogram(maf_values, maf_threshold=0.05,
     ax.set_ylabel("Number of SNPs")
     ax.set_title(title)
     fig.tight_layout()
+
+
+# ============================================================
+# REGIONAL ASSOCIATION (locus-zoom-style) — T-08
+# ============================================================
+
+# r² bins (LocusZoom convention), ordered low -> high LD to the lead SNP.
+_R2_BIN_COLORS = ["#2C5AA0", "#56B4E9", "#009E73", "#E69F00", "#D55E00"]
+_R2_BIN_LABELS = ["r²<0.2", "0.2–0.4", "0.4–0.6", "0.6–0.8", "r²≥0.8"]
+_R2_NA_COLOR = "#B0B0B0"
+MAX_REGIONAL_SNPS = 4000  # matches the pairwise_r2 ceiling used elsewhere
+
+
+def _r2_bin_index(r2):
+    return np.digitize(np.asarray(r2, dtype=float), [0.2, 0.4, 0.6, 0.8]).astype(int)
+
+
+def _r2_point_colors(r2):
+    r2 = np.asarray(r2, dtype=float)
+    idx = _r2_bin_index(r2)
+    cols = [_R2_BIN_COLORS[i] for i in idx]
+    for k in range(len(cols)):
+        if not np.isfinite(r2[k]):
+            cols[k] = _R2_NA_COLOR
+    return cols
+
+
+def _draw_gene_track(ax, genes):
+    """Greedy-stacked horizontal gene bars with a strand arrow + label."""
+    g = genes.reset_index(drop=True)
+    rows_end = []
+    for _, gene in g.iterrows():
+        s = float(gene["Start"]) / 1e6
+        e = float(gene["End"]) / 1e6
+        strand = str(gene.get("Strand", "."))
+        yr = None
+        for ri, rend in enumerate(rows_end):
+            if s > rend + 0.002:
+                yr = ri
+                rows_end[ri] = e
+                break
+        if yr is None:
+            yr = len(rows_end)
+            rows_end.append(e)
+        y = -yr
+        ax.plot([s, e], [y, y], lw=3, color=PALETTE["green"], solid_capstyle="butt", zorder=2)
+        arrow = "▶" if strand == "+" else ("◀" if strand == "-" else "")
+        ax.text((s + e) / 2.0, y + 0.18, f"{gene.get('Gene_ID', '')} {arrow}".strip(),
+                fontsize=6, ha="center", va="bottom", clip_on=True)
+    n = max(1, len(rows_end))
+    ax.set_ylim(-n - 0.3, 0.9)
+    ax.set_yticks([])
+    ax.set_ylabel("genes", fontsize=8)
+
+
+def plot_regional_association_static(
+    window_df, r2_to_lead, lead_snp, sig_threshold,
+    block_interval=None, block_members=None, genes=None, seed_threshold=None,
+):
+    """Regional (locus-zoom-style) association plot for one window. Pure; no Streamlit.
+
+    x = position (Mb), y = -log10(p); points coloured by r² to the lead SNP (bins
+    >=0.8 / 0.6-0.8 / 0.4-0.6 / 0.2-0.4 / <0.2; grey where r² is not computable). The
+    lead SNP is a labelled diamond; a dashed line marks ``sig_threshold`` (None -> no
+    line, e.g. FDR); ``block_interval`` (start_bp, end_bp) is shaded and
+    ``block_members`` outlined; SNPs significant by the reporting rule but with
+    p >= ``seed_threshold`` get a square marker (the seed-vs-member / omission set).
+    A gene track (if ``genes`` given) shares the x-axis. Returns a matplotlib Figure.
+    """
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    df = window_df.reset_index(drop=True)
+    pos_mb = df["Pos"].to_numpy(dtype=float) / 1e6
+    pv = np.clip(df["PValue"].to_numpy(dtype=float), 1e-300, 1.0)
+    logp = -np.log10(pv)
+    r2 = np.asarray(r2_to_lead, dtype=float)
+    snp_ids = df["SNP"].astype(str).to_numpy()
+    colors = _r2_point_colors(r2)
+
+    has_genes = genes is not None and len(genes) > 0
+    if has_genes:
+        fig, (ax, axg) = plt.subplots(2, 1, figsize=(9, 6), sharex=True,
+                                      gridspec_kw={"height_ratios": [4, 1]})
+    else:
+        fig, ax = plt.subplots(figsize=(9, 5))
+        axg = None
+
+    marker_handles = []
+    if block_interval is not None:
+        _s, _e = block_interval
+        ax.axvspan(_s / 1e6, _e / 1e6, color=PALETTE["cyan"], alpha=0.12, zorder=0)
+        marker_handles.append(Patch(facecolor=PALETTE["cyan"], alpha=0.25, label="LD block"))
+
+    is_lead = snp_ids == str(lead_snp)
+    nl = ~is_lead
+    ax.scatter(pos_mb[nl], logp[nl], c=[colors[k] for k in range(len(colors)) if nl[k]],
+               s=28, edgecolor="none", zorder=3)
+
+    if block_members:
+        mem = np.array([s in set(block_members) for s in snp_ids]) & nl
+        if mem.any():
+            ax.scatter(pos_mb[mem], logp[mem], facecolors="none", edgecolors="black",
+                       s=64, linewidths=0.8, zorder=4)
+            marker_handles.append(Line2D([0], [0], marker="o", ls="", mfc="none",
+                                         mec="black", label="block member"))
+
+    if sig_threshold is not None and seed_threshold is not None:
+        below = (pv < float(sig_threshold)) & (pv >= float(seed_threshold)) & nl
+        if below.any():
+            ax.scatter(pos_mb[below], logp[below], marker="s", facecolors="none",
+                       edgecolors=PALETTE["red"], s=95, linewidths=1.2, zorder=5)
+            marker_handles.append(Line2D([0], [0], marker="s", ls="", mfc="none",
+                                         mec=PALETTE["red"], label="sig, below seed p"))
+
+    if is_lead.any():
+        ax.scatter(pos_mb[is_lead], logp[is_lead], marker="D", c=PALETTE["red"],
+                   s=95, edgecolor="black", linewidths=0.6, zorder=6)
+        ax.annotate(str(lead_snp), (pos_mb[is_lead][0], logp[is_lead][0]),
+                    textcoords="offset points", xytext=(6, 6), fontsize=8, fontweight="bold")
+        marker_handles.append(Line2D([0], [0], marker="D", ls="", mfc=PALETTE["red"],
+                                     mec="black", label="lead SNP"))
+
+    if sig_threshold is not None:
+        ax.axhline(-np.log10(float(sig_threshold)), ls="--", color=SIG_LINE_COLOR, lw=1.2, zorder=2)
+        marker_handles.append(Line2D([0], [0], ls="--", color=SIG_LINE_COLOR, label="significance"))
+
+    r2_handles = [Line2D([0], [0], marker="o", ls="", mfc=_R2_BIN_COLORS[i], mec="none",
+                         label=_R2_BIN_LABELS[i]) for i in range(5)]
+    leg1 = ax.legend(handles=r2_handles, title="r² to lead", fontsize=7,
+                     title_fontsize=7, loc="upper right", framealpha=0.9)
+    ax.add_artist(leg1)
+    if marker_handles:
+        ax.legend(handles=marker_handles, fontsize=7, loc="upper left", framealpha=0.9)
+
+    ax.set_ylabel(r"$-\log_{10}(p)$")
+    ax.set_title(f"Regional association — lead {lead_snp}")
+
+    if has_genes:
+        _draw_gene_track(axg, genes)
+        axg.set_xlabel("Position (Mb)")
+    else:
+        ax.set_xlabel("Position (Mb)")
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_regional_association_interactive(
+    window_df, r2_to_lead, lead_snp, sig_threshold,
+    block_interval=None, block_members=None, seed_threshold=None,
+):
+    """Plotly regional association plot (hover: SNP id, p, r², block membership)."""
+    import plotly.graph_objects as go
+
+    df = window_df.reset_index(drop=True)
+    pos_mb = df["Pos"].to_numpy(dtype=float) / 1e6
+    pv = np.clip(df["PValue"].to_numpy(dtype=float), 1e-300, 1.0)
+    logp = -np.log10(pv)
+    r2 = np.asarray(r2_to_lead, dtype=float)
+    snp_ids = df["SNP"].astype(str).to_numpy()
+    colors = _r2_point_colors(r2)
+    members = set(block_members) if block_members else set()
+    is_lead = snp_ids == str(lead_snp)
+
+    def _hover(k):
+        parts = [snp_ids[k], f"p={pv[k]:.2e}",
+                 ("r²=n/a" if not np.isfinite(r2[k]) else f"r²={r2[k]:.2f}")]
+        if snp_ids[k] in members:
+            parts.append("block member")
+        return "<br>".join(parts)
+
+    fig = go.Figure()
+    if block_interval is not None:
+        fig.add_vrect(x0=block_interval[0] / 1e6, x1=block_interval[1] / 1e6,
+                      fillcolor=PALETTE["cyan"], opacity=0.12, line_width=0, layer="below")
+    nl = ~is_lead
+    fig.add_trace(go.Scatter(
+        x=pos_mb[nl], y=logp[nl], mode="markers",
+        marker=dict(color=[colors[k] for k in range(len(colors)) if nl[k]], size=8,
+                    line=dict(width=0)),
+        text=[_hover(k) for k in range(len(snp_ids)) if nl[k]], hoverinfo="text", name="SNP"))
+    if is_lead.any():
+        _li = int(np.where(is_lead)[0][0])
+        fig.add_trace(go.Scatter(
+            x=pos_mb[is_lead], y=logp[is_lead], mode="markers+text",
+            marker=dict(color=PALETTE["red"], size=14, symbol="diamond",
+                        line=dict(color="black", width=1)),
+            text=[str(lead_snp)], textposition="top center",
+            hovertext=[_hover(_li)], hoverinfo="text", name="lead"))
+    if sig_threshold is not None:
+        fig.add_hline(y=-np.log10(float(sig_threshold)), line_dash="dash",
+                      line_color=SIG_LINE_COLOR)
+    fig.update_layout(title=f"Regional association — lead {lead_snp}",
+                      xaxis_title="Position (Mb)", yaxis_title="-log10(p)",
+                      height=480, showlegend=False)
+    return fig
     return fig

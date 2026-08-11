@@ -1,16 +1,14 @@
 """Tab 2 — Local LD heatmap around a lead SNP."""
 
-import re
 import numpy as np
-import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
-from utils.pub_theme import LD_HEATMAP_CMAP, FIGSIZE, export_plotly
+from utils.pub_theme import LD_HEATMAP_CMAP, FIGSIZE, export_plotly  # noqa: F401 (export_plotly kept for parity)
 
-from gwas.ld import extract_block_geno_for_paper, _guess_lead_col
+from gwas.ld import extract_block_geno_for_paper
 from . import LDContext
 
 
@@ -18,92 +16,23 @@ class _TabExit(Exception):
     pass
 
 
-def render(ctx: LDContext, get_r2_cached):
+def render(ctx: LDContext, get_r2_cached, window):
     try:
         st.subheader("Local LD heatmap around a lead SNP / LD block")
 
-        # --- Choose lead SNP from top hits ---
-        top_snps = ctx.gwas_df.sort_values("PValue").head(200)
-        if top_snps.empty:
-            st.info("GWAS table seems empty. Run GWAS first.")
+        # The lead SNP / snap-to-block / buffer controls now live in the shared
+        # selector above the tab bar (pages/_ld_tabs/_window.py); this tab and the
+        # Regional Plot tab render one selection.
+        if window is None:
+            st.info("Select a lead SNP in the region selector above to view its local LD.")
             raise _TabExit()
 
-        lead_snp = st.selectbox(
-            "Select lead SNP (top 200 by P-value):",
-            options=top_snps["SNP"].tolist(),
-            index=0,
-        )
+        lead_snp = window.lead_snp
+        chr_sel = window.chr
+        start_bp = window.start_bp
+        end_bp = window.end_bp
 
-        # Detect LD blocks table + lead column if available
-        lead_col = _guess_lead_col(ctx.haplo_df_auto)
-        has_blocks = (
-            isinstance(ctx.haplo_df_auto, pd.DataFrame)
-            and not ctx.haplo_df_auto.empty
-            and lead_col is not None
-        )
-
-        colA, colB = st.columns(2)
-        with colA:
-            use_block_if_available = st.checkbox(
-                "Snap window to LD block if available",
-                value=has_blocks,
-                help="If LD blocks have been computed, use the LD block containing the lead SNP.",
-            )
-        with colB:
-            buffer_kb_default = int(ctx.ld_decay_kb * 2)
-            buffer_kb = st.slider(
-                "Buffer around region (kb)",
-                min_value=10,
-                max_value=5000,
-                value=buffer_kb_default,
-                step=10,
-                help="Extends the heatmap window by this many kb on each side of the LD block (or SNP if no block).",
-            )
-
-        # ---- Determine region [chr, start_bp, end_bp] ----
-        snp_row = ctx.gwas_df.loc[ctx.gwas_df["SNP"] == lead_snp]
-        if snp_row.empty:
-            st.warning(f"SNP {lead_snp} not found in GWAS table.")
-            raise _TabExit()
-
-        chr_snp = str(snp_row.iloc[0]["Chr"])
-        pos_snp = int(snp_row.iloc[0]["Pos"])
-
-        use_block = False
-        core_start = core_end = None
-
-        # Try block-based window if available
-        if use_block_if_available and has_blocks:
-            lead_pat = re.escape(str(lead_snp))
-            block_rows = ctx.haplo_df_auto[
-                ctx.haplo_df_auto[lead_col].astype(str).str.contains(
-                    rf"(^|[;,\s|]){lead_pat}($|[;,\s|])", regex=True
-                )
-            ]
-
-            if not block_rows.empty:
-                r = block_rows.iloc[0]
-
-                core_start = int(r["Start (bp)"])
-                core_end = int(r["End (bp)"])
-                extra = buffer_kb * 1000
-                start_bp = max(0, core_start - extra)
-                end_bp = core_end + extra
-                chr_sel = str(r["Chr"])
-                label_source = (
-                    f"LD block Chr{chr_sel}:{core_start:,}-{core_end:,} "
-                    f"± {buffer_kb} kb buffer"
-                )
-                use_block = True
-
-        # Fallback: simple SNP-centered window
-        if not use_block:
-            chr_sel = chr_snp
-            start_bp = pos_snp - buffer_kb * 1000
-            end_bp = pos_snp + buffer_kb * 1000
-            label_source = f"SNP-centered window: Chr{chr_sel}:{pos_snp:,} ± {buffer_kb} kb"
-
-        st.markdown(f"**Window used:** {label_source}")
+        st.markdown(f"**Window used:** {window.label}")
 
         # ---- Extract region genotypes ----
         keep_mask = ctx.keep_mask

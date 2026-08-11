@@ -379,5 +379,5 @@ class TestTabLocalLDImport:
         from pages._ld_tabs import tab_local_ld
         sig = inspect.signature(tab_local_ld.render)
         params = list(sig.parameters)
-        assert params == ["ctx", "get_r2_cached"], \
+        assert params == ["ctx", "get_r2_cached", "window"], \
             f"render() signature changed: {params}"
