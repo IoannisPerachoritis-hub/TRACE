@@ -2,6 +2,23 @@
 
 All notable changes to TRACE are documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **Renamed the "LD Analysis" page to "Post-GWAS Analysis"** (sidebar shows
+  "Post GWAS Analysis"), aligning the app with the manuscript's terminology.
+  The page URL changed to `/Post_GWAS_Analysis`.
+
+### Added
+- **Regional Plot tab** (locus-zoom-style): −log₁₀(p) vs position around a lead
+  SNP, coloured by r² to the lead, with the detected LD block shaded and a gene
+  track; interactive (Plotly) + static (PNG/SVG/PDF) with numeric CSV export.
+- **Local LD** tab gained numeric r² export (long `SNP_A,SNP_B,r2` + square matrix).
+
+### Removed
+- The per-block "Block Heatmaps" tab moved behind a "Legacy views" expander —
+  superseded by the region selector's *Detected block* mode + the Local LD tab.
+
 ## [1.0.0] - 2026-04-21
 
 ### Initial release

@@ -1783,7 +1783,7 @@ def _render_zip_export(haplo_df_auto, hap_gwas_df, trait_col):
             hap_out = hap_gwas_df
 
             readme = textwrap.dedent(f"""
-            LD & Haplotype Analysis Bundle
+            Post-GWAS Analysis Bundle
 
             Trait: {trait_col}
 

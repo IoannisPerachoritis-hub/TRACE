@@ -47,7 +47,7 @@ def _load(relpath):
 
     GUI page modules are read and parsed here rather than imported, because
     importing a Streamlit page executes its UI at import time
-    (``pages/LD_Analysis.py`` calls ``ld_analysis_page()`` at module level).
+    (``pages/Post_GWAS_Analysis.py`` calls ``ld_analysis_page()`` at module level).
     """
     path = REPO / relpath
     src = path.read_text(encoding="utf-8")
@@ -285,8 +285,8 @@ def test_const_zip_figure_dpi_split():
 
 
 def test_const_gui_r2_cache_capacity():
-    _src, tree = _load("pages/LD_Analysis.py")
-    assert _module_const(tree, "MAX_R2_CACHE") == 10, "pages/LD_Analysis.py:107"
+    _src, tree = _load("pages/Post_GWAS_Analysis.py")
+    assert _module_const(tree, "MAX_R2_CACHE") == 10, "pages/Post_GWAS_Analysis.py:107"
 
 
 # ===========================================================================
@@ -347,7 +347,7 @@ def test_gui_ld_analysis_adj_r2_min_fallback():
     """The LD page's session fallback for adj_r2_min, `st.session_state.get(
     "adj_r2_min", 0.2)` — the 0.2 must match the detector default, not the
     unused 0.3 signature default."""
-    _src, tree = _load("pages/LD_Analysis.py")
+    _src, tree = _load("pages/Post_GWAS_Analysis.py")
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
@@ -357,9 +357,9 @@ def test_gui_ld_analysis_adj_r2_min_fallback():
             and node.args[0].value == "adj_r2_min"
             and isinstance(node.args[1], ast.Constant)
         ):
-            assert node.args[1].value == 0.2, "pages/LD_Analysis.py:590"
+            assert node.args[1].value == 0.2, "pages/Post_GWAS_Analysis.py:590"
             return
-    raise AssertionError('`session_state.get("adj_r2_min", 0.2)` not found — pages/LD_Analysis.py:590')
+    raise AssertionError('`session_state.get("adj_r2_min", 0.2)` not found — pages/Post_GWAS_Analysis.py:590')
 
 
 # ===========================================================================

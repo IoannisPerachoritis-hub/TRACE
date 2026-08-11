@@ -3,7 +3,7 @@
 TRACE annotates LD blocks and significant SNPs with overlapping and flanking
 genes. The tomato gene model is bundled; for any other species — or a different
 assembly/build — supply your own gene-coordinate table on the
-**LD Analysis → Gene Annotation** tab (or the pipeline's *"Gene coordinates CSV"*
+**Post-GWAS Analysis → Gene Annotation** tab (or the pipeline's *"Gene coordinates CSV"*
 uploader).
 
 ## Required format

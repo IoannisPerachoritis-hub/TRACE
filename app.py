@@ -133,7 +133,7 @@ for **tomato and other crop** breeding panels.
 
 Use the **sidebar** to navigate to:
 - **GWAS Analysis** — upload data and run the full pipeline
-- **LD & Haplotype Analysis** — explore LD structure and haplotype effects
+- **Post-GWAS Analysis** — explore LD structure and haplotype effects
 - **Help & Reference** — output format, column glossary, and methods reference
 """)
 
