@@ -1405,3 +1405,163 @@ def anova_eta_sq_from_labels(y: np.ndarray, labels: np.ndarray) -> tuple[float, 
     eta_sq = ss_between / ss_total
     return float(eta_sq), int(len(groups)), int(y.size)
 
+
+# ==================================================================
+# LD-quality triage — Layer 1 (predictive; T-30).  APPEND-ONLY.
+# Pure, phenotype-free per-block LD metrics. Reuses the existing detection
+# primitives (get_block_snp_mask / pairwise_r2 / pairwise_r) + compute_r2_to_lead;
+# NEVER calls the st.cache_data-wrapped compute_meff_li_ji. Adds no module-level
+# state and edits no existing function. See docs/revision/specs/ld_triage_spec.md.
+# ==================================================================
+
+LDQ_COLUMNS = [
+    "ldq_n_members", "ldq_r2_mean", "ldq_r2_median", "ldq_r2_min",
+    "ldq_r2_pairs_finite", "ldq_r2_pairs_total", "ldq_adj_r2_min",
+    "ldq_adj_r2_median", "ldq_adj_thr_used", "ldq_lead_snp", "ldq_n_leads",
+    "ldq_lead_in_block", "ldq_r2_lead_median", "ldq_r2_lead_min",
+    "ldq_frac_members_r2_lead_ge", "ldq_span_kb", "ldq_meff_block",
+    "ldq_meff_status", "ldq_r2_estimator", "ldq_r2_lead_estimator",
+]
+
+
+def meff_li_ji_from_corr(r_matrix):
+    """Li & Ji (2005) effective number of independent variables from a SIGNED
+    correlation matrix (uncached counterpart of gwas.plotting.compute_meff_li_ji,
+    for per-block use). Returns (meff_unrounded, status). status is one of
+    "ok" | "nonfinite_r" | "too_few_snps". Terms match compute_meff_li_ji
+    (gwas/plotting.py) term-for-term but the result is NOT ceil-rounded (rounding
+    is inappropriate for m of order 3-30)."""
+    R = np.asarray(r_matrix, dtype=np.float64)
+    if R.ndim != 2 or R.shape[0] != R.shape[1] or R.shape[0] < 2:
+        return np.nan, "too_few_snps"
+    m = R.shape[0]
+    off = ~np.eye(m, dtype=bool)
+    if not np.all(np.isfinite(R[off])):
+        return np.nan, "nonfinite_r"
+    R = R.copy()
+    np.fill_diagonal(R, 1.0)
+    try:
+        eigs = np.linalg.eigvalsh(R)
+    except np.linalg.LinAlgError:
+        return np.nan, "nonfinite_r"
+    meff = 0.0
+    for lam in eigs:                       # term-for-term with compute_meff_li_ji
+        if lam >= 1.0:
+            meff += 1.0 + (lam % 1.0)
+        elif lam > 0:
+            meff += lam
+    return float(meff), "ok"
+
+
+def _ldq_pick_lead(lead_tokens, member_sids, pval_by_snp):
+    """Canonical single lead SNP: the token with the smallest PValue (ties broken
+    by string sort); falls back to the members, then the first token. Deterministic."""
+    def _key(s):
+        return (float(pval_by_snp.get(str(s), np.inf)), str(s))
+    cands = [str(t) for t in lead_tokens if t]
+    if cands:
+        return sorted(cands, key=_key)[0]
+    if len(member_sids):
+        return sorted((str(s) for s in member_sids), key=_key)[0]
+    return ""
+
+
+def compute_block_ld_quality(blocks_df, chroms, positions, sid, geno_imputed, gwas_df,
+                             geno_dosage_raw=None, *, r2_coherent: float = 0.6,
+                             min_pair_n: int = 20, compute_meff: bool = True):
+    """Per-block predictive LD-quality metrics (Layer 1). Phenotype-free.
+
+    One row per input block, same order, index reset: the join keys Chr /
+    Start (bp) / End (bp) plus the ldq_* columns of the spec §4.1. Does not
+    mutate blocks_df. Membership via get_block_snp_mask (SNP_IDs honoured, else
+    coordinate fallback). Member r² via pairwise_r2 on geno_imputed
+    ("pairwise_r2_lowmiss_imputed"); M_eff via pairwise_r (signed) ->
+    meff_li_ji_from_corr; r²-to-lead via compute_r2_to_lead on geno_dosage_raw
+    when supplied ("pairwise_complete_raw"), else on geno_imputed
+    ("imputed_fallback"). r2_coherent only feeds ldq_frac_members_r2_lead_ge —
+    no routing decision here.
+    """
+    from gwas.plotting import compute_r2_to_lead
+
+    cols = ["Chr", "Start (bp)", "End (bp)"] + LDQ_COLUMNS
+    if blocks_df is None or len(blocks_df) == 0:
+        return pd.DataFrame(columns=cols)
+
+    chroms = np.asarray(chroms).astype(str)
+    positions = np.asarray(positions)
+    sid = np.asarray(sid).astype(str)
+    G_imp = np.asarray(geno_imputed, dtype=float)
+    lead_est = "pairwise_complete_raw" if geno_dosage_raw is not None else "imputed_fallback"
+    geno_for_lead = geno_dosage_raw if geno_dosage_raw is not None else G_imp
+
+    pval_by_snp = {}
+    if gwas_df is not None and "SNP" in getattr(gwas_df, "columns", []) and "PValue" in gwas_df.columns:
+        pval_by_snp = dict(zip(gwas_df["SNP"].astype(str),
+                               pd.to_numeric(gwas_df["PValue"], errors="coerce")))
+
+    rows = []
+    for _, block in blocks_df.iterrows():
+        start_v = int(block.get("Start (bp)", block.get("Start", 0)))
+        end_v = int(block.get("End (bp)", block.get("End", 0)))
+        rec = {"Chr": str(block.get("Chr")), "Start (bp)": start_v, "End (bp)": end_v}
+
+        midx = np.where(get_block_snp_mask(block, chroms, positions, sid))[0]
+        if midx.size:
+            midx = midx[np.argsort(positions[midx])]                 # genomic order
+            midx = midx[np.nanvar(G_imp[:, midx], axis=0) > 0]       # drop monomorphic
+        n_members = int(midx.size)
+        member_sids = sid[midx]
+
+        lead_tokens = [t for t in str(block.get("Lead SNP", "")).split(";") if t]
+        lead = _ldq_pick_lead(lead_tokens, member_sids, pval_by_snp)
+        lead_in_block = bool(lead) and (lead in set(member_sids.tolist()))
+
+        r2_mean = r2_med = r2_min = adj_min = adj_med = adj_thr = np.nan
+        pairs_finite = 0
+        pairs_total = n_members * (n_members - 1) // 2
+        meff, meff_status = np.nan, "too_few_snps"
+        if 2 <= n_members <= 4000:
+            r2_sub = np.asarray(pairwise_r2(G_imp[:, midx], min_pair_n=min_pair_n))
+            vals = r2_sub[np.triu_indices(n_members, k=1)]
+            fin = vals[np.isfinite(vals)]
+            pairs_finite = int(fin.size)
+            if fin.size:
+                r2_mean, r2_med, r2_min = float(np.mean(fin)), float(np.median(fin)), float(np.min(fin))
+            adj = np.diag(r2_sub, k=1)
+            adjfin = adj[np.isfinite(adj)]
+            if adjfin.size:
+                adj_min, adj_med = float(np.min(adjfin)), float(np.median(adjfin))
+            adj_thr = float(_adaptive_adj_threshold(r2_sub, base=0.2, frac=0.5))
+            if compute_meff:
+                meff, meff_status = meff_li_ji_from_corr(pairwise_r(G_imp[:, midx], min_pair_n=min_pair_n))
+        elif n_members > 4000:
+            meff_status = "too_many_snps"
+
+        r2_lead_med = r2_lead_min = frac_ge = np.nan
+        if lead:
+            try:
+                r2_lead, _ = compute_r2_to_lead(
+                    geno_for_lead, sid, lead, get_block_snp_mask(block, chroms, positions, sid), min_pair_n)
+                r2l = np.asarray(r2_lead, dtype=float)
+                r2l = r2l[np.isfinite(r2l)]
+                if r2l.size:
+                    r2_lead_med, r2_lead_min = float(np.median(r2l)), float(np.min(r2l))
+                    frac_ge = float(np.mean(r2l >= r2_coherent))
+            except ValueError:
+                lead_in_block = False                                # lead absent from sid
+
+        rec.update({
+            "ldq_n_members": n_members, "ldq_r2_mean": r2_mean, "ldq_r2_median": r2_med,
+            "ldq_r2_min": r2_min, "ldq_r2_pairs_finite": pairs_finite,
+            "ldq_r2_pairs_total": pairs_total, "ldq_adj_r2_min": adj_min,
+            "ldq_adj_r2_median": adj_med, "ldq_adj_thr_used": adj_thr,
+            "ldq_lead_snp": lead, "ldq_n_leads": len(lead_tokens),
+            "ldq_lead_in_block": lead_in_block, "ldq_r2_lead_median": r2_lead_med,
+            "ldq_r2_lead_min": r2_lead_min, "ldq_frac_members_r2_lead_ge": frac_ge,
+            "ldq_span_kb": (end_v - start_v) / 1000.0, "ldq_meff_block": meff,
+            "ldq_meff_status": meff_status, "ldq_r2_estimator": "pairwise_r2_lowmiss_imputed",
+            "ldq_r2_lead_estimator": lead_est,
+        })
+        rows.append(rec)
+    return pd.DataFrame(rows, columns=cols).reset_index(drop=True)
+
