@@ -235,6 +235,14 @@ def _has_persisted_gwas():
     return _g is not None and not (hasattr(_g, "empty") and _g.empty)
 
 
+def _has_persisted_upload():
+    """The raw genotype/phenotype inputs from a prior run are still in memory, so
+    a re-run can proceed without re-uploading (Streamlit drops the uploaded-file
+    buffers on page navigation)."""
+    return ("_persist_vcf_bytes" in st.session_state
+            and "_persist_pheno" in st.session_state)
+
+
 def _render_last_run_results():
     _g = st.session_state.get("gwas_df")
     _summ = st.session_state.get("gwas_run_summary", {})
@@ -560,23 +568,28 @@ random_seed = st.sidebar.number_input(
 # =========================
 # 2. Phenotype handling & transforms
 # =========================
-if vcf_file and phe_file:
+if (vcf_file and phe_file) or _has_persisted_upload():
 
-    # --- Load phenotype file (with encoding fallbacks) ---
-    try:
-        pheno = pd.read_csv(phe_file, sep=None, engine="python", encoding="utf-8-sig")
-    except (UnicodeDecodeError, UnicodeError):
-        phe_file.seek(0)
+    # --- Load phenotype file (with encoding fallbacks; from memory on re-run) ---
+    if phe_file is not None:
         try:
-            pheno = pd.read_csv(phe_file, sep=None, engine="python", encoding="latin-1")
-            st.warning(
-                "Phenotype file is not UTF-8 encoded (detected Latin-1/Windows-1252). "
-                "Consider re-saving as UTF-8 for best compatibility."
-            )
-        except Exception as _enc_err:
-            _rehydrate_or_stop(f"Could not read phenotype file: {_enc_err}")
-    except Exception as _read_err:
-        _rehydrate_or_stop(f"Could not parse phenotype file: {_read_err}")
+            pheno = pd.read_csv(phe_file, sep=None, engine="python", encoding="utf-8-sig")
+        except (UnicodeDecodeError, UnicodeError):
+            phe_file.seek(0)
+            try:
+                pheno = pd.read_csv(phe_file, sep=None, engine="python", encoding="latin-1")
+                st.warning(
+                    "Phenotype file is not UTF-8 encoded (detected Latin-1/Windows-1252). "
+                    "Consider re-saving as UTF-8 for best compatibility."
+                )
+            except Exception as _enc_err:
+                _rehydrate_or_stop(f"Could not read phenotype file: {_enc_err}")
+        except Exception as _read_err:
+            _rehydrate_or_stop(f"Could not parse phenotype file: {_read_err}")
+        # persist the raw parsed phenotype so a re-run can proceed from memory
+        st.session_state["_persist_pheno"] = pheno.copy()
+    else:
+        pheno = st.session_state["_persist_pheno"].copy()
     with st.expander("Phenotype file preview", expanded=True):
         st.dataframe(pheno.head())
 
@@ -780,8 +793,15 @@ if vcf_file and phe_file:
     )
 
     # Load VCF bytes
-    vcf_bytes = vcf_file.read()
-    is_gz = vcf_file.name.endswith(".gz")
+    if vcf_file is not None:
+        vcf_bytes = vcf_file.read()
+        is_gz = vcf_file.name.endswith(".gz")
+        # persist the raw genotype bytes so a re-run can proceed from memory
+        st.session_state["_persist_vcf_bytes"] = vcf_bytes
+        st.session_state["_persist_is_gz"] = is_gz
+    else:
+        vcf_bytes = st.session_state["_persist_vcf_bytes"]
+        is_gz = st.session_state.get("_persist_is_gz", False)
 
     # Phenotype normalization: handled exclusively in Section 2b (Log10/INT).
     # No additional sidebar normalization to avoid double-transformation.
