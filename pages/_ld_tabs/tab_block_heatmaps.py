@@ -139,7 +139,6 @@ def render(ctx: LDContext, get_r2_cached):
         seg_end_bp = int(block_pos.max())
 
         # --- Display settings ---
-        show_labels = ctx.show_ld_labels
         label_type = st.radio("Axis labels", ["Genomic position (kb)", "SNP IDs"], index=0)
 
         if label_type == "Genomic position (kb)":
@@ -155,14 +154,13 @@ def render(ctx: LDContext, get_r2_cached):
         fig, ax = plt.subplots(figsize=FIGSIZE["heatmap"])
 
         mask_upper = np.triu(np.ones_like(r2, dtype=bool))
-        annot_vals = show_labels and (r2.shape[0] <= 25)
         sns.heatmap(
             r2,
             mask=mask_upper,
             cmap=LD_HEATMAP_CMAP,
             vmin=0,
             vmax=1,
-            annot=annot_vals,
+            annot=False,
             fmt=".2f",
             annot_kws={"fontsize": 8},
             square=True,

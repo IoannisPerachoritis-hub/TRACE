@@ -105,8 +105,6 @@ def render(ctx: LDContext, get_r2_cached, window):
             colorbar_label = "Linkage disequilibrium (r²)"
 
         # ---- Heatmap (lower triangle, publication-grade) ----
-        show_labels = ctx.show_ld_labels
-
         fig_ld, ax = plt.subplots(figsize=FIGSIZE["heatmap"])
         tri_mask = np.triu(np.ones_like(ld_matrix_to_plot, dtype=bool))
 
@@ -162,7 +160,6 @@ def render(ctx: LDContext, get_r2_cached, window):
             str(lead_snp),
             int(ld_matrix_to_plot.shape[0]),
             bool(show_raw_r),
-            bool(show_labels),
         )
         local_cache = st.session_state.setdefault("_local_ld_cache", {})
         local_cached = local_cache.get(local_cache_key)
