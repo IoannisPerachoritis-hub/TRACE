@@ -341,6 +341,22 @@ def compute_block_qc_effects(
 # 1. Sanity: require genotype / phenotype (GWAS resolved below)
 # --------------------------------------------------------
 
+def _mega_filter_label():
+    """Reactive label for the mega-block-filter expander, built from the PREVIOUS
+    run's result (an expander label is fixed before its body renders, so the live
+    count is one rerun behind — the toast covers the immediate signal). Turns the
+    collapsed control into a status line so its effect isn't hidden."""
+    s = st.session_state.get("mega_label_state")
+    if not s or not s.get("n_total"):
+        return "Block table filter"
+    n_total, count, n_shown, mode = s["n_total"], s["count"], s["n_shown"], s["mode"]
+    if count == 0:
+        return f"Block table filter — {n_total} blocks, no mega-blocks removed"
+    if mode == "Remove":
+        return f"Block table filter — {count} mega-blocks removed ({n_shown} of {n_total} blocks shown)"
+    return f"Block table filter — {count} mega-blocks flagged, none removed"
+
+
 def ld_analysis_page():
     st.title("Post-GWAS Analysis")
     check_data_version("ld_analysis")
@@ -608,27 +624,29 @@ def ld_analysis_page():
 
     # --------------------------------------------------------
     # Page-scoped control: mega-block filter (applies to ALL tabs).
-    # Rendered above the tab bar (not in a tab) because it reshapes the block
-    # table every tab consumes; must render BEFORE filter_contained_blocks below.
+    # Collapsed expander whose LABEL carries the last result (from the previous
+    # run) so a collapsed control still reads as a status line. Rendered above the
+    # tab bar and BEFORE filter_contained_blocks (mega_* feed it).
     # --------------------------------------------------------
-    st.markdown("#### Block table filter (applies to all tabs)")
-    _mc1, _mc2, _mc3 = st.columns([1.3, 1, 1])
-    mega_mode = _mc1.radio(
-        "Mega-block handling", ["Remove", "Flag only"], index=0,
-        key="mega_block_mode", horizontal=True,
-    )
-    mega_min = _mc2.number_input(
-        "Min contained blocks", min_value=1, max_value=10, value=2,
-        key="mega_min_contained",
-    )
-    mega_ratio = _mc3.number_input(
-        "Size ratio threshold", min_value=1.5, max_value=20.0, value=3.0, step=0.5,
-        key="mega_size_ratio",
-    )
-    st.caption(
-        "Removing mega-blocks changes the block set **every tab uses** — the Regional Plot's "
-        "shaded span, the annotated gene set, and significant-SNP block membership all follow this filter."
-    )
+    _n_total_raw = len(haplo_df_auto) if isinstance(haplo_df_auto, pd.DataFrame) else 0
+    with st.expander(_mega_filter_label(), expanded=False):
+        _mc1, _mc2, _mc3 = st.columns([1.3, 1, 1])
+        mega_mode = _mc1.radio(
+            "Mega-block handling", ["Remove", "Flag only"], index=0,
+            key="mega_block_mode", horizontal=True,
+        )
+        mega_min = _mc2.number_input(
+            "Min contained blocks", min_value=1, max_value=10, value=2,
+            key="mega_min_contained",
+        )
+        mega_ratio = _mc3.number_input(
+            "Size ratio threshold", min_value=1.5, max_value=20.0, value=3.0, step=0.5,
+            key="mega_size_ratio",
+        )
+        st.caption(
+            "Removing mega-blocks changes the block set **every tab uses** — the Regional Plot's "
+            "shaded span, the annotated gene set, and significant-SNP block membership all follow this filter."
+        )
 
     if isinstance(haplo_df_auto, pd.DataFrame) and not haplo_df_auto.empty:
         haplo_df_auto, n_removed = filter_contained_blocks(
@@ -638,8 +656,27 @@ def ld_analysis_page():
             mode="remove" if mega_mode == "Remove" else "flag",
         )
 
+        # Persist the result for the (previous-run) reactive expander label. Flag
+        # mode returns n_removed=0 and keeps an is_mega_block column, so count the
+        # flagged rows there instead.
+        if mega_mode == "Remove":
+            _mega_count = int(n_removed)
+        else:
+            _mega_count = (int(haplo_df_auto["is_mega_block"].sum())
+                           if "is_mega_block" in haplo_df_auto.columns else 0)
+        st.session_state["mega_label_state"] = {
+            "n_total": _n_total_raw,
+            "count": _mega_count,
+            "n_shown": len(haplo_df_auto),
+            "mode": mega_mode,
+        }
+
         if mega_mode == "Remove" and n_removed > 0:
             st.toast(f"Removed {n_removed} mega-block(s).", icon="⚠️")
+    else:
+        st.session_state["mega_label_state"] = {
+            "n_total": _n_total_raw, "count": 0, "n_shown": _n_total_raw, "mode": mega_mode,
+        }
 
     if not isinstance(st.session_state.get("haplo_df_auto"), dict):
         st.session_state["haplo_df_auto"] = {}
