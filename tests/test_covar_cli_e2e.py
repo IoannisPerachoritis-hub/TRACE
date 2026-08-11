@@ -72,3 +72,10 @@ def test_covar_missing_samples_are_dropped(tmp_path):
                              ["--covar", str(cov), "--covar-cols", "age"]))
     assert ctx is not None
     assert ctx["geno_imputed"].shape[0] == 40    # 10 covar-missing samples dropped
+
+
+def test_numeric_sig_thresh_materialises_custom_column(tmp_path):
+    vcf, pheno = _vcf(tmp_path), _pheno(tmp_path)
+    ctx = run_pipeline(_args(tmp_path, vcf, pheno, ["--sig-thresh", "5e-8"]))
+    assert ctx is not None and "gwas_df" in ctx
+    assert "Significant_Custom" in ctx["gwas_df"].columns
