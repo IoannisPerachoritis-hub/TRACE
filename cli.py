@@ -233,7 +233,7 @@ def _build_equivalent_command(args):
         parts.append(f"--subsampling --boot-reps {args.boot_reps}")
         if args.boot_jobs != 1:
             parts.append(f"--boot-jobs {args.boot_jobs}")
-    if getattr(args, "sig_thresh", "bonferroni") != "meff":
+    if getattr(args, "sig_thresh", "bonferroni") != "bonferroni":
         parts.append(f"--sig-thresh {args.sig_thresh}")
     if args.maf != 0.05:
         parts.append(f"--maf {args.maf}")
