@@ -19,6 +19,11 @@ class _TabExit(Exception):
 def render(ctx: LDContext, get_r2_cached):
     try:
         st.subheader("LD-block Heatmaps")
+        st.caption(
+            "Superseded: the region selector's **Detected block** mode renders the same "
+            "block in the **Local LD** tab (with r² CSV export). This tab is kept for "
+            "continuity and slated for retirement in a later release."
+        )
 
         df_blocks = ctx.haplo_df_auto
 

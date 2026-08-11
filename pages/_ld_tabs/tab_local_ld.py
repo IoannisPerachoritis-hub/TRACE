@@ -1,6 +1,7 @@
 """Tab 2 — Local LD heatmap around a lead SNP."""
 
 import numpy as np
+import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -9,6 +10,7 @@ from streamlit.runtime.scriptrunner import StopException
 from utils.pub_theme import LD_HEATMAP_CMAP, FIGSIZE, export_plotly  # noqa: F401 (export_plotly kept for parity)
 
 from gwas.ld import extract_block_geno_for_paper
+from gwas.plotting import ld_pairs_long
 from . import LDContext
 
 
@@ -33,6 +35,10 @@ def render(ctx: LDContext, get_r2_cached, window):
         end_bp = window.end_bp
 
         st.markdown(f"**Window used:** {window.label}")
+        _block_ids = getattr(window, "block_snp_ids", "") or None
+        if _block_ids:
+            st.caption("Detected-block mode: members are extracted by SNP ID (not by position), "
+                       "reproducing the Block Heatmaps view for this block.")
 
         # ---- Extract region genotypes ----
         keep_mask = ctx.keep_mask
@@ -46,7 +52,8 @@ def render(ctx: LDContext, get_r2_cached, window):
             start_bp=start_bp,
             end_bp=end_bp,
             sample_keep_mask=keep_mask,
-            maf_threshold=st.session_state.get("maf_ld", 0.01)
+            maf_threshold=st.session_state.get("maf_ld", 0.01),
+            snp_ids=_block_ids,
         )
 
         if region_geno.size == 0:
@@ -195,6 +202,25 @@ def render(ctx: LDContext, get_r2_cached, window):
             "📥 Download LD heatmap PDF", local_cached["pdf"],
             file_name=f"{local_fname}.pdf", mime="application/pdf",
             key=f"dl_localld_pdf_{local_fname}",
+        )
+
+        # ---- Numeric export: the r² numbers behind the heatmap ----
+        # Serialisation only — r² is already computed and cached. Two shapes so a
+        # user can table TRACE's numbers instead of reading them off the figure.
+        _n = int(r2.shape[0])
+        _ld_stem = f"Chr{chr_sel}_{int(start_bp)}_{int(end_bp)}_{_n}snps"
+        _long_csv = ld_pairs_long(r2, region_sids).to_csv(index=False).encode()
+        _square_csv = pd.DataFrame(r2, index=region_sids, columns=region_sids).to_csv().encode()
+        lcol_long, lcol_sq = st.columns(2)
+        lcol_long.download_button(
+            "📥 Download r² (long: SNP_A, SNP_B, r2)", _long_csv,
+            file_name=f"LD_r2_long_{_ld_stem}.csv", mime="text/csv",
+            key=f"dl_localld_long_{_ld_stem}",
+        )
+        lcol_sq.download_button(
+            "📥 Download r² (square matrix)", _square_csv,
+            file_name=f"LD_r2_matrix_{_ld_stem}.csv", mime="text/csv",
+            key=f"dl_localld_sq_{_ld_stem}",
         )
 
     except StopException:

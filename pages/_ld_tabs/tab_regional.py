@@ -175,11 +175,15 @@ def render(ctx: LDContext, window):
                    "marker); points are shown in grey.")
 
     # --- interactive (plotly) — the GUI view, hover for SNP / p / r² / block ---
+    _winsig = f"{window.chr}:{window.start_bp}-{window.end_bp}:{window.lead_snp}"
     fig_i = plot_regional_association_interactive(
         wdf, r2_final, window.lead_snp, sig_threshold,
         block_interval=block_interval, block_members=block_members,
-        seed_threshold=seed_threshold)
-    st.plotly_chart(fig_i, use_container_width=True)
+        seed_threshold=seed_threshold, uirevision=_winsig)
+    # key= forces a fresh element per window so Plotly's client-side zoom/pan
+    # cannot hold stale axes across a buffer/window change (uirevision handles
+    # the reset within Plotly; the two together fix the "ignores buffer" bug).
+    st.plotly_chart(fig_i, use_container_width=True, key=f"regional_{_winsig}")
 
     st.caption(
         f"r² is computed from your own genotypes (not a reference panel). Threshold: "
@@ -187,12 +191,36 @@ def render(ctx: LDContext, window):
         f"or candidate ranking; no p-value is changed."
     )
 
+    # --- numeric export: the numbers behind the plot (put them in a table, not a figure) ---
+    _members_set = set(block_members) if block_members else set()
+    _export_df = wdf[["SNP", "Chr", "Pos", "PValue"]].copy()
+    _export_df["r2_to_lead"] = r2_final
+    _export_df["block_member"] = _export_df["SNP"].isin(_members_set)
+    st.download_button(
+        "Download regional data (CSV)",
+        _export_df.to_csv(index=False).encode(),
+        file_name=f"Regional_data_Chr{window.chr}_{window.start_bp}_{window.end_bp}_{window.lead_snp}.csv",
+        mime="text/csv", key=f"dl_regional_csv_{_winsig}",
+    )
+
     # --- static (matplotlib) — the downloadable / report figure, with gene track ---
+    MAX_GENE_LABELS = 12
+    n_genes = 0 if genes is None else len(genes)
     with st.expander("Static figure + downloads (PNG / SVG / PDF)", expanded=False):
+        if n_genes:
+            gene_labels = st.checkbox(
+                "Show gene labels", value=(n_genes <= MAX_GENE_LABELS),
+                key=f"regional_gene_labels_{_winsig}",
+                help="Gene names on the track. Off by default in dense windows to avoid overprinting.")
+            if not gene_labels:
+                st.caption(f"{n_genes} genes in window; labels hidden — see the Gene Annotation tab "
+                           "for the full list. Bars show position, extent and strand.")
+        else:
+            gene_labels = True
         fig_s = plot_regional_association_static(
             wdf, r2_final, window.lead_snp, sig_threshold,
             block_interval=block_interval, block_members=block_members,
-            genes=genes, seed_threshold=seed_threshold)
+            genes=genes, seed_threshold=seed_threshold, gene_labels=gene_labels)
         buf = BytesIO()
         fig_s.savefig(buf, format="png", dpi=120, bbox_inches="tight")
         st.image(buf.getvalue())
