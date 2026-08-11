@@ -16,6 +16,7 @@ _SIG_LABELS = [
     "M_eff — Li & Ji (LD-aware Bonferroni)",
     "Bonferroni (α = 0.05)",
     "FDR (q < 0.05)",
+    "Custom p-value",
 ]
 
 _GLOSSARY = """
@@ -53,7 +54,15 @@ def render(ctx: LDContext):
     label = st.selectbox("Significance threshold", _SIG_LABELS, index=default_idx,
                          key="sigtab_threshold",
                          help="Defaults to the rule chosen on the GWAS page.")
-    rule = rule_from_streamlit(label, len(gwas_df), ctx.meff_val)
+    _tab_custom_thresh = None
+    if label.startswith("Custom"):
+        _tab_custom_thresh = st.number_input(
+            "Custom p-value", min_value=1e-300, max_value=1.0,
+            value=float(ctx.custom_thresh) if ctx.custom_thresh else 5e-8,
+            format="%.1e", key="sigtab_custom_thresh",
+            help="SNPs with p < this value are significant (defaults to the GWAS-page value).",
+        )
+    rule = rule_from_streamlit(label, len(gwas_df), ctx.meff_val, custom_thresh=_tab_custom_thresh)
 
     edge_flank_bp = int((ctx.ld_decay_kb or 300) * 1000)
     ld_decay_bp = int(ctx.ld_decay_kb * 1000) if ctx.ld_decay_kb else None
