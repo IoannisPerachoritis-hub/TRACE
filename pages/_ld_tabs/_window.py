@@ -34,6 +34,8 @@ class RegionWindow:
     label: str
     lead_pos: int
     buffer_kb: int
+    block_snp_ids: str = ""  # raw comma-joined SNP_IDs when a detected block is picked;
+                             # lets Local LD extract members by ID (reproduces Block Heatmaps)
 
 
 def select_window(ctx: LDContext) -> "RegionWindow | None":
@@ -59,6 +61,70 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         and lead_col is not None
     )
 
+    # Region source: pick a window by lead SNP (default) or snap to a detected block.
+    if has_blocks:
+        region_source = st.radio(
+            "Region source", ["Lead SNP", "Detected block"], horizontal=True,
+            key="ld_window_source",
+            help="A window around a top SNP, or snap directly to a detected LD block "
+                 "(Local LD then reproduces the Block Heatmaps view for that block).",
+        )
+    else:
+        region_source = "Lead SNP"
+
+    def _buffer_slider():
+        buffer_kb_default = int((ctx.ld_decay_kb or 150) * 2)
+        return st.slider(
+            "Buffer (kb)", min_value=10, max_value=5000,
+            value=min(5000, max(10, buffer_kb_default)), step=10,
+            key="ld_window_buffer_kb",
+            help="Extends the window this many kb on each side of the block (or SNP if no block).",
+        )
+
+    # ----- Detected-block mode: snap to a chosen block, member-aware -----
+    if region_source == "Detected block":
+        dfb = ctx.haplo_df_auto.reset_index(drop=True)
+
+        def _fmt_block(i):
+            r = dfb.iloc[int(i)]
+            s, e = int(r["Start (bp)"]), int(r["End (bp)"])
+            return f"[{int(i)}] Chr{r['Chr']}:{s:,}-{e:,} ({(e - s) / 1000:.1f} kb)"
+
+        col_blk, col_buf = st.columns([2, 1])
+        with col_blk:
+            sel = st.selectbox("Detected LD block", options=list(range(len(dfb))),
+                               format_func=_fmt_block, key="ld_window_block_select")
+        with col_buf:
+            buffer_kb = _buffer_slider()
+
+        row = dfb.iloc[int(sel)]
+        chr_sel = str(row["Chr"])
+        core_start = int(row["Start (bp)"])
+        core_end = int(row["End (bp)"])
+        block_snp_ids = str(row.get("SNP_IDs", "") or "")
+        member_ids = [s.strip() for s in block_snp_ids.split(",") if s.strip()]
+        # Lead for the Regional plot = top-p member (in-block, a real association lead).
+        # It does not affect Local LD, whose extraction is by SNP_IDs (member-aware).
+        sub = gwas_df[gwas_df["SNP"].astype(str).isin(member_ids)].sort_values("PValue")
+        if not sub.empty:
+            lead_snp = str(sub.iloc[0]["SNP"])
+            lead_pos = int(sub.iloc[0]["Pos"])
+        else:
+            lead_snp = str(top_snps.iloc[0]["SNP"])
+            lead_pos = (core_start + core_end) // 2
+        extra = buffer_kb * 1000
+        start_bp = max(0, core_start - extra)
+        end_bp = core_end + extra
+        label = (f"Detected block Chr{chr_sel}:{core_start:,}-{core_end:,} "
+                 f"({len(member_ids)} SNPs) ± {buffer_kb} kb buffer")
+        st.markdown(f"**Window:** {label}")
+        return RegionWindow(
+            lead_snp=lead_snp, chr=chr_sel, start_bp=int(start_bp), end_bp=int(end_bp),
+            core_start=core_start, core_end=core_end, use_block=True, label=label,
+            lead_pos=int(lead_pos), buffer_kb=int(buffer_kb), block_snp_ids=block_snp_ids,
+        )
+
+    # ----- Lead-SNP mode (default): SNP-centered, optionally snapped to its block -----
     col_lead, col_snap, col_buf = st.columns([2, 1, 1])
     with col_lead:
         lead_snp = st.selectbox(
@@ -76,15 +142,7 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
             help="If LD blocks have been computed, use the LD block containing the lead SNP.",
         )
     with col_buf:
-        buffer_kb_default = int((ctx.ld_decay_kb or 150) * 2)
-        buffer_kb = st.slider(
-            "Buffer (kb)",
-            min_value=10, max_value=5000,
-            value=min(5000, max(10, buffer_kb_default)),
-            step=10,
-            key="ld_window_buffer_kb",
-            help="Extends the window this many kb on each side of the LD block (or SNP if no block).",
-        )
+        buffer_kb = _buffer_slider()
 
     snp_row = gwas_df.loc[gwas_df["SNP"] == lead_snp]
     if snp_row.empty:

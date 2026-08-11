@@ -718,8 +718,10 @@ def _r2_point_colors(r2):
     return cols
 
 
-def _draw_gene_track(ax, genes):
-    """Greedy-stacked horizontal gene bars with a strand arrow + label."""
+def _draw_gene_track(ax, genes, label=True):
+    """Greedy-stacked gene bars with a strand arrowhead on the bar; gene-name
+    labels are drawn iff ``label`` (dense windows overprint, so the tab turns
+    them off above a threshold — the arrowhead keeps strand visible either way)."""
     g = genes.reset_index(drop=True)
     rows_end = []
     for _, gene in g.iterrows():
@@ -737,9 +739,14 @@ def _draw_gene_track(ax, genes):
             rows_end.append(e)
         y = -yr
         ax.plot([s, e], [y, y], lw=3, color=PALETTE["green"], solid_capstyle="butt", zorder=2)
-        arrow = "▶" if strand == "+" else ("◀" if strand == "-" else "")
-        ax.text((s + e) / 2.0, y + 0.18, f"{gene.get('Gene_ID', '')} {arrow}".strip(),
-                fontsize=6, ha="center", va="bottom", clip_on=True)
+        # strand arrowhead on the bar itself — kept even when name labels are hidden
+        if strand == "+":
+            ax.plot([e], [y], marker=">", color=PALETTE["green"], markersize=5, zorder=3)
+        elif strand == "-":
+            ax.plot([s], [y], marker="<", color=PALETTE["green"], markersize=5, zorder=3)
+        if label:
+            ax.text((s + e) / 2.0, y + 0.18, str(gene.get("Gene_ID", "")),
+                    fontsize=6, ha="center", va="bottom", clip_on=True)
     n = max(1, len(rows_end))
     ax.set_ylim(-n - 0.3, 0.9)
     ax.set_yticks([])
@@ -749,6 +756,7 @@ def _draw_gene_track(ax, genes):
 def plot_regional_association_static(
     window_df, r2_to_lead, lead_snp, sig_threshold,
     block_interval=None, block_members=None, genes=None, seed_threshold=None,
+    gene_labels=True,
 ):
     """Regional (locus-zoom-style) association plot for one window. Pure; no Streamlit.
 
@@ -830,7 +838,7 @@ def plot_regional_association_static(
     ax.set_title(f"Regional association — lead {lead_snp}")
 
     if has_genes:
-        _draw_gene_track(axg, genes)
+        _draw_gene_track(axg, genes, label=gene_labels)
         axg.set_xlabel("Position (Mb)")
     else:
         ax.set_xlabel("Position (Mb)")
@@ -841,9 +849,13 @@ def plot_regional_association_static(
 
 def plot_regional_association_interactive(
     window_df, r2_to_lead, lead_snp, sig_threshold,
-    block_interval=None, block_members=None, seed_threshold=None,
+    block_interval=None, block_members=None, seed_threshold=None, uirevision=None,
 ):
-    """Plotly regional association plot (hover: SNP id, p, r², block membership)."""
+    """Plotly regional association plot (hover: SNP id, p, r², block membership).
+
+    ``uirevision`` should be a stable per-window signature: Plotly resets the
+    axes when it changes (a new window) and preserves the user's zoom/pan while
+    it stays the same (reruns within one window)."""
     import plotly.graph_objects as go
 
     df = window_df.reset_index(drop=True)
@@ -886,6 +898,18 @@ def plot_regional_association_interactive(
                       line_color=SIG_LINE_COLOR)
     fig.update_layout(title=f"Regional association — lead {lead_snp}",
                       xaxis_title="Position (Mb)", yaxis_title="-log10(p)",
-                      height=480, showlegend=False)
+                      height=480, showlegend=False, uirevision=uirevision)
     return fig
-    return fig
+
+
+def ld_pairs_long(matrix, labels):
+    """Tidy long-format of a square pairwise-LD matrix: one row per unordered pair.
+
+    Returns a DataFrame ``[SNP_A, SNP_B, r2]`` over the upper triangle (i<j).
+    Pure — the numeric export behind the LD heatmaps (serialisation, not
+    computation)."""
+    import pandas as pd
+    M = np.asarray(matrix, dtype=float)
+    labs = np.asarray(labels).astype(str)
+    iu, ju = np.triu_indices(M.shape[0], k=1)
+    return pd.DataFrame({"SNP_A": labs[iu], "SNP_B": labs[ju], "r2": M[iu, ju]})
