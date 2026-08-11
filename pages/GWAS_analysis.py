@@ -443,9 +443,9 @@ st.sidebar.subheader("Significance threshold")
 sig_rule = st.sidebar.selectbox(
     "Significance threshold",
     ["FDR (q < 0.05)", "Bonferroni (α = 0.05)", "M_eff — Li & Ji (LD-aware Bonferroni)"],
-    index=2,
+    index=1,
     help=(
-        "**M_eff** (recommended): Corrects for correlated SNPs in LD "
+        "**M_eff**: Corrects for correlated SNPs in LD "
         "— less conservative than Bonferroni. Best for breeding panels "
         "where many SNPs are in linkage disequilibrium.\n\n"
         "**Bonferroni**: Assumes all SNPs are independent — most conservative. "
@@ -1265,9 +1265,10 @@ if vcf_file and phe_file:
             _pipe_sig_rule = st.selectbox(
                 "Significance threshold",
                 ["M_eff — Li & Ji (LD-aware Bonferroni)", "Bonferroni (α = 0.05)", "FDR (q < 0.05)"],
+                index=1,
                 key="pipe_sig_rule",
                 help=(
-                    "**M_eff** (recommended): Corrects for correlated SNPs in LD "
+                    "**M_eff**: Corrects for correlated SNPs in LD "
                     "— less conservative than Bonferroni. Best for breeding panels.\n\n"
                     "**Bonferroni**: Assumes all SNPs are independent — most conservative.\n\n"
                     "**FDR**: Controls false discovery rate at 5% — least conservative, "
