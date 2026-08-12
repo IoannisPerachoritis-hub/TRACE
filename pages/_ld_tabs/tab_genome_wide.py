@@ -513,8 +513,9 @@ def render(
             )
         else:
             st.success(f"Found {haplo_df_auto.shape[0]} LD blocks.")
-            with st.expander("View LD block table"):
-                st.dataframe(haplo_df_auto.head(20))
+            with st.expander("Block inventory — coordinates and SNP counts"):
+                st.caption("Where the blocks are. No statistics yet.")
+                st.dataframe(haplo_df_auto, use_container_width=True)
                 st.download_button(
                     "Download LD blocks (CSV)",
                     haplo_df_auto.to_csv(index=False).encode(),
@@ -739,8 +740,10 @@ def _render_haplotype_gwas(
     st.success(
         f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
     )
+    st.subheader("Association results per block")
+    st.caption("Whether each block's haplotypes differ for your trait.")
     st.dataframe(
-        hap_gwas_df.sort_values("PValue")[show_cols].head(50),
+        hap_gwas_df.sort_values("PValue")[show_cols],
         use_container_width=True
     )
 
