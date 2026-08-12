@@ -119,3 +119,7 @@ def test_block_tables_render_with_new_labels():
     # Task 4b — the effect-size (η²) interpretation popover renders next to the table
     assert any("Variance explained" in m.value for m in at.markdown), \
         "effect-size (η²) popover missing"
+
+    # LD-coherence (Change 2) — the block-coherence popover renders next to the table
+    assert any("member-pair" in m.value for m in at.markdown), \
+        "LD-block coherence popover missing"

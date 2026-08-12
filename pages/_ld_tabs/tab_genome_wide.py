@@ -513,8 +513,12 @@ def render(
             )
         else:
             st.success(f"Found {haplo_df_auto.shape[0]} LD blocks.")
-            with st.expander("Block inventory — coordinates and SNP counts"):
-                st.caption("Where the blocks are. No statistics yet.")
+            with st.expander("Block inventory — coordinates, SNP counts, coherence"):
+                st.caption(
+                    "Where the blocks are, plus **Mean r2** (within-block coherence: "
+                    "the mean member-pair r²). Trait statistics are in the results "
+                    "table below."
+                )
                 st.dataframe(haplo_df_auto, use_container_width=True)
                 st.download_button(
                     "Download LD blocks (CSV)",
@@ -728,6 +732,37 @@ def _render_haplotype_gwas(
         )
     st.session_state["hap_gwas_df_enriched"] = hap_gwas_df
 
+    # LD-block coherence (Change 2): surface the already-wired triage quality layer,
+    # which was invisible in the GUI. ldq_r2_mean == the block table's "Mean r2"
+    # (Change 1, same helper -> one coherence number, never two); ldq_r2_min +
+    # ldq_frac_members_r2_lead_ge show how tight the block is and how much of it
+    # tracks the lead. DISPLAY-ONLY join -- the downloadable haplotype CSV / ZIP
+    # (hap_gwas_df) is untouched. Raw dosage is used when present (higher fidelity
+    # than the imputed fallback).
+    _ldq_full = None
+    _disp = hap_gwas_df.sort_values("PValue").copy()
+    try:
+        from gwas.ld import compute_block_ld_quality as _cblq
+        from annotation import canon_chr as _cc
+        _ldq_full = _cblq(haplo_df_auto, chroms, positions, sid, geno_ld, ctx.gwas_df,
+                          geno_dosage_raw=ctx.geno_dosage_raw, r2_coherent=0.6)
+        if _ldq_full is not None and not _ldq_full.empty:
+            _coh = ["ldq_r2_mean", "ldq_r2_min", "ldq_frac_members_r2_lead_ge"]
+            _j = _ldq_full.copy()
+            _j["_c"] = _j["Chr"].astype(str).map(_cc)
+            _j["_s"] = _j["Start (bp)"].astype(int)
+            _j["_e"] = _j["End (bp)"].astype(int)
+            _disp["_c"] = _disp["Chr"].astype(str).map(_cc)
+            _disp["_s"] = _disp["Start"].astype(int)
+            _disp["_e"] = _disp["End"].astype(int)
+            _disp = _disp.merge(_j[["_c", "_s", "_e"] + _coh],
+                                on=["_c", "_s", "_e"], how="left").drop(columns=["_c", "_s", "_e"])
+            _disp = _disp.rename(columns={
+                "ldq_r2_mean": "Mean r2", "ldq_r2_min": "Min r2",
+                "ldq_frac_members_r2_lead_ge": "Frac r2>=.6 to lead"})
+    except Exception as _e:
+        st.caption(f"LD-block coherence unavailable: {_e}")
+
     show_cols = [c for c in [
         "Chr", "Start", "End", "Lead SNP", "n_snps",
         "n_haplotypes", "n_tested_haplotypes",
@@ -735,7 +770,8 @@ def _render_haplotype_gwas(
         "df1", "df2", "F_param", "PValue_param",
         "F_perm", "P_perm", "PValue", "FDR_qvalue",
         "eta2", "EtaSq", "Frac_other", "Block_length_kb", "maf_median",  # T-34: enriched, now on screen
-    ] if c in hap_gwas_df.columns]
+        "Mean r2", "Min r2", "Frac r2>=.6 to lead",     # LD-coherence (Change 2); Mean r2 == block table
+    ] if c in _disp.columns]
 
     st.success(
         f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
@@ -752,10 +788,33 @@ def _render_haplotype_gwas(
             "  - **< 5%** minor QTL — polygenic background\n\n"
             "Full guidance: **Help → Interpreting Results**."
         )
+    with st.popover("How to read LD-block coherence (r²)"):
+        st.markdown(
+            "- **Mean r2 / Min r2** — mean / weakest member-pair r² in the block "
+            "(how internally correlated it is).\n"
+            "- **Frac r2>=.6 to lead** — fraction of members with r² ≥ 0.6 to the lead "
+            "SNP. A low value on a lead's own block means the interval is a loose merge "
+            "of sub-clusters, not one tight haplotype.\n\n"
+            "Full guidance: **Help → Interpreting Results**."
+        )
     st.dataframe(
-        hap_gwas_df.sort_values("PValue")[show_cols],
+        _disp[show_cols],
         use_container_width=True
     )
+    if _ldq_full is not None and not _ldq_full.empty:
+        with st.expander("LD-block coherence — full per-block quality metrics"):
+            st.caption(
+                "The full ldq_* set for every block, including the r²-to-lead estimator "
+                "(`ldq_r2_lead_estimator`: raw dosage when available, else imputed)."
+            )
+            st.dataframe(_ldq_full, use_container_width=True)
+            st.download_button(
+                "Download LD-block coherence (CSV)",
+                _ldq_full.to_csv(index=False).encode(),
+                file_name="LD_block_coherence.csv",
+                mime="text/csv",
+                key="dl_ld_quality",
+            )
 
     # ============================================================
     # BLOCK-LEVEL VISUALIZATION: MLG boxplots + Tukey HSD + Table
