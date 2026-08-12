@@ -1437,42 +1437,54 @@ def run_pipeline(args):
             log.warning("Per-SNP boxplots/ledger failed: %s", e)
 
     # ── Build HTML report (in-memory) ────────────────────
+    # ── Run provenance (built ALWAYS; feeds the HTML report AND run_metadata.json) ──
+    _gb_meta = getattr(args, "genome_build", "SL3")
+    if args.gene_model:
+        _gm_meta = str(args.gene_model)
+    elif args.species == "tomato":
+        _gm_meta = "Sol_genes_SL3.csv" if _gb_meta == "SL3" else "Sol_genes.csv"
+    else:
+        _gm_meta = "none"
+
+    meta = {
+        "VCF": str(vcf_path),
+        "Phenotype": str(pheno_path),
+        "Trait": args.trait,
+        "Models": args.model,
+        "Species": args.species,
+        "Genome build": _gb_meta,
+        "Gene model": _gm_meta,
+        "MAF threshold": args.maf,
+        "MAC threshold": args.mac,
+        "Missingness threshold": args.miss,
+        "Info threshold": args.info_thresh,
+        "Normalization": args.norm,
+        "Significance": sig_rule,
+        "PCs_MLM": n_pcs_mlm,
+        "PCs_MLMM": n_pcs_mlmm if "mlmm" in args.model else "N/A",
+        "PCs_FarmCPU": n_pcs_fc if "farmcpu" in args.model else "N/A",
+        "Samples": int(geno_df.shape[0]),
+        "SNPs (post-QC)": int(geno_df.shape[1]),
+        "SNPs (raw)": int(n_raw),
+        "Isolated SNPs (no LD block)": (
+            "; ".join(
+                f"{m}: {c['n_uncovered']} ({c['n_seeding_path']} seeding-threshold, "
+                f"{c['n_block_path']} block-formation) -> {c['n_intervals']} interval(s)"
+                for m, c in _iso_counts.items()
+            ) if _iso_counts else ("off" if not _do_rescue else "0")
+        ),
+        "Lambda GC": round(lambda_gc, 4),
+        "Kinship model": kinship_model,
+        "LD decay (kb)": round(ld_decay_kb, 1) if ld_decay_kb else "N/A",
+        "LD flank (kb)": ld_flank_kb if ld_flank_kb else "N/A",
+        "LD blocks (MLM)": len(ld_blocks_mlm) if ld_blocks_mlm is not None else "N/A",
+        "Subsampling reps": args.boot_reps if args.subsampling else "N/A",
+        "Auto PCs": "Yes" if args.auto_pcs else "No",
+    }
+
     report_html = None
     if not args.no_report:
         from gwas.reports import generate_gwas_report
-
-        meta = {
-            "VCF": str(vcf_path),
-            "Phenotype": str(pheno_path),
-            "Trait": args.trait,
-            "Models": args.model,
-            "MAF threshold": args.maf,
-            "MAC threshold": args.mac,
-            "Missingness threshold": args.miss,
-            "Info threshold": args.info_thresh,
-            "Normalization": args.norm,
-            "Significance": sig_rule,
-            "PCs_MLM": n_pcs_mlm,
-            "PCs_MLMM": n_pcs_mlmm if "mlmm" in args.model else "N/A",
-            "PCs_FarmCPU": n_pcs_fc if "farmcpu" in args.model else "N/A",
-            "Samples": int(geno_df.shape[0]),
-            "SNPs (post-QC)": int(geno_df.shape[1]),
-            "SNPs (raw)": int(n_raw),
-            "Isolated SNPs (no LD block)": (
-                "; ".join(
-                    f"{m}: {c['n_uncovered']} ({c['n_seeding_path']} seeding-threshold, "
-                    f"{c['n_block_path']} block-formation) -> {c['n_intervals']} interval(s)"
-                    for m, c in _iso_counts.items()
-                ) if _iso_counts else ("off" if not _do_rescue else "0")
-            ),
-            "Lambda GC": round(lambda_gc, 4),
-            "Kinship model": kinship_model,
-            "LD decay (kb)": round(ld_decay_kb, 1) if ld_decay_kb else "N/A",
-            "LD flank (kb)": ld_flank_kb if ld_flank_kb else "N/A",
-            "LD blocks (MLM)": len(ld_blocks_mlm) if ld_blocks_mlm is not None else "N/A",
-            "Subsampling reps": args.boot_reps if args.subsampling else "N/A",
-            "Auto PCs": "Yes" if args.auto_pcs else "No",
-        }
 
         report_html = generate_gwas_report(
             trait_col=args.trait,
@@ -1511,6 +1523,7 @@ def run_pipeline(args):
         extra_model_dfs=extra_model_dfs or None,
         extra_tables=extra_csvs or None,
         report_html=report_html,
+        metadata=meta,
     )
     zip_path = output_dir / zip_name
     zip_path.write_bytes(zip_buf.getvalue())
