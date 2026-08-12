@@ -115,3 +115,7 @@ def test_block_tables_render_with_new_labels():
         "results-table subheader missing"
     assert any("differ for your trait" in c.value for c in at.caption), \
         "results-table caption missing"
+
+    # Task 4b — the effect-size (η²) interpretation popover renders next to the table
+    assert any("Variance explained" in m.value for m in at.markdown), \
+        "effect-size (η²) popover missing"

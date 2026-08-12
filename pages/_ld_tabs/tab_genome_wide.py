@@ -742,6 +742,16 @@ def _render_haplotype_gwas(
     )
     st.subheader("Association results per block")
     st.caption("Whether each block's haplotypes differ for your trait.")
+    with st.popover("How to read effect sizes (η²)"):
+        st.markdown(
+            "- **Effect (β)** — trait change per minor-allele copy (sign = direction).\n"
+            "- **Variance explained (η²)** per LD block — the most interpretable measure "
+            "of QTL importance for breeding:\n"
+            "  - **> 10%** major QTL — strong marker-assisted-selection candidate\n"
+            "  - **5–10%** moderate QTL — useful combined with other loci\n"
+            "  - **< 5%** minor QTL — polygenic background\n\n"
+            "Full guidance: **Help → Interpreting Results**."
+        )
     st.dataframe(
         hap_gwas_df.sort_values("PValue")[show_cols],
         use_container_width=True
