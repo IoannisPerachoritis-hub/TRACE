@@ -429,11 +429,21 @@ def compute_ld_decay_by_chromosome(
     min_pair_n=20,
 ):
     """
-    Compute LD decay per chromosome.
+    Compute LD decay per chromosome (the visualization / Decay-tab path).
+
+    Same definition as gwas/ld.py::ld_decay: the CENTRE of the first LINEAR distance
+    bin whose MEDIAN r² <= threshold, per chromosome, over the observed min/max pair
+    distance. n_bins defaults to 40 (standardised onto the CLI ld_decay bin count,
+    LD-decay Tier 1a). Same RESOLUTION FLOOR (~range/n_bins/2): when the crossing is
+    the first bin the value is grid-limited -- an UPPER BOUND, not an estimate --
+    flagged in summary_df["censored_r2_0.2"]. Uses np.digitize with a >=5-pair-per-bin
+    minimum, and subsamples to max_snps_per_chr=2000 (vs the CLI's 1500); the different
+    subsampling changes each chromosome's observed min pair distance and therefore the
+    grid floor, so this path and the CLI can still differ (see the LD-decay work order).
 
     Returns:
         decay_df : binned r2 vs distance per chromosome
-        summary_df : decay distances per chromosome
+        summary_df : per-chr decay distances (decay_kb_r2_{0.1,0.2}) + censored_r2_0.2
     """
     from gwas.ld import pairwise_r2
 

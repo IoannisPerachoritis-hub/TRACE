@@ -310,14 +310,27 @@ def contiguous_segments_by_adjacent(
 # -------------------------------------------------
 def ld_decay(region_pos, r2, ld_threshold=0.2, n_bins=40, max_dist_kb=None):
     """
-    Estimate LD decay distance as the smallest distance bin
-    where median r² <= ld_threshold.
+    Estimate LD decay distance as the CENTRE of the first LINEAR distance bin whose
+    MEDIAN r² <= ld_threshold.
+
+    Method: all pairwise r² -> bin distances into n_bins LINEAR bins over the observed
+    min/max pair distance (NOT max_dist_kb, which only pre-filters far pairs) -> median
+    r² per bin -> return the CENTRE of the first bin whose median r² <= threshold.
+
+    RESOLUTION FLOOR: because a bin centre is returned, the smallest value the method
+    can report is ~range/n_bins/2 (range = the observed max pair distance). When the
+    crossing is the FIRST bin the returned value IS that floor -- a CENSORED estimate:
+    the true decay is BELOW it (an UPPER BOUND), not a point estimate. Flagged on
+    df_ld.attrs["ld_decay_censored"]. n_bins defaults to 40 (the CLI/canonical path;
+    the GUI's compute_ld_decay_by_chromosome was standardised onto 40 in LD-decay
+    Tier 1a).
 
     Returns:
-      dist_kb_est : estimated decay distance (kb)
+      dist_kb_est : decay distance (kb); grid-limited -> an upper bound (see df_ld.attrs)
       slope       : slope of r² vs log10(distance) (descriptive only; not a
                     recombination parameter estimate; heavily autocorrelated)
-      df_ld       : pairwise LD dataframe
+      df_ld       : pairwise LD dataframe; .attrs carry ld_decay_censored /
+                    ld_decay_first_bin_center
     """
     region_pos = np.asarray(region_pos, int)
     r2 = np.asarray(r2, float)
