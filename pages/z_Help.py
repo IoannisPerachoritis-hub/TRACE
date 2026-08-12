@@ -126,6 +126,26 @@ st.markdown("""
 | **Best_PValue** | Best (lowest) p-value across all models |
 """)
 
+st.subheader("Post-GWAS CSVs (added after v1.0.1)")
+st.markdown("""
+The **Significant SNPs**, **Local LD**, and **Regional Plot** tabs export CSVs
+documented in full — every column, type, and when it's emitted — in **`docs/outputs.md`**:
+
+- **`Significant_SNPs.csv`** / **`Unblocked_SNPs.csv`** — every reporting-significant SNP,
+  marked in-block or *unblocked*. A SNP can be significant by the reporting rule yet fall
+  **below the block-seeding threshold `--ld-seed-p`**, so it never seeds a block
+  (`Block_Status = unblocked_not_seeded`) — which is why it shows up here.
+  (CLI runs emit these as `Significant_SNPs_<model>.csv` / `Unblocked_SNPs_<model>.csv`.)
+- **`LD_r2_long_*.csv`** / **`LD_r2_matrix_*.csv`** — the r² numbers behind the Local LD
+  heatmap (long-format pairs, and the square matrix).
+- **`Regional_data_*.csv`** — per-SNP p-value, r²-to-lead, and block membership behind the
+  regional plot. A block's lead is the **seed** SNP and need not be a member, so
+  `block_member = False` for the lead is expected, not a bug.
+
+See **`docs/cli_reference.md`** for the `--covar` covariate flag and the numeric
+`--sig-thresh` p-value (e.g. `5e-8`).
+""")
+
 # ============================================================
 # 3. Interpreting Results for Breeding
 # ============================================================
