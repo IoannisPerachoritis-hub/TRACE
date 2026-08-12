@@ -327,6 +327,7 @@ def _build_gwas_results_zip(
     extra_model_dfs=None,
     extra_tables=None,
     report_html=None,
+    metadata=None,
 ):
     """
     Build a ZIP archive with GWAS results for one trait.
@@ -338,6 +339,9 @@ def _build_gwas_results_zip(
     extra_tables : dict, {filename.csv: DataFrame} — arbitrary extra tables
         (e.g. PC_selection_lambda.csv, Subsampling_stability.csv, Enrichment_keywords.csv)
     report_html : str or None — full HTML report to include in the ZIP
+    metadata : dict or None — run provenance; when given, written as
+        run_metadata.json (the last member). None (default) adds nothing, so the
+        archive is byte-identical for callers that don't pass it.
     """
     buf = BytesIO()
 
@@ -382,6 +386,15 @@ def _build_gwas_results_zip(
 
         if report_html:
             zf.writestr("report.html", report_html)
+
+        # run_metadata.json written LAST so every other member's bytes are
+        # unchanged vs a metadata=None build (additive provenance).
+        if metadata is not None:
+            import json
+            zf.writestr(
+                "run_metadata.json",
+                json.dumps(metadata, indent=2, default=str),
+            )
 
     buf.seek(0)
     return zip_name, buf

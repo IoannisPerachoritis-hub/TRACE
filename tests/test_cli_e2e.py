@@ -185,4 +185,42 @@ class TestGWASPipelineE2E:
             assert "TestTrait" in pheno_df.columns
             assert len(pheno_df) == ctx["geno_imputed"].shape[0]
 
+    def test_run_metadata_provenance_in_zip(self, tmp_path):
+        """CLI provenance: run_metadata.json is emitted (even with --no-report) and
+        carries Species / Genome build / Gene model."""
+        import json
+        vcf_path, pheno_path = _write_test_data(tmp_path)
+        output_dir = tmp_path / "results_prov"
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--vcf", str(vcf_path),
+            "--pheno", str(pheno_path),
+            "--trait", "TestTrait",
+            "--output", str(output_dir),
+            "--model", "mlm",
+            "--no-report",   # provenance must be emitted regardless of the report
+            "--no-plots",
+            "--maf", "0.01",
+            "--mac", "1",
+            "--n-pcs", "2",
+        ])
+
+        run_pipeline(args)
+        zips = list(output_dir.glob("*.zip"))
+        assert len(zips) == 1
+
+        with zipfile.ZipFile(zips[0]) as zf:
+            assert "run_metadata.json" in zf.namelist(), (
+                f"run_metadata.json missing: {zf.namelist()}")
+            meta = json.loads(zf.read("run_metadata.json"))
+
+        # the three new provenance fields, for a default tomato/SL3 run
+        assert meta["Species"] == "tomato"
+        assert meta["Genome build"] == "SL3"
+        assert meta["Gene model"] == "Sol_genes_SL3.csv"
+        # core provenance survived the hoist
+        assert meta["Trait"] == "TestTrait"
+        assert "Lambda GC" in meta and "Kinship model" in meta
+
 
