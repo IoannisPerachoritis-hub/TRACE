@@ -130,12 +130,33 @@ st.title("TRACE — Trait Resolution and Candidate Evaluation")
 st.markdown("""
 Integrated GWAS, LD analysis, haplotype mapping, and gene annotation
 for **tomato and other crop** breeding panels.
-
-Use the **sidebar** to navigate to:
-- **GWAS Analysis** — upload data and run the full pipeline
-- **Post-GWAS Analysis** — explore LD structure and haplotype effects
-- **Help & Reference** — output format, column glossary, and methods reference
 """)
+
+def _safe_page_link(page, label, icon=None):
+    """Render an in-app nav link. st.page_link needs a first-run page context;
+    under Streamlit's AppTest bare mode it raises a url_pathname KeyError. Guard
+    it so a harness quirk never blanks the landing page — it renders normally in
+    the real multipage app."""
+    try:
+        st.page_link(page, label=label, icon=icon)
+    except Exception:
+        pass
+
+
+# --- Workflow map: three steps with real in-app links (not just sidebar prose) ---
+st.markdown("#### Workflow")
+_safe_page_link("pages/GWAS_analysis.py",
+                "1 · Run a GWAS — upload data and run the full pipeline", "🧬")
+_safe_page_link("pages/Post_GWAS_Analysis.py",
+                "2 · Explore the hits — LD structure and haplotype effects", "🔍")
+_safe_page_link("pages/z_Help.py",
+                "3 · Reference — output format, column glossary, methods", "📖")
+
+# --- If a GWAS run is already in this session, point back to it (read-only check;
+#     the landing page never mutates session state) ---
+if st.session_state.get("gwas_df") is not None:
+    st.info("You have GWAS results loaded in this session.")
+    _safe_page_link("pages/GWAS_analysis.py", "→ Back to your GWAS results", "↩️")
 
 st.info(
     "**Getting started?** Navigate to **GWAS Analysis** in the sidebar, "

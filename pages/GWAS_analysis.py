@@ -3820,6 +3820,20 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             auto_pc_k=n_pcs,
         )
 
+        # Continue to the Post-GWAS page from here — where the user finishes reading
+        # their hits. A second copy remains in "Next steps" at the page bottom.
+        # Guarded: st.page_link raises a url_pathname KeyError under Streamlit's
+        # AppTest bare mode (no page context); catching it keeps that harness quirk
+        # from blanking the results computed below. Renders normally in the real app.
+        try:
+            st.page_link(
+                "pages/Post_GWAS_Analysis.py",
+                label="Explore these hits → Post-GWAS Analysis",
+                icon="🔍",
+            )
+        except Exception:
+            pass
+
     # ============================================================
     # 6. Genome-wide LD DECAY — accurate per-chromosome computation
     # (same function as Post-GWAS Analysis > Decay tab)
