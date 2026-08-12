@@ -615,6 +615,38 @@ def find_ld_blocks_graph(
     return blocks
 
 
+def block_mean_r2(block_row, chroms, positions, sid, geno_imputed, min_pair_n: int = 20):
+    """Mean within-block LD: the upper-triangle mean r² over a block's members.
+
+    Byte-identical to ``compute_block_ld_quality``'s ``ldq_r2_mean`` for the same
+    block (both share ``get_block_snp_mask`` for membership): float-cast genotypes,
+    SNP_IDs -> column indices, genomic sort (required -- IEEE-754 addition is not
+    associative, so a different column order can move the last ULP), monomorphic
+    drop via ``np.nanvar > 0``, then the mean of the finite upper triangle of
+    ``pairwise_r2``. Returns ``np.nan`` for < 2 or > 4000 members, or when no
+    member pair yields a finite r².
+
+    This is the block's coherence over its FINAL (post-merge) members -- unlike the
+    per-segment ``mean_r2`` computed in ``find_ld_blocks_graph`` and discarded by the
+    IoU merge, which on a merged block reflects only one constituent segment.
+    """
+    G_imp = np.asarray(geno_imputed, dtype=float)
+    chroms = np.asarray(chroms).astype(str)
+    positions = np.asarray(positions)
+    sid = np.asarray(sid).astype(str)
+    midx = np.where(get_block_snp_mask(block_row, chroms, positions, sid))[0]
+    if midx.size:
+        midx = midx[np.argsort(positions[midx])]            # genomic order
+        midx = midx[np.nanvar(G_imp[:, midx], axis=0) > 0]  # drop monomorphic
+    n = int(midx.size)
+    if not (2 <= n <= 4000):
+        return np.nan
+    r2_sub = np.asarray(pairwise_r2(G_imp[:, midx], min_pair_n=min_pair_n))
+    vals = r2_sub[np.triu_indices(n, k=1)]
+    fin = vals[np.isfinite(vals)]
+    return float(np.mean(fin)) if fin.size else np.nan
+
+
 def find_ld_clusters_genomewide(
     gwas_df,
     chroms,
@@ -787,7 +819,7 @@ def find_ld_clusters_genomewide(
                                ",".join(member_ids) if member_ids else ""])
 
     if not all_blocks:
-        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs"])
+        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs", "Mean r2"])
 
     df = pd.DataFrame(
         all_blocks,
@@ -823,7 +855,17 @@ def find_ld_clusters_genomewide(
 
         merged.append(cur)
 
-    return pd.DataFrame(merged)
+    out = pd.DataFrame(merged)
+    # Surface each block's within-block coherence over its FINAL (post-merge)
+    # members. Byte-identical to compute_block_ld_quality's ldq_r2_mean (pinned by
+    # test); the per-segment mean_r2 the merge discards is NOT reused, because a
+    # merged block's segments each look tighter than their union (LD-coherence work
+    # order, Change 0 -- e.g. lc lead block: segments 0.63-0.78 vs union 0.427).
+    out["Mean r2"] = [
+        block_mean_r2(row, chroms, positions, sid, geno_imputed, min_pair_n)
+        for _, row in out.iterrows()
+    ]
+    return out
 
 def find_ld_blocks_from_genotypes(
     chroms,

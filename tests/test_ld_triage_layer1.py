@@ -77,3 +77,18 @@ def test_lead_estimator_raw_vs_imputed_differ():
     o_raw = compute_block_ld_quality(blocks, chroms, positions, sid, geno, gwas, geno_dosage_raw=raw)
     assert o_imp.iloc[0]["ldq_r2_lead_estimator"] == "imputed_fallback"
     assert o_raw.iloc[0]["ldq_r2_lead_estimator"] == "pairwise_complete_raw"
+
+
+def test_block_mean_r2_pins_ldq_r2_mean():
+    """Change 1 (LD-coherence): the detector's post-merge 'Mean r2' helper is
+    byte-identical to compute_block_ld_quality's ldq_r2_mean on the same block +
+    genotypes. This is the same-value guarantee that lets the block table (Change 1)
+    and the GUI (Change 2) show ONE coherence number, never two."""
+    from gwas.ld import block_mean_r2
+    blocks, chroms, positions, sid, geno, gwas = _synthetic()
+    ldq = compute_block_ld_quality(blocks, chroms, positions, sid, geno, gwas)
+    for i in range(len(blocks)):
+        bm = block_mean_r2(blocks.iloc[i], chroms, positions, sid, geno)
+        lm = float(ldq.iloc[i]["ldq_r2_mean"])
+        assert (np.isnan(bm) and np.isnan(lm)) or bm == lm, \
+            f"block {i}: block_mean_r2={bm!r} != ldq_r2_mean={lm!r}"
