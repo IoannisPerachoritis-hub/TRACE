@@ -566,9 +566,9 @@ sig_rule = st.sidebar.selectbox(
     index=1,
     key="sig_rule_select",
     help=(
-        "**M_eff**: Corrects for correlated SNPs in LD "
-        "— less conservative than Bonferroni. Best for breeding panels "
-        "where many SNPs are in linkage disequilibrium.\n\n"
+        "**M_eff (Li & Ji)**: divides α by the *effective* number of independent "
+        "tests, so it is less stringent than Bonferroni — the reduction scales with "
+        "how much LD is present.\n\n"
         "**Bonferroni**: Assumes all SNPs are independent — most conservative. "
         "May miss real signals in panels with extended LD.\n\n"
         "**FDR**: Controls the false discovery rate at 5% — least conservative. "
@@ -1421,7 +1421,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             if _pipe_pc_mode.startswith("Auto"):
                 _pipe_pc_strategy = st.radio(
                     "Auto strategy",
-                    ["Band [0.95–1.05] (recommended)", "Closest to λ=1.0"],
+                    ["Band [0.95–1.05]", "Closest to λ=1.0"],
                     key="pipe_pc_strategy",
                     help="Band: smallest PC count with λGC in [0.95, 1.05]; "
                          "falls back to closest-to-1.0 with parsimony tolerance. "
@@ -1448,8 +1448,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 index=1,
                 key="pipe_sig_rule",
                 help=(
-                    "**M_eff**: Corrects for correlated SNPs in LD "
-                    "— less conservative than Bonferroni. Best for breeding panels.\n\n"
+                    "**M_eff (Li & Ji)**: divides α by the *effective* number of "
+                    "independent tests, so it is less stringent than Bonferroni.\n\n"
                     "**Bonferroni**: Assumes all SNPs are independent — most conservative.\n\n"
                     "**FDR**: Controls false discovery rate at 5% — least conservative, "
                     "good for exploratory screening."
@@ -3796,8 +3796,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             help=(
                 "Genomic-control λ — how well population structure is accounted for. "
                 "**0.9–1.1** well-calibrated (p-values reliable); **<0.9** deflated "
-                "(common for oligogenic traits or when LOCO kinship removes confounding "
-                "— not a problem); **1.1–1.3** mildly inflated (usable); **>1.3** "
+                "(common for oligogenic traits or when LOCO kinship removes confounding — "
+                "usually benign, but check known loci are still detected); **1.1–1.3** "
+                "mildly inflated (usable); **>1.3** "
                 "notably inflated — add PCs or check batch effects. "
                 "Full guidance: **Help → Interpreting Results**."
             ),
