@@ -424,7 +424,7 @@ def compute_ld_decay_by_chromosome(
     geno_imputed,
     max_snps_per_chr=2000,
     max_dist_kb=5000.0,
-    n_bins=50,
+    n_bins=40,   # standardised onto the CLI ld_decay bin count (LD-decay Tier 1a)
     ld_thresholds=(0.1, 0.2),
     min_pair_n=20,
 ):

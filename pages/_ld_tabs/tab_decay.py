@@ -41,7 +41,7 @@ def render(ctx: LDContext):
         )
     with col_d3:
         n_bins_decay = st.slider(
-            "Distance bins", min_value=20, max_value=100, value=50,
+            "Distance bins", min_value=20, max_value=100, value=40,
         )
 
     if st.button("Compute LD decay", key="btn_ld_decay"):
