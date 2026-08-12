@@ -27,7 +27,7 @@ def render(ctx: LDContext, get_r2_cached):
         df_blocks = ctx.haplo_df_auto
 
         if df_blocks is None or df_blocks.empty:
-            st.info("No peak-centric LD blocks available yet.")
+            st.info("No LD blocks yet — run block detection in the LD Blocks & Haplotypes tab.")
             st.caption(
                 "Go to the 'Genome-wide' tab and run automatic detection, "
                 "or rely on automatic detection at page load."

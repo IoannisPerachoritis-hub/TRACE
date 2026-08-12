@@ -351,11 +351,11 @@ def render(
     run_haplotype_block_gwas_cached_fn,
 ):
     try:
-        st.subheader("Peak-centric LD blocks")
+        st.subheader("LD blocks")
 
         st.caption(
-            "Peak-centric blocks define LD structure around GWAS-significant SNPs. "
-            "These reflect LD at association peaks, not population-level LD block structure."
+            "TRACE builds an LD block around each significant SNP, then tests whether the "
+            "haplotypes in that block differ for your trait."
         )
 
         # Haplotype permutation control (tab-local: only this tab consumes n_perm_hap).
@@ -458,7 +458,7 @@ def render(
                 step=1,
             )
 
-            with st.spinner("Detecting peak-centric LD blocks…"):
+            with st.spinner("Finding LD blocks around significant SNPs…"):
                 haplo_df_auto = find_ld_clusters_genomewide(
                     gwas_df=gwas_df,
                     chroms=chroms,
@@ -512,7 +512,7 @@ def render(
                 "Enable 'Run / refresh LD block detection'."
             )
         else:
-            st.success(f"Detected {haplo_df_auto.shape[0]} peak-centric LD blocks.")
+            st.success(f"Found {haplo_df_auto.shape[0]} LD blocks.")
             with st.expander("View LD block table"):
                 st.dataframe(haplo_df_auto.head(20))
                 st.download_button(
@@ -607,7 +607,7 @@ def _render_haplotype_gwas(
     haplo_blocks_to_use = haplo_df_auto
 
     if haplo_blocks_to_use is None or haplo_blocks_to_use.empty:
-        st.warning("No peak-centric LD blocks available for haplotype analysis.")
+        st.warning("No LD blocks yet — run block detection above first.")
         return
 
     # ------------------------------------------------------------
