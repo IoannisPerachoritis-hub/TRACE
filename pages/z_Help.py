@@ -138,15 +138,22 @@ st.header("Interpreting Results for Breeding")
 
 st.subheader("Significance Thresholds")
 st.markdown("""
-- **M_eff (recommended)**: Accounts for linkage disequilibrium between SNPs.
-  Less conservative than Bonferroni, appropriate for structured breeding panels.
-- **Bonferroni**: Assumes all SNPs are independent. Very conservative
-  — may miss real signals when many SNPs are correlated.
-- **FDR**: Controls the expected proportion of false positives among significant results.
-  Good for exploratory analysis when you expect many true associations.
+TRACE reports significance under one of four rules. **The default is Bonferroni.**
 
-For most crop breeding panels (100-500 accessions), M_eff strikes the best balance
-between discovery and false positive control.
+- **Bonferroni**: divides α by the number of SNPs, assuming they are independent.
+  The most stringent option — when many SNPs are correlated it is conservative, and
+  real signals in extended LD can fall short of it.
+- **M_eff (Li & Ji)**: divides α by the *effective* number of independent tests
+  rather than the raw SNP count, so it is **less stringent than Bonferroni** — by how
+  much depends on how much LD is present. It does not assume the SNPs are independent.
+- **FDR (Benjamini–Hochberg)**: controls the expected proportion of false positives
+  among the SNPs called significant, instead of the family-wise error rate. The least
+  stringent of the three; suited to exploratory screening.
+- **Custom p-value**: a fixed threshold you set (e.g. 5e-8).
+
+Which rule fits depends on whether you are prioritising **discovery** (more permissive)
+or **control of false positives** (more stringent) — a study-design choice, not a
+property of the data.
 """)
 
 st.subheader("Lambda GC (Genomic Control)")
@@ -156,7 +163,7 @@ Lambda GC measures how well the model accounts for population structure:
 | Lambda GC | Interpretation |
 |-----------|---------------|
 | **0.9 - 1.1** | Well-calibrated. P-values are reliable. |
-| **< 0.9** | Deflated. Common for oligogenic traits with large-effect loci, or when LOCO kinship removes most confounding signal. Not a problem. |
+| **< 0.9** | Deflated. Common for oligogenic traits with large-effect loci, or when LOCO kinship removes most confounding. Usually benign, but check that known loci are still detected. |
 | **1.1 - 1.3** | Mildly inflated. Some residual population structure may remain. Results are usable. |
 | **> 1.3** | Notably inflated. Interpret with caution. Consider adding more PCs or checking for batch effects. |
 """)
@@ -199,8 +206,8 @@ st.markdown("""
 If you use TRACE in your research, please cite:
 
 > Perachoritis I., Vatov E., Alseekh S., Gechev T., Rai A. (2026).
-> TRACE: An Automated End-To-End GWAS Framework for Crop Breeding.
-> *Bioinformatics* (Application Note). [In preparation]
+> TRACE: *[full title pending — under R1.8 revision]*.
+> *Bioinformatics Advances* (Application Note). [In preparation]
 
 **Software:**
 > TRACE v1.0 — https://github.com/IoannisPerachoritis-hub/TRACE

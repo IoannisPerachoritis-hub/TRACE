@@ -37,3 +37,16 @@ def test_help_page_quick_start_points_to_readme():
     assert not at.exception
     # Quick Start is now a pointer to the README, not a duplicated walkthrough
     assert any("README" in m.value for m in at.markdown)
+
+
+def test_help_significance_section_is_neutral():
+    """Task B1: the significance-threshold guidance is a neutral comparison — no
+    evidence-free 'recommended'/'best balance', and it names Bonferroni as the
+    shipped default (which the M_eff '(recommended)' text contradicted)."""
+    at = AppTest.from_file(_HELP, default_timeout=60)
+    at.run()
+    assert not at.exception
+    md = " ".join(m.value for m in at.markdown)
+    assert "M_eff (recommended)" not in md, "M_eff still tagged '(recommended)'"
+    assert "best balance" not in md, "'strikes the best balance' claim still present"
+    assert "The default is Bonferroni" in md, "Bonferroni default not stated"
