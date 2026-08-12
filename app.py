@@ -146,17 +146,17 @@ def _safe_page_link(page, label, icon=None):
 # --- Workflow map: three steps with real in-app links (not just sidebar prose) ---
 st.markdown("#### Workflow")
 _safe_page_link("pages/GWAS_analysis.py",
-                "1 · Run a GWAS — upload data and run the full pipeline", "🧬")
+                "1 · Run a GWAS — upload data and run the full pipeline")
 _safe_page_link("pages/Post_GWAS_Analysis.py",
-                "2 · Explore the hits — LD structure and haplotype effects", "🔍")
+                "2 · Explore the hits — LD structure and haplotype effects")
 _safe_page_link("pages/z_Help.py",
-                "3 · Reference — output format, column glossary, methods", "📖")
+                "3 · Reference — output format, column glossary, methods")
 
 # --- If a GWAS run is already in this session, point back to it (read-only check;
 #     the landing page never mutates session state) ---
 if st.session_state.get("gwas_df") is not None:
     st.info("You have GWAS results loaded in this session.")
-    _safe_page_link("pages/GWAS_analysis.py", "→ Back to your GWAS results", "↩️")
+    _safe_page_link("pages/GWAS_analysis.py", "→ Back to your GWAS results")
 
 st.info(
     "**Getting started?** Navigate to **GWAS Analysis** in the sidebar, "

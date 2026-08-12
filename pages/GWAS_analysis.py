@@ -3848,7 +3848,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             st.page_link(
                 "pages/Post_GWAS_Analysis.py",
                 label="Explore these hits → Post-GWAS Analysis",
-                icon="🔍",
             )
         except Exception:
             pass
