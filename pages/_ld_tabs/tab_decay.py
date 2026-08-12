@@ -64,12 +64,25 @@ def render(ctx: LDContext):
     if decay_df is not None and not decay_df.empty:
         st.markdown("#### Per-chromosome decay summary")
         st.dataframe(summary_df, use_container_width=True)
+        if "censored_r2_0.2" in summary_df.columns and bool(summary_df["censored_r2_0.2"].any()):
+            _n_cens = int(summary_df["censored_r2_0.2"].sum())
+            st.caption(
+                f"`censored_r2_0.2` = grid-limited: for {_n_cens} chromosome(s) the r²≤0.2 "
+                "crossing falls in the first distance bin, so the decay is **below the grid "
+                "resolution** — read that value as **≤ X kb**, an upper bound, not an estimate."
+            )
 
         # Highlight genome-wide median
         if "decay_kb_r2_0.2" in summary_df.columns:
             median_decay = summary_df["decay_kb_r2_0.2"].median()
             if pd.notna(median_decay):
-                st.info(f"Genome-wide median LD decay (r² ≤ 0.2): **{median_decay:.0f} kb**")
+                _cens_note = ""
+                if "censored_r2_0.2" in summary_df.columns:
+                    _nc = int(summary_df["censored_r2_0.2"].sum())
+                    _nt = int(summary_df["decay_kb_r2_0.2"].notna().sum())
+                    if _nc:
+                        _cens_note = f"  ({_nc} of {_nt} chromosomes grid-limited — upper bound)"
+                st.info(f"Genome-wide median LD decay (r² ≤ 0.2): **{median_decay:.0f} kb**{_cens_note}")
 
                 if st.button("Use this as the LD decay estimate for block detection", key="btn_update_decay"):
                     st.session_state["ld_decay_kb"] = float(median_decay)

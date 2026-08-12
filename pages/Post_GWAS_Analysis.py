@@ -555,9 +555,15 @@ def ld_analysis_page():
     adj_r2_min_global = float(np.clip(adj_r2_min_global, 0.0, 0.99))
 
     if st.session_state.get("ld_decay_computed", False):
+        _cn = ""
+        _sm = st.session_state.get("ld_decay_summary")
+        if _sm is not None and "censored_r2_0.2" in getattr(_sm, "columns", []):
+            _ncc = int(_sm["censored_r2_0.2"].sum())
+            if _ncc:
+                _cn = f" ({_ncc} chr grid-limited — upper bound)"
         st.markdown(
             f"**Trait:** `{trait_col}`  \n"
-            f"LD decay (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb (from Decay tab)"
+            f"LD decay (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb (from Decay tab){_cn}"
         )
     else:
         st.markdown(

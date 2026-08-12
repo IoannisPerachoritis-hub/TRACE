@@ -510,6 +510,11 @@ def compute_ld_decay_by_chromosome(
             for thr in ld_thresholds:
                 below = chr_bin_df[chr_bin_df["median_r2"] <= thr]
                 summary[f"decay_kb_r2_{thr}"] = float(below["dist_kb"].iloc[0]) if not below.empty else np.nan
+            # LD-decay Tier 1b: grid-limited (censored) when the r2<=0.2 crossing is
+            # the FIRST bin centre -> the true decay is below this value (upper bound).
+            _fc = float(bin_centers[0])
+            _d02 = summary.get("decay_kb_r2_0.2", np.nan)
+            summary["censored_r2_0.2"] = bool(np.isfinite(_d02) and _d02 == _fc)
         summaries.append(summary)
 
     return pd.DataFrame(all_bins), pd.DataFrame(summaries)

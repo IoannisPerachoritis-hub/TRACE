@@ -2384,9 +2384,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                 st.session_state["ld_decay_summary"] = _summary_df
                                 st.session_state["ld_decay_kb"] = _pipe_ld_decay_kb
                                 st.session_state["ld_decay_computed"] = True
+                                _cn = ""
+                                if _summary_df is not None and "censored_r2_0.2" in _summary_df.columns:
+                                    _ncc = int(_summary_df["censored_r2_0.2"].sum())
+                                    if _ncc:
+                                        _cn = f" ({_ncc} chr grid-limited — upper bound)"
                                 st.write(
                                     f"LD decay (r² ≤ 0.2) ≈ {_pipe_ld_decay_kb:.0f} kb "
-                                    f"→ flank = {_pipe_ld_flank} kb"
+                                    f"→ flank = {_pipe_ld_flank} kb{_cn}"
                                 )
                             else:
                                 _pipe_ld_flank = 300

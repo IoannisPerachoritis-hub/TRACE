@@ -909,9 +909,11 @@ def run_pipeline(args):
     ld_decay_kb = None
     ld_blocks_mlm = None  # track MLM blocks for subsampling aggregation
 
+    _ld_decay_n_censored = None  # LD-decay Tier 1b: grid-limited per-chr count (run_metadata)
     if ld_flank_kb is None:
         log.info("Estimating LD decay…")
         ld_distances = []
+        _ld_decay_n_censored = 0
         _geno_float = geno_imputed.astype(float)
         for ch in np.unique(chroms):
             ch_mask = chroms == ch
@@ -923,13 +925,19 @@ def run_pipeline(args):
                 idx = np.linspace(0, len(pos_ch) - 1, 1500, dtype=int)
                 pos_ch, geno_ch = pos_ch[idx], geno_ch[:, idx]
             r2_mat = ld.pairwise_r2(geno_ch)
-            dk, _, _ = ld.ld_decay(pos_ch, r2_mat, ld_threshold=0.2, max_dist_kb=5000)
+            dk, _, _dfld = ld.ld_decay(pos_ch, r2_mat, ld_threshold=0.2, max_dist_kb=5000)
             if np.isfinite(dk):
                 ld_distances.append(dk)
+                if _dfld.attrs.get("ld_decay_censored"):
+                    _ld_decay_n_censored += 1
         if ld_distances:
             ld_decay_kb = float(np.median(ld_distances))
             ld_flank_kb = int(2 * ld_decay_kb)
-            log.info("  LD decay ~ %.0f kb -> flank = %d kb", ld_decay_kb, ld_flank_kb)
+            # LD-decay Tier 1b: N grid-limited -> the median is partly a median of floors
+            # (an upper bound). Display/logging only; ld_decay_kb / flank unchanged.
+            _cens = (f" ({_ld_decay_n_censored} of {len(ld_distances)} chromosomes "
+                     f"grid-limited <= floor)") if _ld_decay_n_censored else ""
+            log.info("  LD decay ~ %.0f kb -> flank = %d kb%s", ld_decay_kb, ld_flank_kb, _cens)
         else:
             ld_flank_kb = 300
             log.warning("  Could not estimate LD decay; using 300 kb")
@@ -1476,6 +1484,7 @@ def run_pipeline(args):
         "Lambda GC": round(lambda_gc, 4),
         "Kinship model": kinship_model,
         "LD decay (kb)": round(ld_decay_kb, 1) if ld_decay_kb else "N/A",
+        "LD decay grid-limited (n_chr)": _ld_decay_n_censored,
         "LD flank (kb)": ld_flank_kb if ld_flank_kb else "N/A",
         "LD blocks (MLM)": len(ld_blocks_mlm) if ld_blocks_mlm is not None else "N/A",
         "Subsampling reps": args.boot_reps if args.subsampling else "N/A",
