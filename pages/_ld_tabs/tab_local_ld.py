@@ -186,17 +186,17 @@ def render(ctx: LDContext, get_r2_cached, window):
         local_fname = f"LD_heatmap_{lead_snp}_Chr{chr_sel}_{start_bp}_{end_bp}"
         lcol_png, lcol_svg, lcol_pdf = st.columns(3)
         lcol_png.download_button(
-            "📥 Download LD heatmap PNG", local_cached["png"],
+            "Download LD heatmap PNG", local_cached["png"],
             file_name=f"{local_fname}.png", mime="image/png",
             key=f"dl_localld_png_{local_fname}",
         )
         lcol_svg.download_button(
-            "📥 Download LD heatmap SVG", local_cached["svg"],
+            "Download LD heatmap SVG", local_cached["svg"],
             file_name=f"{local_fname}.svg", mime="image/svg+xml",
             key=f"dl_localld_svg_{local_fname}",
         )
         lcol_pdf.download_button(
-            "📥 Download LD heatmap PDF", local_cached["pdf"],
+            "Download LD heatmap PDF", local_cached["pdf"],
             file_name=f"{local_fname}.pdf", mime="application/pdf",
             key=f"dl_localld_pdf_{local_fname}",
         )
@@ -210,12 +210,12 @@ def render(ctx: LDContext, get_r2_cached, window):
         _square_csv = pd.DataFrame(r2, index=region_sids, columns=region_sids).to_csv().encode()
         lcol_long, lcol_sq = st.columns(2)
         lcol_long.download_button(
-            "📥 Download r² (long: SNP_A, SNP_B, r2)", _long_csv,
+            "Download r² (long: SNP_A, SNP_B, r2)", _long_csv,
             file_name=f"LD_r2_long_{_ld_stem}.csv", mime="text/csv",
             key=f"dl_localld_long_{_ld_stem}",
         )
         lcol_sq.download_button(
-            "📥 Download r² (square matrix)", _square_csv,
+            "Download r² (square matrix)", _square_csv,
             file_name=f"LD_r2_matrix_{_ld_stem}.csv", mime="text/csv",
             key=f"dl_localld_sq_{_ld_stem}",
         )

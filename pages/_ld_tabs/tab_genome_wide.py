@@ -71,17 +71,17 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
     st.image(cached["display"])
     col_png, col_svg, col_pdf = st.columns(3)
     col_png.download_button(
-        f"📥 {label_prefix} PNG", cached["png"],
+        f"{label_prefix} PNG", cached["png"],
         file_name=f"{fname_stem}.png", mime="image/png",
         key=f"dl_{cache_namespace}_png_{fname_stem}",
     )
     col_svg.download_button(
-        f"📥 {label_prefix} SVG", cached["svg"],
+        f"{label_prefix} SVG", cached["svg"],
         file_name=f"{fname_stem}.svg", mime="image/svg+xml",
         key=f"dl_{cache_namespace}_svg_{fname_stem}",
     )
     col_pdf.download_button(
-        f"📥 {label_prefix} PDF", cached["pdf"],
+        f"{label_prefix} PDF", cached["pdf"],
         file_name=f"{fname_stem}.pdf", mime="application/pdf",
         key=f"dl_{cache_namespace}_pdf_{fname_stem}",
     )
@@ -325,17 +325,17 @@ def _render_haplotype_pca(
             fname = f"haplotype_pca_{block_chr}_{block_start}_{block_end}"
             col_png, col_svg, col_pdf = st.columns(3)
             col_png.download_button(
-                "📥 Download PCA PNG", cached["png"],
+                "Download PCA PNG", cached["png"],
                 file_name=f"{fname}.png", mime="image/png",
                 key=f"dl_pca_png_{fname}",
             )
             col_svg.download_button(
-                "📥 Download PCA SVG", cached["svg"],
+                "Download PCA SVG", cached["svg"],
                 file_name=f"{fname}.svg", mime="image/svg+xml",
                 key=f"dl_pca_svg_{fname}",
             )
             col_pdf.download_button(
-                "📥 Download PCA PDF", cached["pdf"],
+                "Download PCA PDF", cached["pdf"],
                 file_name=f"{fname}.pdf", mime="application/pdf",
                 key=f"dl_pca_pdf_{fname}",
             )

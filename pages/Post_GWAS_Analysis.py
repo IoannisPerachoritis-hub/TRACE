@@ -672,7 +672,7 @@ def ld_analysis_page():
         }
 
         if mega_mode == "Remove" and n_removed > 0:
-            st.toast(f"Removed {n_removed} mega-block(s).", icon="⚠️")
+            st.toast(f"Removed {n_removed} mega-block(s).")
     else:
         st.session_state["mega_label_state"] = {
             "n_total": _n_total_raw, "count": 0, "n_shown": _n_total_raw, "mode": mega_mode,
