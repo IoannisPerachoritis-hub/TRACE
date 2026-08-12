@@ -38,12 +38,22 @@ def _interval_iou_bp(a_start: int, a_end: int, b_start: int, b_end: int) -> floa
     return 0.0 if union <= 0 else float(inter / union)
 def _adaptive_adj_threshold(r2_sub: np.ndarray, base: float = 0.3, frac: float = 0.5):
     """
-    Adaptive adjacent LD threshold.
+    Adaptive adjacent-LD threshold used to split a block into contiguous runs.
 
-    Uses median adjacent r² inside a block:
-        threshold = max(base, frac * median_adjacent_r2)
+    ``base`` is a FLOOR, not the threshold. The effective cut is
 
-    This stabilizes LD block detection across:
+        threshold = min(0.5, max(base, frac * median_adjacent_r2))
+
+    i.e. ``base`` is the minimum the rule may return, ``frac`` (0.5, hard-coded)
+    scales the block's median adjacent r², and the result is capped at 0.5
+    (hard-coded). So in a high-LD block the effective split threshold can be more
+    than twice the requested ``adj_r2_min`` — the parameter is a floor, not "the
+    adjacent-LD threshold". (Signature default ``base=0.3`` is a dead default: the
+    live entry points pass 0.2 — see ``find_ld_clusters_genomewide``.) The adaptive
+    rule keeps detection portable across species with different LD (tomato ~165 vs
+    pepper ~350 accessions) without re-tuning.
+
+    Stabilises LD block detection across:
         - species with higher vs lower LD
         - uneven marker density.
     """
@@ -248,8 +258,8 @@ def pairwise_r(geno_matrix, min_pair_n: int = 20):
 def contiguous_segments_by_adjacent(
     region_pos: np.ndarray,
     r2: np.ndarray,
-    adj_r2_min: float = 0.3,
-    gap_factor: float = 2.5,
+    adj_r2_min: float = 0.3,   # dead default: live callers pass 0.2 (find_ld_clusters_genomewide)
+    gap_factor: float = 2.5,   # dead default: live callers pass 10.0
     min_len: int = 2,
 ):
     """
@@ -494,7 +504,7 @@ def find_ld_blocks_graph(
     ld_threshold: float = 0.6,
     max_dist_bp: int | None = None,
     min_snps: int = 3,
-    adj_r2_min: float = 0.3,
+    adj_r2_min: float = 0.3,   # dead default: live callers pass 0.2 (find_ld_clusters_genomewide)
     gap_factor: float = 10.0,
     region_sids: np.ndarray | None = None,
 ):
@@ -668,9 +678,21 @@ def find_ld_clusters_genomewide(
 
     """
     Peak-centric LD block detection.
-    Returns DataFrame with columns: Chr, Start (bp), End (bp), Lead SNP.
-    LD blocks are defined as connected components in an LD graph (r² ≥ threshold)
-    within a flank window around GWAS-significant SNPs.
+
+    Returns a DataFrame with columns: Chr, Start (bp), End (bp), Lead SNP, SNP_IDs,
+    Mean r2. LD blocks are connected components in an LD graph (r² >= threshold)
+    within a flank window around GWAS-significant SNPs, refined for contiguity.
+
+    Scope: blocks are sought ONLY in flank_kb windows around significant SNPs
+    (peak-centric), NOT genome-wide — so block counts are not comparable to a
+    Haploview or PLINK genome-wide partition of the same VCF.
+
+    Interval convention: "Start (bp)"–"End (bp)" is the CONVEX HULL of the block's
+    member SNPs (min/max member position), not a region in which every marker is in
+    LD — non-member markers can lie physically inside it. Consumers differ: haplotype
+    testing uses the member list (SNP_IDs, via get_block_snp_mask); gene annotation
+    uses the interval. "Mean r2" is the mean member-pair r² over the FINAL (post-merge)
+    members (see block_mean_r2) — the block's coherence.
     """
 
     # --- 1) Select significant SNPs ---

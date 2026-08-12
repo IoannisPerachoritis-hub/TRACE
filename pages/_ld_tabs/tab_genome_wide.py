@@ -355,7 +355,9 @@ def render(
 
         st.caption(
             "TRACE builds an LD block around each significant SNP, then tests whether the "
-            "haplotypes in that block differ for your trait."
+            "haplotypes in that block differ for your trait. These are local blocks around "
+            "association peaks, not a genome-wide LD-block map — their number and spans are "
+            "not comparable to a Haploview or PLINK partition of the whole genome."
         )
 
         # Haplotype permutation control (tab-local: only this tab consumes n_perm_hap).
