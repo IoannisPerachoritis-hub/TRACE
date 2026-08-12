@@ -74,7 +74,8 @@ def render(ctx: LDContext):
                 "GENE/Gene_ID/name/gene_name. Coordinates must be in the SAME "
                 "assembly as your VCF (check the per-chromosome ranges shown "
                 "after upload). For a new species, derive this from your GFF3 "
-                "with a short pandas script. See docs/gene_model_upload.md."
+                "with a short pandas script. See "
+                "[docs/gene_model_upload.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/gene_model_upload.md)."
             ),
         )
         _ld_desc_ov = st.file_uploader(

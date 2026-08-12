@@ -14,11 +14,9 @@ st.header("Quick Start")
 st.markdown("""
 The full step-by-step walkthrough — VCF/phenotype/gene-model formats with examples,
 QC presets, and downloading results — lives in the project
-[README](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md) (and, for the
-command line, in
-[docs/cli_reference.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/cli_reference.md)).
-It is kept there as the single source so
-it can't drift out of sync with the code.
+[README](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md). It is kept
+there as the single source so it can't drift out of sync with the code. For command-line
+use, run `trace-gwas --help` — it prints the full parameter list on every install route.
 
 **In 30 seconds:** on **GWAS Analysis**, upload a VCF + a phenotype CSV (sample IDs in
 the first column, matching the VCF), pick a trait, and click **Run GWAS** or **One-Click
@@ -131,8 +129,8 @@ documented in full — every column, type, and when it's emitted — in
   regional plot. A block's lead is the **seed** SNP and need not be a member, so
   `block_member = False` for the lead is expected, not a bug.
 
-See [docs/cli_reference.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/cli_reference.md) for the `--covar` covariate flag and the numeric
-`--sig-thresh` p-value (e.g. `5e-8`).
+Run `trace-gwas --help` for the `--covar` covariate flag and the numeric
+`--sig-thresh` p-value (e.g. `5e-8`) — it prints the full CLI parameter list.
 """)
 
 # ============================================================
@@ -224,5 +222,5 @@ st.header("Getting Help")
 st.markdown("""
 - **Bug reports & feature requests**: [GitHub Issues](https://github.com/IoannisPerachoritis-hub/TRACE/issues)
 - **Documentation**: [README.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md)
-- **Example data**: Example VCF and phenotype files are in the `examples/` directory
+- **Example data**: run `bash examples/run_example.sh` — it generates a small synthetic dataset (~50 samples, ~510 SNPs) and runs the pipeline end-to-end in under 30 s. (The example VCF is generated on demand, not shipped.)
 """)
