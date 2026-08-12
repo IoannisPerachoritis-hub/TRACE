@@ -13,8 +13,11 @@ st.title("Help & Reference")
 st.header("Quick Start")
 st.markdown("""
 The full step-by-step walkthrough — VCF/phenotype/gene-model formats with examples,
-QC presets, and downloading results — lives in the project **README** (and, for the
-command line, in **`docs/cli_reference.md`**). It is kept there as the single source so
+QC presets, and downloading results — lives in the project
+[README](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md) (and, for the
+command line, in
+[docs/cli_reference.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/cli_reference.md)).
+It is kept there as the single source so
 it can't drift out of sync with the code.
 
 **In 30 seconds:** on **GWAS Analysis**, upload a VCF + a phenotype CSV (sample IDs in
@@ -114,7 +117,8 @@ st.markdown("""
 st.subheader("Post-GWAS CSVs (added after v1.0.1)")
 st.markdown("""
 The **Significant SNPs**, **Local LD**, and **Regional Plot** tabs export CSVs
-documented in full — every column, type, and when it's emitted — in **`docs/outputs.md`**:
+documented in full — every column, type, and when it's emitted — in
+[docs/outputs.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/outputs.md):
 
 - **`Significant_SNPs.csv`** / **`Unblocked_SNPs.csv`** — every reporting-significant SNP,
   marked in-block or *unblocked*. A SNP can be significant by the reporting rule yet fall
@@ -127,7 +131,7 @@ documented in full — every column, type, and when it's emitted — in **`docs/
   regional plot. A block's lead is the **seed** SNP and need not be a member, so
   `block_member = False` for the lead is expected, not a bug.
 
-See **`docs/cli_reference.md`** for the `--covar` covariate flag and the numeric
+See [docs/cli_reference.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/cli_reference.md) for the `--covar` covariate flag and the numeric
 `--sig-thresh` p-value (e.g. `5e-8`).
 """)
 
@@ -219,6 +223,6 @@ If you use TRACE in your research, please cite:
 st.header("Getting Help")
 st.markdown("""
 - **Bug reports & feature requests**: [GitHub Issues](https://github.com/IoannisPerachoritis-hub/TRACE/issues)
-- **Documentation**: See the README.md in the repository root
+- **Documentation**: [README.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md)
 - **Example data**: Example VCF and phenotype files are in the `examples/` directory
 """)
