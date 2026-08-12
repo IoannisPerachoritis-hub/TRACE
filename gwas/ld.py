@@ -388,6 +388,17 @@ def ld_decay(region_pos, r2, ld_threshold=0.2, n_bins=40, max_dist_kb=None):
     else:
         dist_kb_est = float(below["dist_kb"].iloc[0])
 
+    # LD-decay Tier 1b: mark grid-limited (censored) estimates. When the crossing is
+    # the FIRST bin, the method reports its resolution floor, not an estimate — the
+    # true decay is BELOW this value (an upper bound). Recorded on df_ld.attrs so the
+    # returned numeric and the 3-tuple arity are UNCHANGED (flank_kb / all downstream
+    # stay byte-identical); display/logging read .attrs to emit "<= X kb (grid-limited)".
+    _first_center = float(bin_centers[0]) if len(bin_centers) else np.nan
+    df_ld.attrs["ld_decay_first_bin_center"] = _first_center
+    df_ld.attrs["ld_decay_censored"] = bool(
+        np.isfinite(dist_kb_est) and dist_kb_est == _first_center
+    )
+
     return dist_kb_est, slope, df_ld
 
 
