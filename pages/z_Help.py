@@ -12,26 +12,15 @@ st.title("Help & Reference")
 # ============================================================
 st.header("Quick Start")
 st.markdown("""
-1. **Prepare your VCF file** -- Biallelic SNPs, numbered chromosomes. Compressed (`.vcf.gz`) supported. Max 1 GB.
-2. **Prepare your phenotype file** -- CSV/TSV with sample IDs in the first column, numeric traits in subsequent columns. Sample IDs must match VCF sample names exactly.
-3. **Navigate to GWAS Analysis** -- Upload both files, adjust QC parameters (or use a preset), select a trait. Use **Auto-select PCs** to find the optimal PC count (lambda_GC near 1.0), or set it manually. Click **Run GWAS** for step-by-step results, or **One-Click Full Analysis** for an automated pipeline with ZIP download.
-4. **Explore LD structure** -- After GWAS, go to Post-GWAS Analysis. Significant loci are pre-loaded from your GWAS results.
-5. **Download results** -- Each page offers ZIP downloads with all tables, figures, and metadata.
+The full step-by-step walkthrough — VCF/phenotype/gene-model formats with examples,
+QC presets, and downloading results — lives in the project **README** (and, for the
+command line, in **`docs/cli_reference.md`**). It is kept there as the single source so
+it can't drift out of sync with the code.
 
-**Data format examples:**
-
-Phenotype CSV:
-```
-SampleID,Yield,Brix,Firmness
-Sample_001,45.2,5.8,3.1
-Sample_002,38.7,6.1,2.8
-```
-
-Gene model (for LD annotation):
-```
-CHROM,START,END,STRAND,GENE
-1,100000,105000,+,Solyc01g005000
-```
+**In 30 seconds:** on **GWAS Analysis**, upload a VCF + a phenotype CSV (sample IDs in
+the first column, matching the VCF), pick a trait, and click **Run GWAS** or **One-Click
+Full Analysis**. Then open **Post-GWAS Analysis** for LD blocks and haplotype effects;
+every page offers a ZIP download.
 """)
 
 # ============================================================
@@ -39,18 +28,14 @@ CHROM,START,END,STRAND,GENE
 # ============================================================
 st.header("Output Format")
 st.markdown("""
-When you run the **One-Click Pipeline** or download results from the single-trait view,
-you receive a **ZIP file** containing:
+The One-Click Pipeline and the single-trait download both produce a **ZIP**:
 
 | Folder / File | Contents |
 |--------------|----------|
-| `tables/*.csv` | All result tables: GWAS hits, LD blocks, haplotype tests, gene annotations, subsampling stability, cross-model consensus |
-| `figures/*.png` | Publication-quality plots: Manhattan, QQ, LD heatmaps |
-| `figures/*.html` | Interactive Plotly plots (Manhattan, overlay) |
-| `report.html` | Self-contained HTML report with executive summary, per-model sections, and all figures (works offline) |
-| `MANIFEST_*.json` | Full analysis parameters for reproducibility |
-
-All CSV files use standard comma-separated format and can be opened in Excel, R, or Python.
+| `tables/*.csv` | GWAS hits, LD blocks, haplotype tests, gene annotations, subsampling stability, cross-model consensus |
+| `figures/*.png` · `*.html` | Manhattan, QQ, LD heatmaps (static + interactive Plotly) |
+| `report.html` | Self-contained offline report (summary, per-model sections, figures) |
+| `MANIFEST_*.json` | Full analysis parameters, for reproducibility |
 """)
 
 # ============================================================

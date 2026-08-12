@@ -573,7 +573,8 @@ sig_rule = st.sidebar.selectbox(
         "May miss real signals in panels with extended LD.\n\n"
         "**FDR**: Controls the false discovery rate at 5% — least conservative. "
         "Good for exploratory screening when you expect many true associations.\n\n"
-        "**Custom p-value**: flag SNPs below a fixed p-value you set (e.g. 5e-8)."
+        "**Custom p-value**: flag SNPs below a fixed p-value you set (e.g. 5e-8).\n\n"
+        "Full guidance: **Help → Interpreting Results**."
     ),
 )
 custom_sig_thresh = None
@@ -3564,6 +3565,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
             # Top SNPs by discovery frequency
             st.markdown("#### Per-SNP discovery frequency (top 50)")
+            with st.popover("How to read discovery frequency"):
+                st.markdown(
+                    "Fraction of resamples in which a SNP stayed significant:\n"
+                    "- **> 80%** robust — detected in most resamples\n"
+                    "- **50–80%** moderately stable — mind sample-size limits\n"
+                    "- **< 50%** unstable — may be driven by a few influential samples\n\n"
+                    "Full guidance: **Help → Interpreting Results**."
+                )
             st.dataframe(
                 boot_disc_df.head(50)[
                     ["SNP", "Chr", "Pos", "DiscoveryFreq", "DiscoveryCount",
@@ -3782,7 +3791,17 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         st.subheader("QQ Plot & genomic control")
 
         _gc_cols = st.columns(4)
-        _gc_cols[0].metric("λGC (bulk 5–95%)", f"{lambda_gc:.3f}")
+        _gc_cols[0].metric(
+            "λGC (bulk 5–95%)", f"{lambda_gc:.3f}",
+            help=(
+                "Genomic-control λ — how well population structure is accounted for. "
+                "**0.9–1.1** well-calibrated (p-values reliable); **<0.9** deflated "
+                "(common for oligogenic traits or when LOCO kinship removes confounding "
+                "— not a problem); **1.1–1.3** mildly inflated (usable); **>1.3** "
+                "notably inflated — add PCs or check batch effects. "
+                "Full guidance: **Help → Interpreting Results**."
+            ),
+        )
         chisq_all = stats.chi2.isf(np.clip(pvals_gc, 1e-300, 1.0), df=1)
         lambda_gc_standard = np.nanmedian(chisq_all) / 0.4549364
         _gc_cols[1].metric("λGC (standard)", f"{lambda_gc_standard:.3f}")
