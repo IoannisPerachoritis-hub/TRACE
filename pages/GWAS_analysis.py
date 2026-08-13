@@ -207,7 +207,7 @@ def _compute_ld_decay_for_gwas_page(geno_key: str, chroms_tuple: tuple,
         chroms=chroms_arr,
         positions=positions_arr,
         geno_imputed=geno,
-        max_snps_per_chr=1500,   # aligned to the CLI ld_decay subsample cap (LD-decay follow-up A)
+        max_snps_per_chr=1500,   # aligned to the CLI's per-chromosome subsample cap (cli.py:924, not ld_decay's MAX_LD_SNPS safety net)
         max_dist_kb=5000.0,
         n_bins=40,   # standardised onto the CLI ld_decay bin count (LD-decay Tier 1a)
     )
