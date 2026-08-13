@@ -165,8 +165,15 @@ def run_farmcpu_gwas(
     precomputed: dict,
     n_pcs: int = 2,
     use_loco: bool = True,
+    final_scan: str = "mlm",
+    selection_kinship: str = "global",
+    carry_validated_set: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Run FarmCPU on a single phenotype.
+
+    ``final_scan`` / ``selection_kinship`` / ``carry_validated_set`` expose the
+    FarmCPU 2x2 measurement knobs; their defaults reproduce the current
+    (published ``farmcpu_loco``) behaviour exactly.
 
     Returns (gwas_results_df, timing_dict).
     """
@@ -211,12 +218,16 @@ def run_farmcpu_gwas(
         covar_reader=covar_reader,
         verbose=False,
         use_loco=use_loco,
+        final_scan=final_scan,
+        selection_kinship=selection_kinship,
+        carry_validated_set=carry_validated_set,
     )
     assoc_time = time.perf_counter() - t0
 
     timing = {
         "association_sec": round(assoc_time, 2),
         "n_pseudo_qtns": convergence_info["n_pseudo_qtns"],
+        "n_iterations": convergence_info["n_iterations"],
         "converged": convergence_info["converged"],
     }
     return farmcpu_df, timing
