@@ -31,7 +31,7 @@ def render(ctx: LDContext):
     with col_d1:
         max_snps_chr = st.number_input(
             "Max SNPs per chromosome (subsample)",
-            min_value=200, max_value=5000, value=2000, step=200,
+            min_value=200, max_value=5000, value=1500, step=200,
             help="Higher = more accurate but slower.",
         )
     with col_d2:
