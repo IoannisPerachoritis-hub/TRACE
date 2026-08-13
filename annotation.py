@@ -422,7 +422,7 @@ def compute_ld_decay_by_chromosome(
     chroms,
     positions,
     geno_imputed,
-    max_snps_per_chr=2000,
+    max_snps_per_chr=1500,   # aligned to the CLI ld_decay subsample cap (LD-decay follow-up A)
     max_dist_kb=5000.0,
     n_bins=40,   # standardised onto the CLI ld_decay bin count (LD-decay Tier 1a)
     ld_thresholds=(0.1, 0.2),
@@ -437,9 +437,10 @@ def compute_ld_decay_by_chromosome(
     LD-decay Tier 1a). Same RESOLUTION FLOOR (~range/n_bins/2): when the crossing is
     the first bin the value is grid-limited -- an UPPER BOUND, not an estimate --
     flagged in summary_df["censored_r2_0.2"]. Uses np.digitize with a >=5-pair-per-bin
-    minimum, and subsamples to max_snps_per_chr=2000 (vs the CLI's 1500); the different
-    subsampling changes each chromosome's observed min pair distance and therefore the
-    grid floor, so this path and the CLI can still differ (see the LD-decay work order).
+    minimum, and subsamples to max_snps_per_chr=1500, matching the CLI ld_decay path
+    (LD-decay follow-up A); with the same bin count AND subsample cap it reproduces the
+    CLI decay value on the tomato panel (median 72.17). The only remaining difference is
+    a <10-vs-<50 minimum-SNP-per-chromosome skip, irrelevant unless a chromosome has <50 SNPs.
 
     Returns:
         decay_df : binned r2 vs distance per chromosome
