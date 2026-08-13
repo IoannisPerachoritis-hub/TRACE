@@ -898,6 +898,8 @@ def _optimize_pseudo_qtns_mlm(
     p_threshold,
     max_pseudo_qtns=15,
     pvals=None,
+    chroms_str=None,
+    K_by_chr=None,
 ):
     """
     Validate pseudo-QTN candidates via MLM forward selection.
@@ -965,10 +967,30 @@ def _optimize_pseudo_qtns_mlm(
             val=test_geno, pos=pos_arr,
         )
 
+        # Selection kinship: global K0 (default) or the candidate's LOCO
+        # kernel.  Follow the ``:139`` precedent — ``.get(key, None)`` then an
+        # explicit ``is None`` check that FAILS LOUDLY; never a silent
+        # ``.get(.., K0)`` fallback, which would make LOCO selection silently
+        # run against the global kinship (arm C degrading to arm A).  The key
+        # is the STRING chromosome label (``chroms_str``), not ``chroms_num``,
+        # because the kernel dict is keyed by ``str(ch)``.
+        if K_by_chr is not None:
+            _sel_key = str(chroms_str[test_idx])
+            K_sel = K_by_chr.get(_sel_key, None)
+            if K_sel is None:
+                raise KeyError(
+                    "LOCO pseudo-QTN selection: no kernel for chromosome "
+                    f"{_sel_key!r} (candidate SNP {sid[test_idx]!r}); "
+                    f"kernel keys={sorted(map(str, K_by_chr))}. Refusing to "
+                    "fall back to global kinship."
+                )
+        else:
+            K_sel = K0
+
         try:
             res = single_snp(
                 test_snps=snp_data, pheno=pheno,
-                K0=K0, covar=covar_test,
+                K0=K_sel, covar=covar_test,
                 leave_out_one_chrom=False,
             )
             p = float(pd.to_numeric(res["PValue"], errors="coerce").iloc[0])
@@ -995,6 +1017,8 @@ def run_farmcpu(
     final_scan="mlm",
     verbose=True,
     use_loco=True,
+    selection_kinship="global",
+    carry_validated_set=False,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1034,6 +1058,16 @@ def run_farmcpu(
     use_loco : bool
         Use LOCO kinship for the MLM final scan.  When False, uses
         global K0 for all chromosomes.
+    selection_kinship : str
+        Pseudo-QTN validation kinship: ``"global"`` (default; K0 contains
+        the candidate's own chromosome) or ``"loco"`` (leave-one-chromosome-
+        out kernel per candidate).  Measurement knob; the default preserves
+        current behaviour.
+    carry_validated_set : bool
+        When True, adopt the newly validated pseudo-QTN set *before* the
+        convergence checks, so a Jaccard/exact break carries it into the
+        prune + final scan.  Default False preserves current behaviour
+        (a Jaccard break keeps the previous iteration's set).
 
     Returns
     -------
@@ -1101,6 +1135,30 @@ def run_farmcpu(
     converged = False
     iteration_log = []
 
+    # ── Build LOCO kernels once (hoisted before the loop) ───────────────
+    # Needed by LOCO pseudo-QTN selection (selection_kinship="loco") and/or
+    # the MLM final scan.  Built once here (LD-pruned LOCO kernels, matching
+    # the main pipeline); arm B (global selection + OLS final) needs neither,
+    # so the build is skipped there.
+    K_by_chr = None
+    if selection_kinship == "loco" or final_scan == "mlm":
+        from gwas.kinship import (
+            _build_loco_kernels_impl, _standardize_geno_for_grm,
+            _ld_prune_for_grm_by_chr_bp,
+        )
+        Z_pruned, prune_mask = _ld_prune_for_grm_by_chr_bp(
+            chroms, positions, geno_imputed, return_mask=True,
+        )
+        chroms_pruned = chroms[prune_mask]
+        Z_grm = _standardize_geno_for_grm(Z_pruned)
+        _, K_by_chr, _ = _build_loco_kernels_impl(iid, Z_grm, chroms_pruned)
+        if not use_loco:
+            K_by_chr = {ch: K0 for ch in K_by_chr}
+    # Selection kinship dict passed into validation: the LOCO kernels for
+    # loco-selection, else None (None → _optimize_pseudo_qtns_mlm uses the
+    # global K0, i.e. current behaviour).
+    sel_K_by_chr = K_by_chr if selection_kinship == "loco" else None
+
     for iteration in range(int(max_iterations)):
         if verbose:
             progress_placeholder.info(
@@ -1135,6 +1193,7 @@ def run_farmcpu(
             chroms_num, positions, covar_reader, K0,
             p_threshold, max_pseudo_qtns=max_pseudo_qtns,
             pvals=pvals,
+            chroms_str=chroms, K_by_chr=sel_K_by_chr,
         )
 
         if not new_pseudo_qtns:
@@ -1147,13 +1206,21 @@ def run_farmcpu(
             "n_pseudo_qtns": len(new_pseudo_qtns),
         })
 
-        # Step 4: Check convergence (exact match or Jaccard > 0.8)
-        if set(new_pseudo_qtns) == set(pseudo_qtns):
+        # Step 4: Check convergence (exact match or Jaccard > 0.8).
+        # carry_validated_set=True adopts the newly validated set BEFORE the
+        # break checks, so any break carries it into the prune + final scan
+        # (fixes the defect where a Jaccard break discarded the validated set
+        # and proceeded on the previous iteration's set). carry=False =
+        # current behaviour: pseudo_qtns is updated only after the checks.
+        prev_pseudo_qtns = pseudo_qtns
+        if carry_validated_set:
+            pseudo_qtns = new_pseudo_qtns
+        if set(new_pseudo_qtns) == set(prev_pseudo_qtns):
             converged = True
             break
-        if pseudo_qtns:
-            _inter = len(set(new_pseudo_qtns) & set(pseudo_qtns))
-            _union = len(set(new_pseudo_qtns) | set(pseudo_qtns))
+        if prev_pseudo_qtns:
+            _inter = len(set(new_pseudo_qtns) & set(prev_pseudo_qtns))
+            _union = len(set(new_pseudo_qtns) | set(prev_pseudo_qtns))
             if _union > 0 and _inter / _union > 0.8:
                 converged = True
                 break
@@ -1193,22 +1260,9 @@ def run_farmcpu(
     covar_final = _build_covar(pseudo_qtns)
 
     if final_scan == "mlm":
-        # MLM final scan with LOCO kinship + pseudo-QTNs as covariates.
-        # Uses raw (0/1/2) genotypes for both SnpData and GRM construction,
-        # and LD-pruned genotypes for LOCO kernels (matching main pipeline).
-        from gwas.kinship import (
-            _build_loco_kernels_impl, _standardize_geno_for_grm,
-            _ld_prune_for_grm_by_chr_bp,
-        )
-        Z_pruned, prune_mask = _ld_prune_for_grm_by_chr_bp(
-            chroms, positions, geno_imputed, return_mask=True,
-        )
-        chroms_pruned = chroms[prune_mask]
-        Z_grm = _standardize_geno_for_grm(Z_pruned)
-        _, K_by_chr, _ = _build_loco_kernels_impl(iid, Z_grm, chroms_pruned)
-        if not use_loco:
-            K_by_chr = {ch: K0 for ch in K_by_chr}
-
+        # MLM final scan with LOCO kinship (built once, hoisted above the
+        # iteration loop) + pseudo-QTNs as covariates.  Uses raw (0/1/2)
+        # genotypes for SnpData and the LD-pruned LOCO kernels ``K_by_chr``.
         results_all = []
         for ch in np.unique(chroms):
             mask_ch = chroms == ch
