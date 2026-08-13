@@ -422,7 +422,8 @@ def compute_ld_decay_by_chromosome(
     chroms,
     positions,
     geno_imputed,
-    max_snps_per_chr=1500,   # aligned to the CLI's per-chromosome subsample cap (cli.py:924, not ld_decay's MAX_LD_SNPS safety net)
+    max_snps_per_chr=1500,   # aligned to the CLI's per-chromosome subsample cap (cli.py, the `if len(pos_ch) > 1500`
+    # in the "Estimating LD decay" loop — not ld_decay's MAX_LD_SNPS safety net)
     max_dist_kb=5000.0,
     n_bins=40,   # standardised onto the CLI ld_decay bin count (LD-decay Tier 1a)
     ld_thresholds=(0.1, 0.2),
