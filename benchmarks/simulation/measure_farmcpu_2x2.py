@@ -132,7 +132,11 @@ def main():
                     help="Defaults to <repo>/benchmarks/simulation/sim_data")
     ap.add_argument("--configs", nargs="+", default=list(CONFIGS),
                     choices=list(CONFIGS))
-    ap.add_argument("--cells", nargs="+", default=CELLS, choices=CELLS)
+    ap.add_argument("--cells", nargs="+", default=CELLS,
+                    help="Scenario cell dir names under --sim-data-dir "
+                         "(default: the two published cells). Existence is "
+                         "validated below; choices are not hardcoded so new "
+                         "cells (e.g. h2_050_q015) are accepted.")
     ap.add_argument("--reps", type=int, default=100)
     ap.add_argument("--n-pcs", type=int, default=2)
     ap.add_argument("--eval-only", action="store_true",
@@ -145,6 +149,11 @@ def main():
 
     sim_data_dir = Path(args.sim_data_dir) if args.sim_data_dir else \
         ROOT / "benchmarks" / "simulation" / "sim_data"
+    # `choices=CELLS` was dropped so new cells are accepted; validate that each
+    # requested cell has a scenario directory instead.
+    for _c in args.cells:
+        if not (sim_data_dir / _c).is_dir():
+            ap.error(f"--cells: no scenario directory {_c!r} under {sim_data_dir}")
     sim_summary = ROOT / "benchmarks" / "simulation" / "sim_summary"
     sim_summary.mkdir(parents=True, exist_ok=True)
     out_path = Path(args.out) if args.out else sim_summary / "farmcpu_2x2_measurement.csv"
@@ -256,7 +265,9 @@ def main():
             if row.empty:
                 continue
             row = row.iloc[0]
-            g = GATE[cell]
+            g = GATE.get(cell)
+            if g is None:
+                continue  # new cell -> no published gate value (work order §4)
             for metric, meas in (("power", row["power_mean"]),
                                  ("fdr", row["fdr_mean"]),
                                  ("lambda_gc", row["lambda_gc_mean"])):
