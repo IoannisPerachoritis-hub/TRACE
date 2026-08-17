@@ -1124,6 +1124,7 @@ def run_farmcpu(
     step5_topn_grid=(10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
     pqtn_bound=None,
     candidate_p_gate=None,
+    step5_warm_start=False,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1192,6 +1193,12 @@ def run_farmcpu(
     candidate_p_gate : float or None
         Overrides ``p_threshold`` for the (non-step5) bin candidate gate.  None =
         current behaviour.  Step 5 selection is gate-free by construction.
+    step5_warm_start : bool
+        Step 5 arm selector.  False (default) = FAITHFUL: the 1%-Bonferroni
+        Step-4 stop applies from iteration 0, so a rep with nothing genome-wide
+        significant terminates with 0 pseudo-QTNs (the plain marginal scan).
+        True = WARM: iteration 0 always builds the pool; the stop applies only
+        from iteration >= 1.  A measured arm, not a default.
 
     Returns
     -------
@@ -1319,14 +1326,16 @@ def run_farmcpu(
         _iter_diag = {}  # §4 funnel: filled by the two helpers this iteration
         if step5_reml_bins:
             # Published Step 5: REML-optimised (bin_size x top_N) selection.
-            # Step-7 stop rule (FarmCPU p.threshold): once pseudo-QTNs are in
-            # play, stop if no marker survives 1% Bonferroni -- nothing new to
-            # condition on.  Iteration 0 ALWAYS builds the pool, so the pilot's
-            # iteration-1 pool-membership metric is defined even at low power
-            # (the pool is the endpoint; gating iter 0 on genome-wide sig would
-            # discard exactly the marginally-weak, jointly-informative markers
-            # this pilot exists to recover -- D-97).
-            if iteration >= 1 and not np.any(np.isfinite(pvals) & (pvals < 0.01 / m)):
+            # Step-4 stop (FarmCPU p.threshold, 1% Bonferroni). Two MEASURED arms:
+            #   FAITHFUL (step5_warm_start=False, default): applies from iteration 0
+            #     -- a rep with nothing below 1%-Bonf terminates with 0 pseudo-QTNs
+            #     and reports the plain marginal scan (a legitimate paper output).
+            #   WARM (step5_warm_start=True): iteration 0 ALWAYS builds the pool;
+            #     the stop applies only from iteration >= 1.
+            # The faithful stop fires on 17-48% of reps at n=165 (rising with QTN
+            # count) -- too large to bury in a fix, so the two are separate arms.
+            _no_sig = not np.any(np.isfinite(pvals) & (pvals < 0.01 / m))
+            if _no_sig and (iteration >= 1 or not step5_warm_start):
                 converged = True
                 break_site = "no_sig_1pct"
                 break

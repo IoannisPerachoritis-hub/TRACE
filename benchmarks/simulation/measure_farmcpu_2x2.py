@@ -65,8 +65,13 @@ CONFIGS = {
     # arm (D-98); pool_cap=100 (>= max top_N) so the REML pool isn't truncated;
     # pqtn_bound left to run_farmcpu's auto round(n/log10(n))=74; step5 grid = the
     # run_farmcpu_gwas defaults (paper sizes extended down). No published baseline.
+    # E_F = FAITHFUL (Step-4 stop from iteration 0: reps with nothing below 1%-Bonf
+    # terminate with 0 pseudo-QTNs -> plain marginal scan). E_F_warm = the warm
+    # variant (iteration 0 always builds the pool). Measured as separate arms.
     "E_F": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
                 step5_reml_bins=True, pool_cap=100),
+    "E_F_warm": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                     step5_reml_bins=True, pool_cap=100, step5_warm_start=True),
 }
 
 CELLS = ["h2_050_q005", "h2_080_q005"]
