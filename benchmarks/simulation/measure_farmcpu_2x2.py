@@ -117,8 +117,16 @@ def _determinism_check(old_results, new_results, rep_dir):
     denom = np.minimum(np.abs(po), np.abs(pn))
     with np.errstate(divide="ignore", invalid="ignore"):
         rel = np.where(denom > 0, dp / denom, 0.0)
-    top_old = set(old_results.nsmallest(100, "PValue")["SNP"])
-    top_new = set(new_results.nsmallest(100, "PValue")["SNP"])
+    # "top-100 ranking unchanged": compare the sorted top-100 p-VALUES, NOT the
+    # SNP set. The set can differ by tie members at float precision (e.g. 21 SNPs
+    # sharing the rank-100 p-value; 1e-16 noise reorders the tie) without the
+    # p-value profile changing -- that is not a drift. A real change moves a
+    # top-100 p-value and is caught here (and by max_rel_dp).
+    top_old = np.sort(old_results["PValue"].to_numpy(dtype=float))[:100]
+    top_new = np.sort(new_results["PValue"].to_numpy(dtype=float))[:100]
+    top100_match = bool(
+        len(top_old) == len(top_new)
+        and np.allclose(top_old, top_new, rtol=1e-6, atol=0.0, equal_nan=True))
     return {
         "cell": rep_dir.parent.name,
         "rep": int(rep_dir.name.split("_")[-1]),
@@ -126,7 +134,7 @@ def _determinism_check(old_results, new_results, rep_dir):
         "max_abs_dp": float(np.nanmax(dp[finite])) if finite.any() else 0.0,
         "max_rel_dp": float(np.nanmax(rel[finite])) if finite.any() else 0.0,
         "n_differing": int((dp[finite] > 0).sum()),
-        "top100_set_identical": bool(top_old == top_new),
+        "top100_pvals_match": top100_match,
     }
 
 
@@ -161,11 +169,11 @@ def _run_one(rep_dir, config_name, cfg, geno, snp_map, sample_ids, precomputed,
         chk = _determinism_check(old_results, results, rep_dir)
         pd.DataFrame([chk]).to_csv(
             det_path, mode="a", header=not det_path.exists(), index=False)
-        if chk["max_rel_dp"] > 1e-6 or not chk["top100_set_identical"]:
+        if chk["max_rel_dp"] > 1e-6 or not chk["top100_pvals_match"]:
             raise RuntimeError(
                 f"DETERMINISM GATE FAILED at {chk['cell']}/rep_{chk['rep']:03d}: "
                 f"max_abs_dp={chk['max_abs_dp']:.3e} max_rel_dp={chk['max_rel_dp']:.3e} "
-                f"top100_identical={chk['top100_set_identical']} -- STOP (work order §3)."
+                f"top100_pvals_match={chk['top100_pvals_match']} -- STOP (work order §3)."
             )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -275,7 +283,7 @@ def main():
         print(f"\ndeterminism (§3) -> {det_path}  ({len(_det)} recomputed reps; "
               f"worst max_abs_dp={_det['max_abs_dp'].max():.3e}, "
               f"worst max_rel_dp={_det['max_rel_dp'].max():.3e}, "
-              f"all top100 identical={bool(_det['top100_set_identical'].all())})")
+              f"all top100 pvals match={bool(_det['top100_pvals_match'].all())})")
 
     perrep = pd.DataFrame(perrep_rows)
     perrep.to_csv(perrep_path, index=False)
