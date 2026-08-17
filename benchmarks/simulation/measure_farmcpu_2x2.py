@@ -61,6 +61,12 @@ CONFIGS = {
     "C_T": dict(selection_kinship="loco", final_scan="ols", carry_validated_set=True),
     "D_F": dict(selection_kinship="loco", final_scan="mlm", carry_validated_set=False),
     "D_T": dict(selection_kinship="loco", final_scan="mlm", carry_validated_set=True),
+    # E_F = A_F + published FarmCPU Step 5 (REML-optimised bin_size x top_N). Pilot
+    # arm (D-98); pool_cap=100 (>= max top_N) so the REML pool isn't truncated;
+    # pqtn_bound left to run_farmcpu's auto round(n/log10(n))=74; step5 grid = the
+    # run_farmcpu_gwas defaults (paper sizes extended down). No published baseline.
+    "E_F": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                step5_reml_bins=True, pool_cap=100),
 }
 
 CELLS = ["h2_050_q005", "h2_080_q005"]
