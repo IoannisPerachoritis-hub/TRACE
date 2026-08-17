@@ -901,6 +901,80 @@ def _bin_select_pseudo_qtns(
     return sorted(selected)
 
 
+def _step5_reml_bin_select(pvals, geno_std, chroms, positions, X_fixed, y,
+                           bin_sizes, topn_grid, exclude_idxs=None, diag=None):
+    """Published FarmCPU Step 5 (Liu et al. 2016): REML-optimised
+    (bin_size x top_N) pseudo-QTN selection.
+
+    For each (bin_size, top_N): take the minimum-p marker in each occupied
+    genomic bin (no significance gate), rank those bin representatives by p,
+    keep the top_N; build ``K = Z Zᵀ / m`` from the standardised representative
+    genotypes and fit the paper's random-effect model ``y = Xβ + u + e``
+    (X = intercept + PCs, fixed; u ~ N(0, K σ²g)) by REML.  Select the
+    (bin_size, top_N) with the minimum REML deviance (nLL); that set is the
+    candidate pool for validation.
+
+    ``X_fixed`` must be full column rank and constant across grid points, so the
+    REML nLL is comparable for model selection.  K is built via fastlmm's
+    ``setG`` (SVD of the low-rank genotype block), which drops null directions
+    and so tolerates the panel's duplicate-genotype rank deficiency.
+    """
+    from fastlmm.inference.lmm import LMM  # lazy: only when step5 is enabled
+
+    chroms = np.asarray(chroms, str)
+    positions = np.asarray(positions, int)
+    pvals = np.asarray(pvals, float)
+    y = np.asarray(y, float).reshape(-1)
+    excl = set(int(i) for i in (exclude_idxs or []))
+
+    # Bin representatives depend only on bin_size (min-p per occupied bin).
+    # Iterate markers in ascending-p order so the first seen per (chr, bin) is
+    # its representative; dict insertion order then keeps reps p-ranked.
+    order = np.argsort(pvals, kind="mergesort").tolist()
+    reps_by_size = {}
+    for bs in bin_sizes:
+        bs = int(bs)
+        seen = set()
+        reps = []
+        for i in order:
+            if i in excl:
+                continue
+            key = (chroms[i], positions[i] // bs)
+            if key not in seen:
+                seen.add(key)
+                reps.append(i)
+        reps_by_size[bs] = reps
+
+    best = None  # (nLL, bin_size, top_N, reps)
+    for bs in bin_sizes:
+        reps_all = reps_by_size[int(bs)]
+        for topn in topn_grid:
+            reps = reps_all[:int(topn)]
+            if not reps:
+                continue
+            Z = np.asarray(geno_std[:, reps], float)
+            try:
+                lmm = LMM()
+                lmm.setG(G0=Z / np.sqrt(len(reps)))  # K = Z Zᵀ / len(reps)
+                lmm.setX(X_fixed)
+                lmm.sety(y)
+                nLL = float(lmm.findH2(REML=True)["nLL"])
+            except Exception:  # record nothing; a failed grid point is skipped
+                continue
+            if not np.isfinite(nLL):
+                continue
+            if best is None or nLL < best[0]:
+                best = (nLL, int(bs), int(topn), reps)
+
+    if diag is not None:
+        diag["n_sig_markers"] = int(np.sum(np.isfinite(pvals) & (pvals < 0.01)))
+        diag["bin_contrib"] = {int(b): len(reps_by_size[int(b)]) for b in bin_sizes}
+        diag["step5_bin_size"] = best[1] if best else None
+        diag["step5_top_n"] = best[2] if best else 0
+        diag["step5_nll"] = best[0] if best else float("nan")
+    return best[3] if best else []
+
+
 def _optimize_pseudo_qtns_mlm(
     candidate_idxs, geno_imputed, y_vec, iid, sid,
     chroms_num, positions, covar_reader, K0,
@@ -1045,6 +1119,11 @@ def run_farmcpu(
     selection_kinship="global",
     carry_validated_set=False,
     pool_cap=None,
+    step5_reml_bins=False,
+    step5_bin_sizes=(50_000, 100_000, 500_000, 5_000_000, 50_000_000),
+    step5_topn_grid=(10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+    pqtn_bound=None,
+    candidate_p_gate=None,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1098,6 +1177,21 @@ def run_farmcpu(
         Cap on the candidate pool sent to MLM validation, decoupled from
         ``max_pseudo_qtns``.  None (default) preserves current behaviour
         (``max_pseudo_qtns * 2``).
+    step5_reml_bins : bool
+        When True, replace TRACE's fixed 3-bin candidate selection with the
+        published FarmCPU Step 5: REML-optimised ``(bin_size x top_N)`` grid
+        selection (``_step5_reml_bin_select``).  Default False = current
+        behaviour.  Opt-in pilot arm (default off).
+    step5_bin_sizes, step5_topn_grid : tuples
+        The Step 5 grid (bin sizes in bp; top_N = number of bin representatives
+        kept as pseudo-QTNs).  Only used when ``step5_reml_bins``.
+    pqtn_bound : int or None
+        Per-iteration acceptance bound on the validated pseudo-QTN set.  None =
+        current ``max_pseudo_qtns``; under ``step5_reml_bins`` None defaults to
+        the published ``round(n / log10(n))``.
+    candidate_p_gate : float or None
+        Overrides ``p_threshold`` for the (non-step5) bin candidate gate.  None =
+        current behaviour.  Step 5 selection is gate-free by construction.
 
     Returns
     -------
@@ -1189,6 +1283,23 @@ def run_farmcpu(
     # global K0, i.e. current behaviour).
     sel_K_by_chr = K_by_chr if selection_kinship == "loco" else None
 
+    # ── Step 5 (published FarmCPU) setup ────────────────────────────────
+    # X_fixed = intercept + PCs (fixed effects for the REM), constant across
+    # the (bin_size x top_N) grid so REML deviances are comparable.
+    if base_cov is not None:
+        _X_fixed = np.column_stack([np.ones((n, 1)), base_cov])
+    else:
+        _X_fixed = np.ones((n, 1))
+    # Acceptance bound: published Step 5 uses round(n/log10(n)); else current.
+    if pqtn_bound is not None:
+        _accept_bound = int(pqtn_bound)
+    elif step5_reml_bins:
+        _accept_bound = int(round(n / np.log10(n)))
+    else:
+        _accept_bound = max_pseudo_qtns
+    # Candidate p-gate (non-step5 path): override p_threshold when set.
+    _cand_p = candidate_p_gate if candidate_p_gate is not None else p_threshold
+
     break_site = "cap_exhausted"  # §4: overwritten by whichever break fires
     n_pruned_collinear = 0
     for iteration in range(int(max_iterations)):
@@ -1206,10 +1317,29 @@ def run_farmcpu(
 
         # Step 2: Bin-select candidate pseudo-QTNs
         _iter_diag = {}  # §4 funnel: filled by the two helpers this iteration
-        candidates = _bin_select_pseudo_qtns(
-            pvals, chroms, positions, bin_sizes, p_threshold,
-            exclude_idxs=pseudo_qtns, diag=_iter_diag,
-        )
+        if step5_reml_bins:
+            # Published Step 5: REML-optimised (bin_size x top_N) selection.
+            # Step-7 stop rule (FarmCPU p.threshold): once pseudo-QTNs are in
+            # play, stop if no marker survives 1% Bonferroni -- nothing new to
+            # condition on.  Iteration 0 ALWAYS builds the pool, so the pilot's
+            # iteration-1 pool-membership metric is defined even at low power
+            # (the pool is the endpoint; gating iter 0 on genome-wide sig would
+            # discard exactly the marginally-weak, jointly-informative markers
+            # this pilot exists to recover -- D-97).
+            if iteration >= 1 and not np.any(np.isfinite(pvals) & (pvals < 0.01 / m)):
+                converged = True
+                break_site = "no_sig_1pct"
+                break
+            candidates = _step5_reml_bin_select(
+                pvals, geno_std, chroms, positions, _X_fixed, y_vec,
+                step5_bin_sizes, step5_topn_grid,
+                exclude_idxs=pseudo_qtns, diag=_iter_diag,
+            )
+        else:
+            candidates = _bin_select_pseudo_qtns(
+                pvals, chroms, positions, bin_sizes, _cand_p,
+                exclude_idxs=pseudo_qtns, diag=_iter_diag,
+            )
 
         if not candidates:
             converged = True
@@ -1225,7 +1355,7 @@ def run_farmcpu(
         new_pseudo_qtns = _optimize_pseudo_qtns_mlm(
             all_candidates, geno_imputed, y_vec, iid, sid,
             chroms_num, positions, covar_reader, K0,
-            p_threshold, max_pseudo_qtns=max_pseudo_qtns,
+            p_threshold, max_pseudo_qtns=_accept_bound,
             pvals=pvals,
             chroms_str=chroms, K_by_chr=sel_K_by_chr,
             diag=_iter_diag,
