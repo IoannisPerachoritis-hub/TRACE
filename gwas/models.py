@@ -853,7 +853,7 @@ def _nested_f_test(sse0, sse1, df0, df1):
 
 def _bin_select_pseudo_qtns(
     pvals, chroms, positions, bin_sizes, p_threshold,
-    exclude_idxs=None,
+    exclude_idxs=None, diag=None,
 ):
     """
     Select candidate pseudo-QTNs by binning significant SNPs.
@@ -871,11 +871,17 @@ def _bin_select_pseudo_qtns(
         sig_mask[np.array(exclude_idxs, int)] = False
 
     sig_idx = np.where(sig_mask)[0]
+    if diag is not None:  # §4 funnel: markers entering binning this iteration
+        diag["n_sig_markers"] = int(sig_idx.size)
     if sig_idx.size == 0:
+        if diag is not None:
+            diag["bin_contrib"] = {int(b): 0 for b in bin_sizes}
         return []
 
     selected = set()
+    _bin_contrib = {}  # §4: unique candidates each bin size adds (union order)
     for bin_size in bin_sizes:
+        _before = len(selected)
         for ch in np.unique(chroms[sig_idx]):
             ch_mask = (chroms[sig_idx] == ch)
             ch_idx = sig_idx[ch_mask]
@@ -888,7 +894,10 @@ def _bin_select_pseudo_qtns(
                 in_bin = (bins == b)
                 best_local = int(ch_idx[in_bin][np.argmin(ch_pvals[in_bin])])
                 selected.add(best_local)
+        _bin_contrib[int(bin_size)] = len(selected) - _before
 
+    if diag is not None:
+        diag["bin_contrib"] = _bin_contrib
     return sorted(selected)
 
 
@@ -900,6 +909,7 @@ def _optimize_pseudo_qtns_mlm(
     pvals=None,
     chroms_str=None,
     K_by_chr=None,
+    diag=None,
 ):
     """
     Validate pseudo-QTN candidates via MLM forward selection.
@@ -913,6 +923,8 @@ def _optimize_pseudo_qtns_mlm(
     """
     candidate_idxs = list(candidate_idxs)
     if not candidate_idxs:
+        if diag is not None:  # §4 funnel: nothing entered validation
+            diag.update(n_pool_truncated=0, n_accepted=0, n_exceptions=0)
         return []
 
     # Sort candidates by OLS p-value (best first) and cap.
@@ -923,6 +935,7 @@ def _optimize_pseudo_qtns_mlm(
         )
     if len(candidate_idxs) > max_pseudo_qtns * 2:
         candidate_idxs = candidate_idxs[:max_pseudo_qtns * 2]
+    _n_pool_truncated = len(candidate_idxs)  # §4: pool size after the 2x cap
 
     pheno_val = np.asarray(y_vec, float)
     if pheno_val.ndim == 1:
@@ -938,6 +951,7 @@ def _optimize_pseudo_qtns_mlm(
 
     # Forward selection: accepted pseudo-QTNs accumulate into covariates
     accepted = []
+    _n_exceptions = 0  # §4: candidates skipped by the except branch below
     geno_std = _standardize_genotypes_impl(geno_imputed)
 
     for test_idx in candidate_idxs:
@@ -998,12 +1012,16 @@ def _optimize_pseudo_qtns_mlm(
                 accepted.append(test_idx)
         except Exception as exc:
             import logging
+            _n_exceptions += 1  # §4 funnel
             logging.debug("pseudo-QTN %s skipped: %s", sid[test_idx], exc)
             continue
 
         if len(accepted) >= max_pseudo_qtns:
             break
 
+    if diag is not None:  # §4 funnel counters (out-param, no return-shape change)
+        diag.update(n_pool_truncated=_n_pool_truncated,
+                    n_accepted=len(accepted), n_exceptions=_n_exceptions)
     return accepted
 
 
@@ -1159,6 +1177,8 @@ def run_farmcpu(
     # global K0, i.e. current behaviour).
     sel_K_by_chr = K_by_chr if selection_kinship == "loco" else None
 
+    break_site = "cap_exhausted"  # §4: overwritten by whichever break fires
+    n_pruned_collinear = 0
     for iteration in range(int(max_iterations)):
         if verbose:
             progress_placeholder.info(
@@ -1173,13 +1193,15 @@ def run_farmcpu(
                                      covar_reader=covar_current)
 
         # Step 2: Bin-select candidate pseudo-QTNs
+        _iter_diag = {}  # §4 funnel: filled by the two helpers this iteration
         candidates = _bin_select_pseudo_qtns(
             pvals, chroms, positions, bin_sizes, p_threshold,
-            exclude_idxs=pseudo_qtns,
+            exclude_idxs=pseudo_qtns, diag=_iter_diag,
         )
 
         if not candidates:
             converged = True
+            break_site = "no_candidates"  # §4
             break
 
         # Step 3: Merge candidates with existing pseudo-QTNs, then
@@ -1194,16 +1216,26 @@ def run_farmcpu(
             p_threshold, max_pseudo_qtns=max_pseudo_qtns,
             pvals=pvals,
             chroms_str=chroms, K_by_chr=sel_K_by_chr,
+            diag=_iter_diag,
         )
 
         if not new_pseudo_qtns:
             converged = True
+            break_site = "none_validated"  # §4
             break
 
+        # §4 funnel — note: n_iterations = len(iteration_log) UNDERCOUNTS loop
+        # passes, because this append is after the no_candidates + none_validated
+        # breaks (which exit earlier and never log). break_site (in
+        # convergence_info) is the authoritative termination reason.
         iteration_log.append({
             "iteration": iteration + 1,
             "n_candidates": len(candidates),
+            "n_candidates_binned": len(candidates),
+            "n_pool_after_merge": len(all_candidates),
             "n_pseudo_qtns": len(new_pseudo_qtns),
+            **_iter_diag,  # n_sig_markers, bin_contrib, n_pool_truncated,
+                           # n_accepted, n_exceptions
         })
 
         # Step 4: Check convergence (exact match or Jaccard > 0.8).
@@ -1217,12 +1249,14 @@ def run_farmcpu(
             pseudo_qtns = new_pseudo_qtns
         if set(new_pseudo_qtns) == set(prev_pseudo_qtns):
             converged = True
+            break_site = "exact_match"  # §4
             break
         if prev_pseudo_qtns:
             _inter = len(set(new_pseudo_qtns) & set(prev_pseudo_qtns))
             _union = len(set(new_pseudo_qtns) | set(prev_pseudo_qtns))
             if _union > 0 and _inter / _union > 0.8:
                 converged = True
+                break_site = "jaccard"  # §4
                 break
 
         pseudo_qtns = new_pseudo_qtns
@@ -1255,6 +1289,7 @@ def run_farmcpu(
                 "%d -> %d pseudo-QTNs.", len(_drop), len(pseudo_qtns), len(kept),
             )
             pseudo_qtns = kept
+            n_pruned_collinear = len(_drop)  # §4
 
     # ── Final scan ───────────────────────────────────────────────────
     covar_final = _build_covar(pseudo_qtns)
@@ -1374,6 +1409,8 @@ def run_farmcpu(
         "converged": converged,
         "n_pseudo_qtns": len(pseudo_qtns),
         "log": iteration_log,
+        "break_site": break_site,                   # §4: authoritative reason
+        "n_pruned_collinear": n_pruned_collinear,   # §4
     }
 
     if verbose and progress_placeholder is not None:
