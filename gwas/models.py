@@ -910,6 +910,7 @@ def _optimize_pseudo_qtns_mlm(
     chroms_str=None,
     K_by_chr=None,
     diag=None,
+    pool_cap=None,
 ):
     """
     Validate pseudo-QTN candidates via MLM forward selection.
@@ -933,9 +934,10 @@ def _optimize_pseudo_qtns_mlm(
             candidate_idxs,
             key=lambda i: float(pvals[i]) if np.isfinite(pvals[i]) else 1.0,
         )
-    if len(candidate_idxs) > max_pseudo_qtns * 2:
-        candidate_idxs = candidate_idxs[:max_pseudo_qtns * 2]
-    _n_pool_truncated = len(candidate_idxs)  # §4: pool size after the 2x cap
+    _cap = pool_cap if pool_cap is not None else max_pseudo_qtns * 2
+    if len(candidate_idxs) > _cap:
+        candidate_idxs = candidate_idxs[:_cap]
+    _n_pool_truncated = len(candidate_idxs)  # §4: pool size after the cap
 
     pheno_val = np.asarray(y_vec, float)
     if pheno_val.ndim == 1:
@@ -1042,6 +1044,7 @@ def run_farmcpu(
     use_loco=True,
     selection_kinship="global",
     carry_validated_set=False,
+    pool_cap=None,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1091,6 +1094,10 @@ def run_farmcpu(
         convergence checks, so a Jaccard/exact break carries it into the
         prune + final scan.  Default False preserves current behaviour
         (a Jaccard break keeps the previous iteration's set).
+    pool_cap : int or None
+        Cap on the candidate pool sent to MLM validation, decoupled from
+        ``max_pseudo_qtns``.  None (default) preserves current behaviour
+        (``max_pseudo_qtns * 2``).
 
     Returns
     -------
@@ -1222,6 +1229,7 @@ def run_farmcpu(
             pvals=pvals,
             chroms_str=chroms, K_by_chr=sel_K_by_chr,
             diag=_iter_diag,
+            pool_cap=pool_cap,
         )
 
         if not new_pseudo_qtns:
