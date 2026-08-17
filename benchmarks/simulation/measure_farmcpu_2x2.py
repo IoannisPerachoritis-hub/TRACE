@@ -100,16 +100,50 @@ def _load_sim(sim_data_dir):
     return geno, snp_map, sample_ids
 
 
+def _determinism_check(old_results, new_results, rep_dir):
+    """Compare a recomputed results.csv to the prior one (work order §3).
+
+    The §1/§4 instrumentation is additive logging and must not move a p-value, so
+    recomputation has to reproduce the prior p-values to float-summation noise.
+    Returns a one-row dict; the caller enforces the gate.
+    """
+    o = old_results[["SNP", "PValue"]].rename(columns={"PValue": "p_old"})
+    n = new_results[["SNP", "PValue"]].rename(columns={"PValue": "p_new"})
+    m = o.merge(n, on="SNP", how="outer")
+    po = m["p_old"].to_numpy(dtype=float)
+    pn = m["p_new"].to_numpy(dtype=float)
+    dp = np.abs(po - pn)
+    finite = np.isfinite(dp)
+    denom = np.minimum(np.abs(po), np.abs(pn))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rel = np.where(denom > 0, dp / denom, 0.0)
+    top_old = set(old_results.nsmallest(100, "PValue")["SNP"])
+    top_new = set(new_results.nsmallest(100, "PValue")["SNP"])
+    return {
+        "cell": rep_dir.parent.name,
+        "rep": int(rep_dir.name.split("_")[-1]),
+        "n_snps": int(len(m)),
+        "max_abs_dp": float(np.nanmax(dp[finite])) if finite.any() else 0.0,
+        "max_rel_dp": float(np.nanmax(rel[finite])) if finite.any() else 0.0,
+        "n_differing": int((dp[finite] > 0).sum()),
+        "top100_set_identical": bool(top_old == top_new),
+    }
+
+
 def _run_one(rep_dir, config_name, cfg, geno, snp_map, sample_ids, precomputed,
-             n_pcs, force):
+             n_pcs, force, det_path=None):
     """Run (or load cached) one config on one rep. Returns (results_df, timing)."""
     out_dir = rep_dir / f"farmcpu_2x2_{config_name}"
     res_path = out_dir / "results.csv"
     tim_path = out_dir / "timing.json"
     if res_path.exists() and tim_path.exists() and not force:
-        results = pd.read_csv(res_path)
         timing = json.loads(tim_path.read_text())
-        return results, timing
+        if "break_site" in timing:           # fully instrumented (last payload key) -> reuse
+            return pd.read_csv(res_path), timing
+        # else: fall through and recompute so the full §1/§4 payload is written
+
+    # §3 determinism gate: capture the prior p-values BEFORE recompute + overwrite.
+    old_results = pd.read_csv(res_path) if res_path.exists() else None
 
     pheno_df = pd.read_csv(rep_dir / "phenotype.csv")
     y = pheno_df["SimTrait"].values.astype(np.float32)
@@ -120,6 +154,20 @@ def _run_one(rep_dir, config_name, cfg, geno, snp_map, sample_ids, precomputed,
         selection_kinship=cfg["selection_kinship"],
         carry_validated_set=cfg["carry_validated_set"],
     )
+    # §3: additive logging is not allowed to move a p-value. The recompute must
+    # reproduce the prior results.csv. Log the check (incrementally, so it
+    # survives a mid-run stop) and STOP loudly on drift.
+    if old_results is not None and det_path is not None:
+        chk = _determinism_check(old_results, results, rep_dir)
+        pd.DataFrame([chk]).to_csv(
+            det_path, mode="a", header=not det_path.exists(), index=False)
+        if chk["max_rel_dp"] > 1e-6 or not chk["top100_set_identical"]:
+            raise RuntimeError(
+                f"DETERMINISM GATE FAILED at {chk['cell']}/rep_{chk['rep']:03d}: "
+                f"max_abs_dp={chk['max_abs_dp']:.3e} max_rel_dp={chk['max_rel_dp']:.3e} "
+                f"top100_identical={chk['top100_set_identical']} -- STOP (work order §3)."
+            )
+
     out_dir.mkdir(parents=True, exist_ok=True)
     results[["SNP", "Chr", "Pos", "PValue"]].to_csv(res_path, index=False)
     tim_path.write_text(json.dumps(timing))
@@ -175,6 +223,9 @@ def main():
         precomputed = None
 
     perrep_rows = []
+    det_path = sim_summary / "farmcpu_determinism_check.csv"
+    if not args.eval_only:
+        det_path.unlink(missing_ok=True)  # fresh determinism log per run (§3)
     for config_name in args.configs:  # A_F first -> gate checkable early
         cfg = CONFIGS[config_name]
         for cell in args.cells:
@@ -197,6 +248,7 @@ def main():
                     results, timing = _run_one(
                         rep_dir, config_name, cfg, geno, snp_map, sample_ids,
                         precomputed, args.n_pcs, args.force,
+                        det_path=det_path,
                     )
                 cls = classify_detections(results, truth, snp_map, threshold,
                                           window_kb=500)
@@ -217,6 +269,13 @@ def main():
                 done += 1
             dt = time.perf_counter() - t_cell
             print(f"  [{config_name} / {cell}] {done} reps in {dt:.0f}s")
+
+    if det_path.exists():
+        _det = pd.read_csv(det_path)
+        print(f"\ndeterminism (§3) -> {det_path}  ({len(_det)} recomputed reps; "
+              f"worst max_abs_dp={_det['max_abs_dp'].max():.3e}, "
+              f"worst max_rel_dp={_det['max_rel_dp'].max():.3e}, "
+              f"all top100 identical={bool(_det['top100_set_identical'].all())})")
 
     perrep = pd.DataFrame(perrep_rows)
     perrep.to_csv(perrep_path, index=False)

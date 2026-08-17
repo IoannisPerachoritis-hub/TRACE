@@ -206,7 +206,7 @@ def run_farmcpu_gwas(
             geno_imp[mask, j] = col_means[j]
 
     t0 = time.perf_counter()
-    farmcpu_df, _pseudo_qtn_table, convergence_info = run_farmcpu(
+    farmcpu_df, pseudo_qtn_table, convergence_info = run_farmcpu(
         geno_imputed=geno_imp,
         sid=sid,
         chroms=chroms,
@@ -229,6 +229,13 @@ def run_farmcpu_gwas(
         "n_pseudo_qtns": convergence_info["n_pseudo_qtns"],
         "n_iterations": convergence_info["n_iterations"],
         "converged": convergence_info["converged"],
+        # Additive (work order §1): pseudo-QTN identities + per-iteration funnel.
+        # to_json -> json.loads makes numpy scalars JSON-native, so the existing
+        # json.dumps(timing) / json.dump(timing) serialisation paths are unchanged.
+        "pseudo_qtns": json.loads(pseudo_qtn_table.to_json(orient="records")),
+        "iteration_log": convergence_info.get("log", []),
+        "break_site": convergence_info.get("break_site"),                    # §4
+        "n_pruned_collinear": convergence_info.get("n_pruned_collinear", 0),  # §4
     }
     return farmcpu_df, timing
 
