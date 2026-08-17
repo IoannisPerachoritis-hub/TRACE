@@ -165,9 +165,7 @@ def _run_one(rep_dir, config_name, cfg, geno, snp_map, sample_ids, precomputed,
     results, timing = run_farmcpu_gwas(
         geno, snp_map, sample_ids, y, precomputed,
         n_pcs=n_pcs, use_loco=True,  # 2x2 fixes use_loco=True; the axes are the knobs
-        final_scan=cfg["final_scan"],
-        selection_kinship=cfg["selection_kinship"],
-        carry_validated_set=cfg["carry_validated_set"],
+        **cfg,  # selection_kinship/final_scan/carry_validated_set (+ E_F: step5_reml_bins/pool_cap)
     )
     # §3: additive logging is not allowed to move a p-value. The recompute must
     # reproduce the prior results.csv. Log the check (incrementally, so it
