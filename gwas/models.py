@@ -1022,6 +1022,11 @@ def _optimize_pseudo_qtns_mlm(
     if diag is not None:  # §4 funnel counters (out-param, no return-shape change)
         diag.update(n_pool_truncated=_n_pool_truncated,
                     n_accepted=len(accepted), n_exceptions=_n_exceptions)
+        # pool-membership test: truncated pool identities (OLS-p rank order) +
+        # each candidate's accept/reject outcome, for the validation-vs-generation gate.
+        _acc_set = set(accepted)
+        diag["pool_snps"] = [str(sid[i]) for i in candidate_idxs]
+        diag["pool_accepted"] = [bool(i in _acc_set) for i in candidate_idxs]
     return accepted
 
 
