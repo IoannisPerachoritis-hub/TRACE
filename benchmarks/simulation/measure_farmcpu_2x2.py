@@ -146,9 +146,10 @@ def _run_one(rep_dir, config_name, cfg, geno, snp_map, sample_ids, precomputed,
     tim_path = out_dir / "timing.json"
     if res_path.exists() and tim_path.exists() and not force:
         timing = json.loads(tim_path.read_text())
-        if "break_site" in timing:           # fully instrumented (last payload key) -> reuse
+        il = timing.get("iteration_log")
+        if il and "pool_snps" in il[0]:      # pool-membership payload present -> reuse
             return pd.read_csv(res_path), timing
-        # else: fall through and recompute so the full §1/§4 payload is written
+        # else: fall through and recompute so the full §1/§4 + pool payload is written
 
     # §3 determinism gate: capture the prior p-values BEFORE recompute + overwrite.
     old_results = pd.read_csv(res_path) if res_path.exists() else None
