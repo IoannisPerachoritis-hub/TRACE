@@ -168,6 +168,12 @@ def run_farmcpu_gwas(
     final_scan: str = "mlm",
     selection_kinship: str = "global",
     carry_validated_set: bool = False,
+    step5_reml_bins: bool = False,
+    step5_bin_sizes: tuple = (50_000, 100_000, 500_000, 5_000_000, 50_000_000),
+    step5_topn_grid: tuple = (10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+    pool_cap=None,
+    pqtn_bound=None,
+    candidate_p_gate=None,
 ) -> tuple[pd.DataFrame, dict]:
     """Run FarmCPU on a single phenotype.
 
@@ -221,6 +227,12 @@ def run_farmcpu_gwas(
         final_scan=final_scan,
         selection_kinship=selection_kinship,
         carry_validated_set=carry_validated_set,
+        step5_reml_bins=step5_reml_bins,
+        step5_bin_sizes=step5_bin_sizes,
+        step5_topn_grid=step5_topn_grid,
+        pool_cap=pool_cap,
+        pqtn_bound=pqtn_bound,
+        candidate_p_gate=candidate_p_gate,
     )
     assoc_time = time.perf_counter() - t0
 
