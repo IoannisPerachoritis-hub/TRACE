@@ -81,6 +81,17 @@ CONFIGS = {
     # are farmcpu_2x2_E_F_singlepass (renamed from the pre-substitution E_F run).
     "E_F_singlepass": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
                            step5_reml_bins=True, pool_cap=100),
+    # Retention sweep on the multi-pass arm: pqtn_bound=10/15/20 (the range that
+    # actually binds at n=165 -- the published 74 is reached in 0/300 reps, so
+    # retention 11-15 is emergent). A SAMPLE-SIZE-MOTIVATED DEVIATION from the
+    # paper's round(n/log10(n))=74, testing whether a retention cap holds the
+    # capture gain while returning the q005 lambdaGC deflation toward 1.
+    "E_F_b10": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                    step5_reml_bins=True, pool_cap=100, step5_substitution=True, pqtn_bound=10),
+    "E_F_b15": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                    step5_reml_bins=True, pool_cap=100, step5_substitution=True, pqtn_bound=15),
+    "E_F_b20": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                    step5_reml_bins=True, pool_cap=100, step5_substitution=True, pqtn_bound=20),
 }
 
 CELLS = ["h2_050_q005", "h2_080_q005"]
