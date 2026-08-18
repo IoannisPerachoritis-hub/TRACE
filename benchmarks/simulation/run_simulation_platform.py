@@ -178,6 +178,7 @@ def run_farmcpu_gwas(
     step5_substitution: bool = False,
     step5_skip_validation: bool = False,
     step5_prune_in_loop: bool = False,
+    step5_reselect: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Run FarmCPU on a single phenotype.
 
@@ -241,6 +242,7 @@ def run_farmcpu_gwas(
         step5_substitution=step5_substitution,
         step5_skip_validation=step5_skip_validation,
         step5_prune_in_loop=step5_prune_in_loop,
+        step5_reselect=step5_reselect,
     )
     assoc_time = time.perf_counter() - t0
 

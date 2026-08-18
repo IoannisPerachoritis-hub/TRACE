@@ -1159,6 +1159,7 @@ def run_farmcpu(
     step5_substitution=False,
     step5_skip_validation=False,
     step5_prune_in_loop=False,
+    step5_reselect=False,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1259,6 +1260,18 @@ def run_farmcpu(
         PRE-prune (Step-5 acceptance); ``n_pseudo_qtns`` is POST-prune (Step 6),
         and ``n_pruned_collinear`` becomes CUMULATIVE across iterations.
         Default False.
+    step5_reselect : bool
+        Canonical FarmCPU Step 7 as per-iteration RE-SELECTION rather than
+        accumulation.  When True (only meaningful with ``step5_reml_bins``): the
+        Step-5 bin selection is NOT told to exclude the current pseudo-QTNs
+        (``exclude_idxs=None``), so an incumbent persists only if it re-earns a
+        bin, and the new set is the re-selection ALONE (no union with the prior
+        set).  This fixes the spec error where "incumbents persist" was read as
+        accumulate: under the union+exclude default an incumbent is never
+        re-evaluated (immortal) and retention ratchets to ``_accept_bound``.
+        With re-selection, Step 7's exact-set equality means "re-selection
+        reproduced the same set" -- the paper's actual fixed point.  Default
+        False.
 
     Returns
     -------
@@ -1425,7 +1438,7 @@ def run_farmcpu(
             candidates = _step5_reml_bin_select(
                 pvals, geno_std, chroms, positions, _X_fixed, y_vec,
                 step5_bin_sizes, step5_topn_grid,
-                exclude_idxs=pseudo_qtns, diag=_iter_diag,
+                exclude_idxs=(None if step5_reselect else pseudo_qtns), diag=_iter_diag,
             )
         else:
             candidates = _bin_select_pseudo_qtns(
@@ -1443,7 +1456,11 @@ def run_farmcpu(
         # candidate must be significant under kinship + PCs + all
         # previously accepted pseudo-QTNs (approximates GAPIT3's
         # joint REML pruning).
-        all_candidates = sorted(set(candidates + pseudo_qtns))
+        # Canonical re-selection (step5_reselect): the new set is the Step-5
+        # re-selection ALONE -- no union with the prior pseudo-QTNs, so an
+        # incumbent persists only if it re-earned a bin (exclude_idxs=None above).
+        all_candidates = (sorted(set(candidates)) if step5_reselect
+                          else sorted(set(candidates + pseudo_qtns)))
         if step5_reml_bins and step5_skip_validation:
             # Canonical FarmCPU Step 5: the minimum-REML (bin_size x top_N) set
             # IS the pseudo-QTN set -- the paper specifies no per-candidate
