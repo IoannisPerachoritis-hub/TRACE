@@ -175,6 +175,7 @@ def run_farmcpu_gwas(
     pqtn_bound=None,
     candidate_p_gate=None,
     step5_warm_start: bool = False,
+    step5_substitution: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Run FarmCPU on a single phenotype.
 
@@ -235,6 +236,7 @@ def run_farmcpu_gwas(
         pqtn_bound=pqtn_bound,
         candidate_p_gate=candidate_p_gate,
         step5_warm_start=step5_warm_start,
+        step5_substitution=step5_substitution,
     )
     assoc_time = time.perf_counter() - t0
 

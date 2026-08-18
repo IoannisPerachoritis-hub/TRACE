@@ -1125,6 +1125,7 @@ def run_farmcpu(
     pqtn_bound=None,
     candidate_p_gate=None,
     step5_warm_start=False,
+    step5_substitution=False,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1199,6 +1200,12 @@ def run_farmcpu(
         significant terminates with 0 pseudo-QTNs (the plain marginal scan).
         True = WARM: iteration 0 always builds the pool; the stop applies only
         from iteration >= 1.  A measured arm, not a default.
+    step5_substitution : bool
+        Published FarmCPU Step 3.  When True, each pseudo-QTN (degenerate in the
+        scan, being its own covariate) carries the most significant p-value it
+        achieved over iterations (the paper's row-wise minimum), so the Step-4
+        1%-Bonf stop reflects real signal rather than the degenerate self-test.
+        Without it the loop terminates after one pass.  Default False.
 
     Returns
     -------
@@ -1309,6 +1316,7 @@ def run_farmcpu(
 
     break_site = "cap_exhausted"  # §4: overwritten by whichever break fires
     n_pruned_collinear = 0
+    pval_running_min = None  # Step 3 substitution: row-wise min p over iterations
     for iteration in range(int(max_iterations)):
         if verbose:
             progress_placeholder.info(
@@ -1321,6 +1329,27 @@ def run_farmcpu(
         covar_current = _build_covar(pseudo_qtns)
         pvals = _ols_scan_pvals_fast(geno_imputed, y_vec,
                                      covar_reader=covar_current)
+
+        # Step 3 (published FarmCPU) substitution: a pseudo-QTN is its own
+        # covariate in this scan, so its self-test p-value is degenerate.  Carry
+        # each pseudo-QTN's most significant p over iterations (the paper's
+        # row-wise minimum) so the Step-4 1%-Bonf stop reflects real signal, not
+        # the degenerate self-test.  Update the running min only where the marker
+        # was validly tested (non-pseudo-QTN); keep each pseudo-QTN's prior
+        # (selection) minimum, then substitute it into this scan's vector.
+        if step5_substitution:
+            if pval_running_min is None:
+                pval_running_min = pvals.copy()
+            else:
+                _mask = np.ones(m, bool)
+                if pseudo_qtns:
+                    _mask[np.array(pseudo_qtns, int)] = False
+                pval_running_min[_mask] = np.minimum(pval_running_min[_mask],
+                                                     pvals[_mask])
+            if pseudo_qtns:
+                pvals = pvals.copy()
+                _pq = np.array(pseudo_qtns, int)
+                pvals[_pq] = pval_running_min[_pq]
 
         # Step 2: Bin-select candidate pseudo-QTNs
         _iter_diag = {}  # §4 funnel: filled by the two helpers this iteration
