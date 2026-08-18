@@ -177,6 +177,7 @@ def run_farmcpu_gwas(
     step5_warm_start: bool = False,
     step5_substitution: bool = False,
     step5_skip_validation: bool = False,
+    step5_prune_in_loop: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Run FarmCPU on a single phenotype.
 
@@ -239,6 +240,7 @@ def run_farmcpu_gwas(
         step5_warm_start=step5_warm_start,
         step5_substitution=step5_substitution,
         step5_skip_validation=step5_skip_validation,
+        step5_prune_in_loop=step5_prune_in_loop,
     )
     assoc_time = time.perf_counter() - t0
 
@@ -254,6 +256,8 @@ def run_farmcpu_gwas(
         "iteration_log": convergence_info.get("log", []),
         "break_site": convergence_info.get("break_site"),                    # §4
         "n_pruned_collinear": convergence_info.get("n_pruned_collinear", 0),  # §4
+        # first-entry iteration per surviving pseudo-QTN (incumbency diagnostic)
+        "entry_iterations": convergence_info.get("entry_iterations", {}),
     }
     return farmcpu_df, timing
 

@@ -101,6 +101,15 @@ CONFIGS = {
     "E_F_nogate": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
                        step5_reml_bins=True, pool_cap=100, step5_substitution=True,
                        step5_skip_validation=True),
+    # E_F_nogate_prune = E_F_nogate with the Step-6 collinearity prune moved
+    # INSIDE the loop (after Step 5) -- the 8th-departure fix.  Separates the
+    # null-chr deflation confound: (b1) canonical Step 5 over-selects vs (b2)
+    # TRACE prunes at the wrong point (~77 near-collinear covariates vs n=165 in
+    # each in-loop scan).  q005 cells only.  Jaccard disabled + pvals drift =>
+    # expect more reps at the iteration cap (cap_exhausted).
+    "E_F_nogate_prune": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                             step5_reml_bins=True, pool_cap=100, step5_substitution=True,
+                             step5_skip_validation=True, step5_prune_in_loop=True),
 }
 
 CELLS = ["h2_050_q005", "h2_080_q005"]

@@ -1106,6 +1106,37 @@ def _optimize_pseudo_qtns_mlm(
     return accepted
 
 
+def _prune_collinear_pseudo_qtns(pseudo_qtns, geno_std, pvals):
+    """Step 6 (Liu et al. 2016): drop the weaker (higher-p) member of each
+    r²>0.5 pseudo-QTN pair.  Returns ``(kept_in_original_order, n_dropped)``.
+
+    Pure: no logging, no input mutation.  Extracted verbatim from the post-loop
+    prune so the in-loop (``step5_prune_in_loop``) and post-loop call sites share
+    identical logic.
+    """
+    if len(pseudo_qtns) < 2:
+        return list(pseudo_qtns), 0
+    _pq = np.array(pseudo_qtns)
+    _G_pq = geno_std[:, _pq]
+    _C_pq = np.corrcoef(_G_pq, rowvar=False)
+    _r2_pq = _C_pq ** 2
+    np.fill_diagonal(_r2_pq, 0.0)
+    _drop = set()
+    for i in range(len(_pq)):
+        if i in _drop:
+            continue
+        for j in range(i + 1, len(_pq)):
+            if j in _drop:
+                continue
+            if _r2_pq[i, j] > 0.5:
+                # Drop the one with higher (worse) OLS p-value
+                pi = pvals[_pq[i]] if np.isfinite(pvals[_pq[i]]) else 1.0
+                pj = pvals[_pq[j]] if np.isfinite(pvals[_pq[j]]) else 1.0
+                _drop.add(j if pj >= pi else i)
+    kept = [idx for k_idx, idx in enumerate(_pq) if k_idx not in _drop]
+    return kept, len(_drop)
+
+
 def run_farmcpu(
     geno_imputed, sid, chroms, chroms_num, positions, iid,
     pheno_reader, K0, covar_reader,
@@ -1127,6 +1158,7 @@ def run_farmcpu(
     step5_warm_start=False,
     step5_substitution=False,
     step5_skip_validation=False,
+    step5_prune_in_loop=False,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1216,6 +1248,17 @@ def run_farmcpu(
         directly (truncating by ascending marginal p), incumbents persist
         (Step 7), and the unspecified Jaccard early-exit is disabled (canonical
         stop = exact-set equality or the iteration cap).  Default False.
+    step5_prune_in_loop : bool
+        Move the Step-6 collinearity prune (r²>0.5) INSIDE the iteration loop
+        (after Step 5), so each iteration's covariate set is de-duplicated
+        instead of carrying up to ``_accept_bound`` near-collinear covariates
+        into the FEM scan.  The shipped path prunes once AFTER the loop -- an
+        8th departure from Liu et al., whose order is Step 5 -> 6 -> 7 (loop
+        back to Step 2).  Unconstrained (usable with the validation-gate path
+        too).  Note: ``pool_accepted``/``n_accepted`` in the iteration log stay
+        PRE-prune (Step-5 acceptance); ``n_pseudo_qtns`` is POST-prune (Step 6),
+        and ``n_pruned_collinear`` becomes CUMULATIVE across iterations.
+        Default False.
 
     Returns
     -------
@@ -1327,6 +1370,7 @@ def run_farmcpu(
     break_site = "cap_exhausted"  # §4: overwritten by whichever break fires
     n_pruned_collinear = 0
     pval_running_min = None  # Step 3 substitution: row-wise min p over iterations
+    _entry_iter = {}  # marker idx -> iteration it first entered the pseudo-QTN set
     for iteration in range(int(max_iterations)):
         if verbose:
             progress_placeholder.info(
@@ -1429,6 +1473,28 @@ def run_farmcpu(
                 pool_cap=pool_cap,
             )
 
+        # Step 6 (Liu et al. order 5 -> 6 -> 7): collinearity prune INSIDE the
+        # loop so the next iteration's covariate set is de-duplicated instead of
+        # carrying up to _accept_bound near-collinear covariates into the FEM
+        # scan.  Opt-in; the shipped path prunes once after the loop (8th
+        # departure).  The logged n_pseudo_qtns is POST-prune; pool_accepted
+        # (set above) stays PRE-prune (Step-5 acceptance).
+        if step5_prune_in_loop and len(new_pseudo_qtns) >= 2:
+            _before_prune = list(new_pseudo_qtns)
+            new_pseudo_qtns, _n_drop = _prune_collinear_pseudo_qtns(
+                new_pseudo_qtns, geno_std, pvals)
+            n_pruned_collinear += _n_drop
+            _iter_diag["n_pruned_this_iter"] = _n_drop
+            # incumbency diagnostic: of the drops, how many hit a NEW entrant
+            # (not an incumbent carried from the previous iteration).
+            _dropped = set(_before_prune) - set(new_pseudo_qtns)
+            _iter_diag["n_pruned_new_entrant"] = len(_dropped - set(pseudo_qtns))
+        # entry-index tracking (all Step-5 arms) for the incumbency comparison:
+        # first iteration each surviving marker becomes a pseudo-QTN.
+        if step5_reml_bins:
+            for _ei in new_pseudo_qtns:
+                _entry_iter.setdefault(int(_ei), iteration)
+
         if not new_pseudo_qtns:
             converged = True
             break_site = "none_validated"  # §4
@@ -1474,35 +1540,19 @@ def run_farmcpu(
 
         pseudo_qtns = new_pseudo_qtns
 
-    # ── Prune collinear pseudo-QTNs ─────────────────────────────────
-    # High-LD pairs (r² > 0.5) degrade the final scan as near-
-    # collinear covariates.  Drop the weaker member of each pair.
-    if len(pseudo_qtns) >= 2:
-        _pq = np.array(pseudo_qtns)
-        _G_pq = geno_std[:, _pq]
-        _C_pq = np.corrcoef(_G_pq, rowvar=False)
-        _r2_pq = _C_pq ** 2
-        np.fill_diagonal(_r2_pq, 0.0)
-        _drop = set()
-        for i in range(len(_pq)):
-            if i in _drop:
-                continue
-            for j in range(i + 1, len(_pq)):
-                if j in _drop:
-                    continue
-                if _r2_pq[i, j] > 0.5:
-                    # Drop the one with higher (worse) OLS p-value
-                    pi = pvals[_pq[i]] if np.isfinite(pvals[_pq[i]]) else 1.0
-                    pj = pvals[_pq[j]] if np.isfinite(pvals[_pq[j]]) else 1.0
-                    _drop.add(j if pj >= pi else i)
-        if _drop:
-            kept = [idx for k_idx, idx in enumerate(_pq) if k_idx not in _drop]
+    # ── Step 6: prune collinear pseudo-QTNs (post-loop) ─────────────
+    # High-LD pairs (r² > 0.5) degrade the final scan as near-collinear
+    # covariates.  Drop the weaker member of each pair.  Skipped when the
+    # prune already ran inside the loop (step5_prune_in_loop).
+    if not step5_prune_in_loop and len(pseudo_qtns) >= 2:
+        kept, _n_drop = _prune_collinear_pseudo_qtns(pseudo_qtns, geno_std, pvals)
+        if _n_drop:
             logging.warning(
                 "FarmCPU: dropped %d collinear pseudo-QTN(s) (r2>0.5); "
-                "%d -> %d pseudo-QTNs.", len(_drop), len(pseudo_qtns), len(kept),
+                "%d -> %d pseudo-QTNs.", _n_drop, len(pseudo_qtns), len(kept),
             )
             pseudo_qtns = kept
-            n_pruned_collinear = len(_drop)  # §4
+            n_pruned_collinear = _n_drop  # §4
 
     # ── Final scan ───────────────────────────────────────────────────
     covar_final = _build_covar(pseudo_qtns)
@@ -1625,6 +1675,12 @@ def run_farmcpu(
         "break_site": break_site,                   # §4: authoritative reason
         "n_pruned_collinear": n_pruned_collinear,   # §4
     }
+    if step5_reml_bins:
+        # first-entry iteration per surviving pseudo-QTN (incumbency diagnostic
+        # for the in-loop-vs-post-loop prune comparison).
+        convergence_info["entry_iterations"] = {
+            str(sid[i]): _entry_iter.get(int(i), -1) for i in pseudo_qtns
+        }
 
     if verbose and progress_placeholder is not None:
         status = "converged" if converged else "stopped at max iterations"
