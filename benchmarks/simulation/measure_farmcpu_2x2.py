@@ -110,6 +110,16 @@ CONFIGS = {
     "E_F_nogate_prune": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
                              step5_reml_bins=True, pool_cap=100, step5_substitution=True,
                              step5_skip_validation=True, step5_prune_in_loop=True),
+    # E_F_nogate2 = CANONICAL FarmCPU Step 7 as per-iteration RE-SELECTION: drop
+    # the union carry-over + do NOT exclude incumbents from Step-5 bin selection
+    # (step5_reselect), with the prune in-loop.  Fixes the union spec error where
+    # incumbents were never re-evaluated (immortal) and retention ratcheted to
+    # _accept_bound=74.  Step 7's exact-set equality now means "re-selection
+    # reproduced the same set" (the paper's fixed point).  q005 cells; smoke +
+    # report retention BEFORE any full run.
+    "E_F_nogate2": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                        step5_reml_bins=True, pool_cap=100, step5_substitution=True,
+                        step5_skip_validation=True, step5_prune_in_loop=True, step5_reselect=True),
 }
 
 CELLS = ["h2_050_q005", "h2_080_q005"]
