@@ -92,6 +92,15 @@ CONFIGS = {
                     step5_reml_bins=True, pool_cap=100, step5_substitution=True, pqtn_bound=15),
     "E_F_b20": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
                     step5_reml_bins=True, pool_cap=100, step5_substitution=True, pqtn_bound=20),
+    # E_F_nogate = CANONICAL FarmCPU Step 5: Step 3 substitution + REML bins, with
+    # TRACE's per-candidate MLM validation gate BYPASSED -- the minimum-REML set IS
+    # the pseudo-QTN set (bounded by n/log10(n)=74, truncated by ascending p; the
+    # unspecified Jaccard early-exit disabled). The decision-gate arm: does the
+    # published algorithm deflate null-chr lambdaGC the way the gated arm does, or is
+    # the deflation TRACE's validation gate?
+    "E_F_nogate": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                       step5_reml_bins=True, pool_cap=100, step5_substitution=True,
+                       step5_skip_validation=True),
 }
 
 CELLS = ["h2_050_q005", "h2_080_q005"]

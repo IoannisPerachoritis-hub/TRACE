@@ -1126,6 +1126,7 @@ def run_farmcpu(
     candidate_p_gate=None,
     step5_warm_start=False,
     step5_substitution=False,
+    step5_skip_validation=False,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
@@ -1206,6 +1207,15 @@ def run_farmcpu(
         achieved over iterations (the paper's row-wise minimum), so the Step-4
         1%-Bonf stop reflects real signal rather than the degenerate self-test.
         Without it the loop terminates after one pass.  Default False.
+    step5_skip_validation : bool
+        Canonical FarmCPU Step 5 (only when ``step5_reml_bins``).  When True, the
+        minimum-REML ``(bin_size x top_N)`` set IS the pseudo-QTN set -- the
+        paper specifies NO per-candidate conditional acceptance test between
+        Step 5 and Step 6, so the ``_optimize_pseudo_qtns_mlm`` validation gate
+        is bypassed.  The ``n/log10(n)`` bound is applied to the Step-5 output
+        directly (truncating by ascending marginal p), incumbents persist
+        (Step 7), and the unspecified Jaccard early-exit is disabled (canonical
+        stop = exact-set equality or the iteration cap).  Default False.
 
     Returns
     -------
@@ -1390,15 +1400,34 @@ def run_farmcpu(
         # previously accepted pseudo-QTNs (approximates GAPIT3's
         # joint REML pruning).
         all_candidates = sorted(set(candidates + pseudo_qtns))
-        new_pseudo_qtns = _optimize_pseudo_qtns_mlm(
-            all_candidates, geno_imputed, y_vec, iid, sid,
-            chroms_num, positions, covar_reader, K0,
-            p_threshold, max_pseudo_qtns=_accept_bound,
-            pvals=pvals,
-            chroms_str=chroms, K_by_chr=sel_K_by_chr,
-            diag=_iter_diag,
-            pool_cap=pool_cap,
-        )
+        if step5_reml_bins and step5_skip_validation:
+            # Canonical FarmCPU Step 5: the minimum-REML (bin_size x top_N) set
+            # IS the pseudo-QTN set -- the paper specifies no per-candidate
+            # conditional acceptance test between Step 5 and Step 6.  The bound
+            # (n/log10(n), placed inside Step 5 by the paper) applies here,
+            # truncating by ascending marginal p to keep the most significant
+            # representatives; incumbents persist (Step 7 stops when no NEW
+            # pseudo-QTN is added).
+            new_pseudo_qtns = sorted(
+                all_candidates,
+                key=lambda i: float(pvals[i]) if np.isfinite(pvals[i]) else 1.0,
+            )[:_accept_bound]
+            _acc = set(new_pseudo_qtns)
+            _iter_diag["pool_snps"] = [str(sid[i]) for i in candidates]
+            _iter_diag["pool_accepted"] = [bool(i in _acc) for i in candidates]
+            _iter_diag["n_pool_truncated"] = len(candidates)
+            _iter_diag["n_accepted"] = len(new_pseudo_qtns)
+            _iter_diag["n_exceptions"] = 0
+        else:
+            new_pseudo_qtns = _optimize_pseudo_qtns_mlm(
+                all_candidates, geno_imputed, y_vec, iid, sid,
+                chroms_num, positions, covar_reader, K0,
+                p_threshold, max_pseudo_qtns=_accept_bound,
+                pvals=pvals,
+                chroms_str=chroms, K_by_chr=sel_K_by_chr,
+                diag=_iter_diag,
+                pool_cap=pool_cap,
+            )
 
         if not new_pseudo_qtns:
             converged = True
@@ -1432,7 +1461,10 @@ def run_farmcpu(
             converged = True
             break_site = "exact_match"  # §4
             break
-        if prev_pseudo_qtns:
+        # Jaccard > 0.8 early exit is NOT in the paper; disabled for the
+        # canonical gate-free arm, which stops only on exact-set equality
+        # (above) or the iteration cap (Step 7).
+        if prev_pseudo_qtns and not (step5_reml_bins and step5_skip_validation):
             _inter = len(set(new_pseudo_qtns) & set(prev_pseudo_qtns))
             _union = len(set(new_pseudo_qtns) | set(prev_pseudo_qtns))
             if _union > 0 and _inter / _union > 0.8:
