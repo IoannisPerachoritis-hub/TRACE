@@ -75,6 +75,12 @@ CONFIGS = {
                 step5_reml_bins=True, pool_cap=100, step5_substitution=True),
     "E_F_warm": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
                      step5_reml_bins=True, pool_cap=100, step5_warm_start=True),
+    # E_F_singlepass = Step 5 WITHOUT Step 3 (the pre-substitution arm): the loop
+    # stops after one pass. Kept for the single-pass vs multi-pass contrast (the
+    # evidence that Step 3's absence drove the single-pass behaviour). Its rep dirs
+    # are farmcpu_2x2_E_F_singlepass (renamed from the pre-substitution E_F run).
+    "E_F_singlepass": dict(selection_kinship="global", final_scan="mlm", carry_validated_set=False,
+                           step5_reml_bins=True, pool_cap=100),
 }
 
 CELLS = ["h2_050_q005", "h2_080_q005"]
