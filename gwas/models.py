@@ -901,8 +901,34 @@ def _bin_select_pseudo_qtns(
     return sorted(selected)
 
 
+def _step5_accept_bound(n):
+    """Liu et al. (2016) Step-5 pseudo-QTN ceiling: ``sqrt(n / log10(n))``.
+
+    GAPIT3 computes ``sqrt(n) / sqrt(log10 n)``, algebraically identical for all
+    n.  (TRACE previously used the UN-rooted ``n/log10(n)`` -- the SQUARE of this
+    -- an 8-12x too-permissive bound: 74 vs 9 at n=165, 138 vs 12 at n=350.)
+    """
+    return int(round(np.sqrt(n / np.log10(n))))
+
+
+def _step5_clamp_grid(topn_grid, bound):
+    """Clamp the top-N grid to ``bound`` by MIN-MAPPING (``min(point, bound)``),
+    NOT filtering (``point <= bound``).
+
+    Filtering is EMPTY whenever the grid's minimum exceeds the bound (the default
+    grid's min 10 > bound 9 at n <= ~165); an empty grid makes
+    ``_step5_reml_bin_select`` return ``[]`` -> zero pseudo-QTNs, which reads as a
+    legitimate Step-4 termination rather than an error (a silent wrong answer).
+    Min-mapping instead collapses the grid to the single value ``bound``, reducing
+    Step 5 to bin-size selection alone (correct: searching sizes the model cannot
+    fit is worse than not searching).
+    """
+    return tuple(sorted({min(int(s), int(bound)) for s in topn_grid}))
+
+
 def _step5_reml_bin_select(pvals, geno_std, chroms, positions, X_fixed, y,
-                           bin_sizes, topn_grid, exclude_idxs=None, diag=None):
+                           bin_sizes, topn_grid, exclude_idxs=None, diag=None,
+                           bound=None):
     """Published FarmCPU Step 5 (Liu et al. 2016): REML-optimised
     (bin_size x top_N) pseudo-QTN selection.
 
@@ -926,6 +952,11 @@ def _step5_reml_bin_select(pvals, geno_std, chroms, positions, X_fixed, y,
     pvals = np.asarray(pvals, float)
     y = np.asarray(y, float).reshape(-1)
     excl = set(int(i) for i in (exclude_idxs or []))
+    # Enforce the Step-5 acceptance bound on the grid even if a caller passes an
+    # unclamped grid (defense -- the clamp cannot be bypassed).  MIN-mapping, so
+    # the grid is never emptied (see _step5_clamp_grid).
+    if bound is not None:
+        topn_grid = tuple(sorted({min(int(t), int(bound)) for t in topn_grid}))
 
     # Bin representatives depend only on bin_size (min-p per occupied bin).
     # Iterate markers in ascending-p order so the first seen per (chr, bin) is
@@ -972,6 +1003,11 @@ def _step5_reml_bin_select(pvals, geno_std, chroms, positions, X_fixed, y,
         diag["step5_bin_size"] = best[1] if best else None
         diag["step5_top_n"] = best[2] if best else 0
         diag["step5_nll"] = best[0] if best else float("nan")
+    # Invariant: the selected model size never exceeds the acceptance bound.
+    # (Would have caught the missing-radical defect on the arm's first run.)
+    if bound is not None and best is not None:
+        assert best[2] <= bound, (
+            f"Step-5 selected top_N={best[2]} > acceptance bound {bound}")
     return best[3] if best else []
 
 
@@ -1370,11 +1406,11 @@ def run_farmcpu(
         _X_fixed = np.column_stack([np.ones((n, 1)), base_cov])
     else:
         _X_fixed = np.ones((n, 1))
-    # Acceptance bound: published Step 5 uses round(n/log10(n)); else current.
+    # Acceptance bound: published Step 5 uses round(sqrt(n/log10(n))); else current.
     if pqtn_bound is not None:
         _accept_bound = int(pqtn_bound)
     elif step5_reml_bins:
-        _accept_bound = int(round(n / np.log10(n)))
+        _accept_bound = _step5_accept_bound(n)   # sqrt(n/log10 n) per Liu et al.
     else:
         _accept_bound = max_pseudo_qtns
     # Candidate p-gate (non-step5 path): override p_threshold when set.
@@ -1435,10 +1471,15 @@ def run_farmcpu(
                 converged = True
                 break_site = "no_sig_1pct"
                 break
+            # Clamp the REML top-N grid to the acceptance bound BEFORE selection,
+            # so Step 5 cannot choose a size larger than it will fit (Part 2 of
+            # the bound defect). Min-map (never emptied); bound passed for defense.
+            _clamped_grid = _step5_clamp_grid(step5_topn_grid, _accept_bound)
             candidates = _step5_reml_bin_select(
                 pvals, geno_std, chroms, positions, _X_fixed, y_vec,
-                step5_bin_sizes, step5_topn_grid,
-                exclude_idxs=(None if step5_reselect else pseudo_qtns), diag=_iter_diag,
+                step5_bin_sizes, _clamped_grid,
+                exclude_idxs=(None if step5_reselect else pseudo_qtns),
+                diag=_iter_diag, bound=_accept_bound,
             )
         else:
             candidates = _bin_select_pseudo_qtns(
