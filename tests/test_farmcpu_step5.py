@@ -95,3 +95,58 @@ def test_step5_bin_select_bounded_and_ranked():
         exclude_idxs=[int(signal[0])], diag=diag2,
     )
     assert int(signal[0]) not in reps2
+
+
+def test_step5_accept_bound_has_the_radical():
+    """The Step-5 pseudo-QTN ceiling is sqrt(n/log10(n)), not n/log10(n)."""
+    assert models._step5_accept_bound(165) == 9
+    assert models._step5_accept_bound(166) == 9
+    assert models._step5_accept_bound(350) == 12
+    assert models._step5_accept_bound(100) == 7
+    assert models._step5_accept_bound(1000) == 18
+    assert models._step5_accept_bound(5000) == 37
+    # it is the SQUARE ROOT of the old (buggy) un-rooted bound, not that bound.
+    assert models._step5_accept_bound(165) != int(round(165 / np.log10(165)))  # != 74
+
+
+def test_step5_clamp_grid_min_maps_never_empties():
+    """The grid clamp uses MIN-MAPPING, not filtering: at a bound below the grid's
+    minimum it collapses to (bound,), never to an empty grid (the silent-failure
+    trap a later refactor would 'simplify' back in)."""
+    grid = (10, 20, 30, 40, 50, 60, 70, 80, 90, 100)
+    assert models._step5_clamp_grid(grid, 9) == (9,)       # filter -> ()
+    assert models._step5_clamp_grid(grid, 7) == (7,)       # filter -> ()
+    assert models._step5_clamp_grid(grid, 12) == (10, 12)
+    assert models._step5_clamp_grid(grid, 18) == (10, 18)
+    assert models._step5_clamp_grid(grid, 37) == (10, 20, 30, 37)
+    for bound in (7, 9):                                    # the min-vs-filter proof
+        assert len(models._step5_clamp_grid(grid, bound)) >= 1
+        assert [s for s in grid if s <= bound] == []       # filter WOULD be empty
+
+
+def test_step5_bound_param_clamps_and_holds_invariant():
+    """_step5_reml_bin_select with an UNCLAMPED grid + bound=9 selects top_N<=9
+    (never empty) and the invariant assertion holds -- guards the silent empty."""
+    rng = np.random.default_rng(11)
+    n, m = 165, 400
+    geno_std = rng.standard_normal((n, m))
+    geno_std = (geno_std - geno_std.mean(0)) / geno_std.std(0)
+    chroms = np.repeat([str(c) for c in range(1, 5)], 100).astype(str)
+    positions = np.tile(np.arange(100) * 100_000, 4).astype(int)
+    pvals = rng.uniform(0.02, 1.0, size=m)
+    signal = np.array([5, 40, 120, 205, 260, 310, 350])
+    pvals[signal] = np.logspace(-9, -4, len(signal))
+    y = geno_std[:, signal] @ rng.uniform(0.6, 1.5, len(signal)) + rng.standard_normal(n)
+    X_fixed = np.ones((n, 1))
+
+    diag = {}
+    reps = models._step5_reml_bin_select(
+        pvals, geno_std, chroms, positions, X_fixed, y,
+        bin_sizes=(500_000, 5_000_000, 50_000_000),
+        topn_grid=(10, 20, 30, 40, 50, 60, 70, 80, 90, 100),   # UNclamped
+        exclude_idxs=None, diag=diag, bound=9,                  # bound enforces it
+    )
+    assert reps, "clamped grid returned an EMPTY pool -- the silent failure mode"
+    assert len(reps) <= 9, f"selected {len(reps)} > bound 9"
+    assert diag["step5_top_n"] <= 9, f"step5_top_n {diag['step5_top_n']} > 9"
+    assert diag["step5_bin_size"] in (500_000, 5_000_000, 50_000_000)
