@@ -165,7 +165,9 @@ def test_shipped_farmcpu_is_e_f_nogate2_d101():
     assert d["step5_skip_validation"] is True, "shipped FarmCPU must be gate-free (canonical)"
     assert d["step5_prune_in_loop"] is True, "shipped FarmCPU must prune in-loop (Step 6 inside)"
     assert d["step5_reselect"] is True, "shipped FarmCPU must re-select (canonical Step 7)"
-    # unchanged (already the shipped defaults, part of E_F_nogate2):
-    assert d["final_scan"] == "mlm"
+    # D-102: final_scan now ships as the classical OLS fixed-effect scan
+    # (the published FarmCPU end-to-end); MLM is the opt-in alternative.
+    assert d["final_scan"] == "ols"
+    # unchanged shipped defaults:
     assert d["selection_kinship"] == "global"
     assert d["carry_validated_set"] is False

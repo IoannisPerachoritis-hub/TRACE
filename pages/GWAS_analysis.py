@@ -552,10 +552,11 @@ if "FarmCPU (multi-locus)" in model_choices:
         farmcpu_max_pqtn = 15
     farmcpu_final_scan = st.sidebar.selectbox(
         "Final scan model",
-        options=["mlm", "ols"],
+        options=["ols", "mlm"],
         index=0,
-        help="MLM = LOCO-corrected final scan (default, recommended). "
-             "OLS = standard FarmCPU (Liu et al. 2016).",
+        help="OLS = classical fixed-effect final scan (published FarmCPU, "
+             "Liu et al. 2016; default). MLM = LOCO-kinship-corrected "
+             "(lower power, lower FDR).",
     )
 
 # --- Significance rule ---
@@ -1404,8 +1405,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 value=use_loco,
                 key="pipe_use_loco",
                 help=(
-                    "Leave-One-Chromosome-Out kinship for MLM and FarmCPU's "
-                    "final scan (default). Uncheck to use the whole-genome "
+                    "Leave-One-Chromosome-Out kinship for the MLM scan (and "
+                    "FarmCPU only when its final scan is set to MLM; the default "
+                    "FarmCPU final scan is OLS, which uses no kinship). Uncheck "
+                    "to use the whole-genome "
                     "GRM instead — useful when LOCO over-corrects on traits "
                     "with strong single-chromosome QTL. Overrides the "
                     "sidebar LOCO setting for this pipeline run only."
@@ -1611,9 +1614,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     value=15, step=5, key="pipe_fc_max_pqtn",
                 )
                 _pipe_fc_final_scan = st.selectbox(
-                    "Final scan", options=["mlm", "ols"], index=0,
+                    "Final scan", options=["ols", "mlm"], index=0,
                     key="pipe_fc_final_scan",
-                    help="OLS = standard FarmCPU. MLM = LOCO-corrected.",
+                    help="OLS = classical fixed-effect (published FarmCPU, default). "
+                         "MLM = LOCO-kinship-corrected (lower power, lower FDR).",
                 )
             if _pipe_run_subsampling:
                 st.caption("Subsampling GWAS")

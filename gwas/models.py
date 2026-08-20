@@ -1180,7 +1180,7 @@ def run_farmcpu(
     bin_sizes=(500_000, 5_000_000, 50_000_000),
     max_iterations=10,
     max_pseudo_qtns=15,
-    final_scan="mlm",
+    final_scan="ols",
     verbose=True,
     use_loco=True,
     selection_kinship="global",
@@ -1321,9 +1321,11 @@ def run_farmcpu(
     Notes
     -----
     Iterative scans use fast OLS for pseudo-QTN selection.  The default
-    final scan (``final_scan="mlm"``) uses MLM with LOCO kinship for
-    structure correction.  The ``"ols"`` option matches the standard
-    FarmCPU algorithm (Liu et al. 2016).
+    final scan (``final_scan="ols"``) is the classical fixed-effect test --
+    the published FarmCPU algorithm end-to-end (Liu et al. 2016), with no
+    kinship in the association test (with ``selection_kinship="global"`` no
+    GRM is built at all).  The ``"mlm"`` option instead applies MLM with LOCO
+    kinship: an opt-in alternative that trades power for lower FDR (D-102).
     """
     geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
     sid = np.asarray(sid, str)
@@ -1755,7 +1757,7 @@ def run_farmcpu_cached(
     geno_key, y_key, iid, sid, chroms, chroms_num, positions,
     K0_key, pheno_reader_key, covar_reader_key,
     p_threshold=0.01, max_iterations=10, max_pseudo_qtns=15,
-    final_scan="mlm", use_loco=True,
+    final_scan="ols", use_loco=True,
 ):
     """Cached wrapper: resolves session-state keys, delegates to run_farmcpu."""
     G = st.session_state.get(geno_key)
@@ -1804,7 +1806,7 @@ def auto_select_pcs(
     farmcpu_p_threshold=0.01,
     farmcpu_max_iterations=10,
     farmcpu_max_pseudo_qtns=15,
-    farmcpu_final_scan="mlm",
+    farmcpu_final_scan="ols",
     mlmm_p_enter=1e-4,
     mlmm_max_cof=10,
 ):
