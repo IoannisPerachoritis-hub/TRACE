@@ -83,11 +83,6 @@ def _build_parser():
     parser.add_argument(
         "--covar-cols",
         help="Comma-separated subset of covariate columns to use (default: all columns).")
-    parser.add_argument(
-        "--farmcpu-final-scan", default="ols", choices=["ols", "mlm"],
-        help="FarmCPU final scan: ols (classical fixed-effect, published algorithm, default) "
-             "or mlm (LOCO-kinship-corrected, lower-power/lower-FDR alternative)",
-    )
 
     # Significance threshold
     parser.add_argument(
@@ -689,7 +684,7 @@ def run_pipeline(args):
                     _fc_df, _, _ = _run_fc_scan(
                         geno_imputed, sid, chroms, chroms_num, positions, iid,
                         pheno_reader, K0, _fc_covar,
-                        final_scan=args.farmcpu_final_scan, verbose=False,
+                        final_scan="ols", verbose=False,  # D-103: FarmCPU MLM final scan frozen out (published OLS)
                         use_loco=not getattr(args, "no_loco", False),
                     )
                     fc_lambdas.append(
@@ -837,7 +832,7 @@ def run_pipeline(args):
         gwas_farmcpu, pqtn_tbl, conv_info = run_farmcpu(
             geno_imputed, sid, chroms, chroms_num, positions, iid,
             pheno_reader, K0, covar_fc,
-            final_scan=args.farmcpu_final_scan, verbose=False,
+            final_scan="ols", verbose=False,  # D-103: FarmCPU MLM final scan frozen out (published OLS)
             use_loco=not getattr(args, "no_loco", False),
         )
         gwas_farmcpu["PValue"] = np.clip(gwas_farmcpu["PValue"].astype(float), 1e-300, 1.0)

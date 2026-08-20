@@ -322,6 +322,44 @@ class TestRunFarmCPU:
         # retained pseudo-QTNs within the published ceiling sqrt(n/log10 n)
         assert len(r1[1]) <= models._step5_accept_bound(gwas_geno.shape[0])
 
+    def test_shipped_farmcpu_builds_no_kinship(
+        self, monkeypatch, gwas_geno, gwas_snp_metadata, gwas_iid,
+        gwas_pheno_reader, gwas_K0, gwas_covar_reader,
+    ):
+        """D-103 invariant: under the shipped defaults (final_scan='ols',
+        selection_kinship='global') run_farmcpu builds NO LOCO/GRM kernel — the guard
+        is both-false, so K_by_chr stays None. Monkeypatch the LOCO-kernel builder to
+        raise; the shipped path must never touch it, while the opt-in MLM final scan
+        (positive control) does."""
+        from gwas import models
+        import gwas.kinship as _kin
+
+        def _boom(*a, **kw):
+            raise AssertionError("LOCO kernel builder was called")
+
+        monkeypatch.setattr(_kin, "_build_loco_kernels_impl", _boom)
+
+        # Shipped path (ols + global): the guarded kinship block is skipped → no raise.
+        farmcpu_df, _, _ = self._run_farmcpu(
+            gwas_geno, gwas_snp_metadata, gwas_iid,
+            gwas_pheno_reader, gwas_K0, gwas_covar_reader,
+        )
+        assert farmcpu_df is not None
+
+        # Positive control: the opt-in MLM final scan DOES build kernels → the patch fires.
+        with pytest.raises(AssertionError, match="LOCO kernel builder was called"):
+            models.run_farmcpu(
+                geno_imputed=gwas_geno,
+                sid=gwas_snp_metadata["sid"],
+                chroms=gwas_snp_metadata["chroms"],
+                chroms_num=gwas_snp_metadata["chroms_num"],
+                positions=gwas_snp_metadata["positions"],
+                iid=gwas_iid, pheno_reader=gwas_pheno_reader,
+                K0=gwas_K0, covar_reader=gwas_covar_reader,
+                p_threshold=0.05, max_iterations=3, max_pseudo_qtns=5,
+                final_scan="mlm", verbose=False,
+            )
+
 
 # ── run_mlmm_research_grade_fast ─────────────────────────────
 

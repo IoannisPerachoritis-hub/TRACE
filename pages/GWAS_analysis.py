@@ -491,8 +491,8 @@ model_choices = st.sidebar.multiselect(
         "MLM (FaST-MLM) is the foundational single-locus model and always "
         "runs. Optionally layer on multi-locus models:\n\n"
         "**MLMM** iteratively adds significant SNPs as cofactors.\n\n"
-        "**FarmCPU** alternates fixed-effect (GLM) and random-effect (MLM) "
-        "models to iteratively identify pseudo-QTNs."
+        "**FarmCPU** does iterative fixed-effect (OLS) scanning with "
+        "REML-selected pseudo-QTNs (published algorithm, OLS final scan)."
     ),
 )
 
@@ -550,14 +550,7 @@ if "FarmCPU (multi-locus)" in model_choices:
         farmcpu_max_iter = 10
         farmcpu_p_threshold = 1e-2
         farmcpu_max_pqtn = 15
-    farmcpu_final_scan = st.sidebar.selectbox(
-        "Final scan model",
-        options=["ols", "mlm"],
-        index=0,
-        help="OLS = classical fixed-effect final scan (published FarmCPU, "
-             "Liu et al. 2016; default). MLM = LOCO-kinship-corrected "
-             "(lower power, lower FDR).",
-    )
+    farmcpu_final_scan = "ols"  # D-103: FarmCPU MLM final scan frozen out (published OLS end-to-end)
 
 # --- Significance rule ---
 st.sidebar.subheader("Significance threshold")
@@ -1405,9 +1398,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 value=use_loco,
                 key="pipe_use_loco",
                 help=(
-                    "Leave-One-Chromosome-Out kinship for the MLM scan (and "
-                    "FarmCPU only when its final scan is set to MLM; the default "
-                    "FarmCPU final scan is OLS, which uses no kinship). Uncheck "
+                    "Leave-One-Chromosome-Out kinship for the MLM scan. Uncheck "
                     "to use the whole-genome "
                     "GRM instead — useful when LOCO over-corrects on traits "
                     "with strong single-chromosome QTL. Overrides the "
@@ -1613,12 +1604,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     "Max pseudo-QTNs", min_value=5, max_value=50,
                     value=15, step=5, key="pipe_fc_max_pqtn",
                 )
-                _pipe_fc_final_scan = st.selectbox(
-                    "Final scan", options=["ols", "mlm"], index=0,
-                    key="pipe_fc_final_scan",
-                    help="OLS = classical fixed-effect (published FarmCPU, default). "
-                         "MLM = LOCO-kinship-corrected (lower power, lower FDR).",
-                )
+                _pipe_fc_final_scan = "ols"  # D-103: FarmCPU MLM final scan frozen out (published OLS end-to-end)
             if _pipe_run_subsampling:
                 st.caption("Subsampling GWAS")
                 _boot_a1, _boot_a2, _boot_a3 = st.columns(3)
