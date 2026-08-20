@@ -56,6 +56,16 @@ class TestCLIArgParsing:
                 "--model", "invalid_model",
             ])
 
+    def test_farmcpu_final_scan_flag_removed(self):
+        # D-103: the FarmCPU final scan is frozen to the published OLS scan; the
+        # --farmcpu-final-scan selector was removed, so argparse must reject it.
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args([
+                "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/",
+                "--farmcpu-final-scan", "mlm",
+            ])
+
     def test_qc_overrides(self):
         parser = _build_parser()
         args = parser.parse_args([

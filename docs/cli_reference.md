@@ -11,7 +11,6 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
                   [--n-pcs N_PCS] [--no-loco] [--n-pcs-mlm N_PCS_MLM]
                   [--n-pcs-mlmm N_PCS_MLMM] [--n-pcs-farmcpu N_PCS_FARMCPU]
                   [--covar COVAR] [--covar-cols COVAR_COLS]
-                  [--farmcpu-final-scan {ols,mlm}]
                   [--sig-thresh {meff,bonferroni,fdr,PVALUE}] [--auto-pcs]
                   [--pc-strategy {band,closest_to_1}] [--max-pcs MAX_PCS]
                   [--pc-band-lo PC_BAND_LO] [--pc-band-hi PC_BAND_HI]
@@ -66,9 +65,6 @@ options:
   --covar-cols COVAR_COLS
                         Comma-separated subset of covariate columns to use
                         (default: all columns).
-  --farmcpu-final-scan {ols,mlm}
-                        FarmCPU final scan: mlm (LOCO-corrected, default) or
-                        ols (standard)
   --sig-thresh {meff,bonferroni,fdr,PVALUE}
                         Significance reporting threshold: bonferroni
                         (default), meff (LD-aware), fdr (q<0.05), or a numeric

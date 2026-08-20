@@ -1,4 +1,10 @@
-"""Guard tests for LOCO pseudo-QTN selection kinship (FarmCPU 2x2 measurement).
+"""Guard tests for the OPT-IN LOCO pseudo-QTN selection kinship (FarmCPU 2x2 arm C).
+
+NOTE (D-103): this guards the ``selection_kinship="loco"`` measurement path, which is
+BYPASSED under the shipped FarmCPU defaults (``step5_skip_validation=True`` skips
+``_optimize_pseudo_qtns_mlm`` entirely). These tests protect the opt-in 2x2 measurement
+code, NOT the shipped model.
+
 
 The 2x2 measurement adds a LOCO-kinship option to pseudo-QTN validation
 (``_optimize_pseudo_qtns_mlm``).  Selection is passed ``chroms_num`` (numeric)
