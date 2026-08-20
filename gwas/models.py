@@ -1228,8 +1228,9 @@ def run_farmcpu(
     max_pseudo_qtns : int
         Maximum number of pseudo-QTNs.
     final_scan : str
-        Final scan model: ``"mlm"`` (default, LOCO kinship with LD-pruned
-        GRM) or ``"ols"`` (matching standard FarmCPU).
+        Final scan model: ``"ols"`` (default, classical fixed-effect scan =
+        the published FarmCPU algorithm; no kinship/GRM is built) or ``"mlm"``
+        (opt-in LOCO-kinship-corrected alternative, lower power / lower FDR).
     verbose : bool
         Show Streamlit progress.
     use_loco : bool
