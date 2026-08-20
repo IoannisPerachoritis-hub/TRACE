@@ -303,6 +303,25 @@ class TestRunFarmCPU:
         # Pseudo-QTN table should be a DataFrame (may be empty on small panels)
         assert isinstance(pseudo_qtns, pd.DataFrame)
 
+    def test_farmcpu_golden_e_f_nogate2_deterministic(
+        self, gwas_geno, gwas_snp_metadata, gwas_iid,
+        gwas_pheno_reader, gwas_K0, gwas_covar_reader,
+    ):
+        """D-101 golden for the SHIPPED FarmCPU path (E_F_nogate2 defaults): it runs
+        published Step 5, is deterministic on the seeded synthetic fixture (identical
+        p-values on repeat), and its retained pseudo-QTN set respects the corrected
+        bound sqrt(n/log10 n). Regression guard for the new default path."""
+        from gwas import models
+        r1 = self._run_farmcpu(gwas_geno, gwas_snp_metadata, gwas_iid,
+                               gwas_pheno_reader, gwas_K0, gwas_covar_reader)
+        r2 = self._run_farmcpu(gwas_geno, gwas_snp_metadata, gwas_iid,
+                               gwas_pheno_reader, gwas_K0, gwas_covar_reader)
+        p1 = r1[0].sort_values("SNP")["PValue"].to_numpy()
+        p2 = r2[0].sort_values("SNP")["PValue"].to_numpy()
+        np.testing.assert_array_equal(p1, p2)   # shipped path is deterministic
+        # retained pseudo-QTNs within the published ceiling sqrt(n/log10 n)
+        assert len(r1[1]) <= models._step5_accept_bound(gwas_geno.shape[0])
+
 
 # ── run_mlmm_research_grade_fast ─────────────────────────────
 

@@ -150,3 +150,22 @@ def test_step5_bound_param_clamps_and_holds_invariant():
     assert len(reps) <= 9, f"selected {len(reps)} > bound 9"
     assert diag["step5_top_n"] <= 9, f"step5_top_n {diag['step5_top_n']} > 9"
     assert diag["step5_bin_size"] in (500_000, 5_000_000, 50_000_000)
+
+
+def test_shipped_farmcpu_is_e_f_nogate2_d101():
+    """D-101: the shipped FarmCPU model IS E_F_nogate2 -- the faithful published
+    Step 5 at the corrected pseudo-QTN bound sqrt(n/log10 n). Pin the six flipped
+    run_farmcpu defaults so an accidental revert to the old A_F arm is caught."""
+    import inspect
+    d = {k: v.default for k, v in inspect.signature(models.run_farmcpu).parameters.items()}
+    # the six flipped by D-101:
+    assert d["pool_cap"] == 100, "pool_cap must ship at 100"
+    assert d["step5_reml_bins"] is True, "shipped FarmCPU must run published Step 5"
+    assert d["step5_substitution"] is True, "shipped FarmCPU must do Step 3 substitution"
+    assert d["step5_skip_validation"] is True, "shipped FarmCPU must be gate-free (canonical)"
+    assert d["step5_prune_in_loop"] is True, "shipped FarmCPU must prune in-loop (Step 6 inside)"
+    assert d["step5_reselect"] is True, "shipped FarmCPU must re-select (canonical Step 7)"
+    # unchanged (already the shipped defaults, part of E_F_nogate2):
+    assert d["final_scan"] == "mlm"
+    assert d["selection_kinship"] == "global"
+    assert d["carry_validated_set"] is False

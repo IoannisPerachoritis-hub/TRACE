@@ -1185,17 +1185,17 @@ def run_farmcpu(
     use_loco=True,
     selection_kinship="global",
     carry_validated_set=False,
-    pool_cap=None,
-    step5_reml_bins=False,
+    pool_cap=100,
+    step5_reml_bins=True,
     step5_bin_sizes=(50_000, 100_000, 500_000, 5_000_000, 50_000_000),
     step5_topn_grid=(10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
     pqtn_bound=None,
     candidate_p_gate=None,
     step5_warm_start=False,
-    step5_substitution=False,
-    step5_skip_validation=False,
-    step5_prune_in_loop=False,
-    step5_reselect=False,
+    step5_substitution=True,
+    step5_skip_validation=True,
+    step5_prune_in_loop=True,
+    step5_reselect=True,
 ):
     """
     FarmCPU: Fixed and Random Model Circulating Probability Unification.
