@@ -45,7 +45,7 @@ VCF + Phenotypes → QC → GWAS (LOCO-MLM / MLMM / FarmCPU) → LD blocks → G
 - **Mixed Linear Model (MLM)** via [FastLMM](https://github.com/fastlmm/FaST-LMM)
 - **LOCO** (Leave-One-Chromosome-Out) kinship to avoid proximal contamination
 - **MLMM** (Multi-Locus Mixed Model) 
-- **TRACE-FarmCPU** — a FarmCPU (Liu et al., 2016) variant. Pseudo-QTNs are validated with forward-selection MLM, and the final scan uses LOCO kinship.
+- **TRACE-FarmCPU** — a FarmCPU (Liu et al., 2016) implementation. Pseudo-QTNs are selected by REML-optimised bin selection at the published bound, and the final scan is a classical fixed-effect (OLS) scan (no kinship built).
 - **Cross-model consensus table** 
 - **OLS effect sizes** (Beta, SE, t-statistic) 
 - **Rank-based inverse normal transform** (INT) for skewed traits
