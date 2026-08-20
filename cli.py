@@ -84,8 +84,9 @@ def _build_parser():
         "--covar-cols",
         help="Comma-separated subset of covariate columns to use (default: all columns).")
     parser.add_argument(
-        "--farmcpu-final-scan", default="mlm", choices=["ols", "mlm"],
-        help="FarmCPU final scan: mlm (LOCO-corrected, default) or ols (standard)",
+        "--farmcpu-final-scan", default="ols", choices=["ols", "mlm"],
+        help="FarmCPU final scan: ols (classical fixed-effect, published algorithm, default) "
+             "or mlm (LOCO-kinship-corrected, lower-power/lower-FDR alternative)",
     )
 
     # Significance threshold

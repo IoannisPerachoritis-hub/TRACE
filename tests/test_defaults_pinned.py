@@ -24,7 +24,7 @@ import pytest
 
 import annotation
 import cli
-from gwas import haplotype, ld, plotting, reports
+from gwas import haplotype, ld, models, plotting, reports
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -215,6 +215,8 @@ SIGNATURE_DEFAULTS = [
     ("annotation.annotate_ld_blocks", annotation.annotate_ld_blocks, "n_flank", 2, "annotation.py:160"),
     ("annotation.annotate_ld_blocks", annotation.annotate_ld_blocks, "max_flank_dist_bp", 500_000, "annotation.py:161"),
     ("plotting.compute_r2_to_lead", plotting.compute_r2_to_lead, "min_pair_n", 15, "plotting.py:409"),
+    # D-102: the shipped FarmCPU final scan is the classical OLS fixed-effect test.
+    ("models.run_farmcpu", models.run_farmcpu, "final_scan", "ols", "gwas/models.py:1183"),
 ]
 
 
@@ -232,9 +234,9 @@ def test_signature_default(label, fn, param, expected, loc):
 
 
 def test_signature_default_count_is_stable():
-    """The pinned set is exactly the 28 signature defaults enumerated by T-72.
-    A new load-bearing default should be added here deliberately, not silently."""
-    assert len(SIGNATURE_DEFAULTS) == 28
+    """The pinned set is the signature defaults enumerated by T-72, plus D-102's
+    FarmCPU final_scan. A new load-bearing default is added here deliberately."""
+    assert len(SIGNATURE_DEFAULTS) == 29
 
 
 # ===========================================================================
