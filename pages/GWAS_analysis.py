@@ -1121,27 +1121,35 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 _pct = _cnt / _n_total * 100 if _n_total > 0 else 0
                 _qc_rows.append(f"| {_filt} | {_cnt:,} | {_pct:.1f}% |")
 
-        if _qc_rows:
-            _qc_table = "| Filter | SNPs removed | % of input |\n|--------|-------------|------------|\n"
-            _qc_table += "\n".join(_qc_rows)
-            st.markdown(_qc_table)
+        _qc_report = results.get("qc_report")
 
         if results.get("info_field"):
             st.info(f"Imputation quality field detected: **{results['info_field']}**")
 
-        # QC report (P1-P5): report-only heterozygosity / relatedness / F_IS / trait
-        _qc_report = results.get("qc_report")
-        if _qc_report:
-            with st.expander("QC Report — heterozygosity, relatedness, F_IS, trait", expanded=False):
-                from gwas import qc_report as _qcr
-                st.markdown(_qcr.render_qc_report_markdown(_qc_report))
-                for _qc_fn, _qc_fig in _qcr.qc_report_figures(_qc_report).items():
-                    st.pyplot(_qc_fig)
-                    plt.close(_qc_fig)
+        # Headline: the QC outcome at a glance, so a user learns it without opening
+        # anything. "0 excluded" is load-bearing -- the report-only diagnostics
+        # (heterozygosity, relatedness) flag samples but never remove them.
+        _n_final = int(results["geno_df"].shape[1])
+        _n_alt = int(_qc.get("ALT chromosomes", 0))
+        _n_flag_het = int((_qc_report or {}).get("sample_het", {}).get("n_flagged", 0))
+        st.markdown(
+            f"**{_n_final:,} of {_n_pass:,} markers retained** · {_n_samples:,} samples · "
+            f"{_n_flag_het} flagged for heterozygosity · 0 excluded"
+        )
 
-        # MAF distribution + per-chromosome breakdown (collapsible)
-        with st.expander("Post-QC diagnostics", expanded=False):
+        with st.expander("Quality control report", expanded=False):
             from gwas.plotting import plot_maf_histogram
+            from gwas import qc_report as _qcr
+
+            # ── Markers: what QC removed ──
+            st.markdown("**Markers**")
+            if _qc_rows:
+                _qc_table = "| Filter | SNPs removed | % of input |\n|--------|-------------|------------|\n"
+                _qc_table += "\n".join(_qc_rows)
+                st.markdown(_qc_table)
+            if _n_alt > 0:
+                st.caption(f"{_n_alt:,} markers on unplaced/scaffold sequences excluded "
+                           "(no valid genomic position).")
             _geno_imp = results["geno_imputed"]
             _freq = _geno_imp.mean(axis=0) / 2.0
             _maf_vals = np.minimum(_freq, 1.0 - _freq)
@@ -1165,6 +1173,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     "Density (SNPs/Mb)": round(_density, 1),
                 })
             st.dataframe(pd.DataFrame(_chr_summary), hide_index=True, use_container_width=True)
+
+            # ── Samples / Sample pairs / Variant statistics / Trait: what QC
+            #    flagged but kept (report-only), plus the trait distribution ──
+            if _qc_report:
+                st.markdown(_qcr.render_qc_report_markdown(_qc_report))
+                for _qc_fn, _qc_fig in _qcr.qc_report_figures(_qc_report).items():
+                    st.pyplot(_qc_fig)
+                    plt.close(_qc_fig)
 
     # --- REQUIRED: Save everything to session_state for cached GWAS ---
     # ------------------------------------------------------------

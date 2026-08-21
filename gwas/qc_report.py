@@ -217,15 +217,9 @@ def render_qc_report_markdown(report: dict) -> str:
     d = report["dup_pairs"]
     f = report["variant_fis"]
     t = report["trait"]
-    q = report.get("qc_snp", {})
     lines = ["# QC Report", ""]
-    lines += ["## Marker QC breakdown", ""]
-    if q:
-        lines += ["| metric | value |", "| --- | --- |"]
-        lines += [f"| {k} | {v} |" for k, v in q.items()]
-        lines += [""]
     lines += [
-        "## Per-sample heterozygosity (P1)",
+        "## Per-sample heterozygosity",
         "",
         f"- Samples: {report['n_samples']} (none excluded)",
         f"- Panel mean {h['mean']:.4f}, median {h['median']:.4f}, SD {h['sd']:.4f}",
@@ -240,7 +234,7 @@ def render_qc_report_markdown(report: dict) -> str:
         ]
         lines += [""]
     lines += [
-        "## Duplicate / high-relatedness pairs (P2)",
+        "## Duplicate / high-relatedness pairs",
         "",
         f"- Pairs scanned: {d['n_pairs_scanned']} on {d['n_markers_used']} markers"
         + (" (marker-subsampled runtime guard)" if d["marker_subsampled"] else ""),
@@ -257,7 +251,7 @@ def render_qc_report_markdown(report: dict) -> str:
         ]
         lines += [""]
     lines += [
-        "## Per-variant F_IS (P3)",
+        "## Per-variant F_IS",
         "",
         "On a single unstructured panel this is strictly F_IS; the crop-QC literature "
         "(Glaubitz 2014; Pavan 2020) calls it F_IT and the arithmetic is identical.",
@@ -265,7 +259,7 @@ def render_qc_report_markdown(report: dict) -> str:
         f"- Median F_IS over markers with He > {f['he_min']:g}: **{f['median_fis']:.3f}** "
         f"(5-95th pct {f['pct5_fis']:.3f}-{f['pct95_fis']:.3f}; n = {f['n_he_gt_min']})",
         "",
-        "## Trait distribution (P4)",
+        "## Trait distribution",
         "",
         f"- {t['trait']}: n = {t['n']}, mean {t['mean']:.4g}, SD {t['sd']:.4g}, "
         f"range [{t['min']:.4g}, {t['max']:.4g}], skew {t['skew']:.3f}, "
