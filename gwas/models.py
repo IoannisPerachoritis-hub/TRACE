@@ -344,6 +344,18 @@ def run_mlmm_research_grade_fast(
     # ---------------------------
     geno_std = _standardize_genotypes_impl(geno_imputed)
 
+    # P16: exclude ALT (unplaced/scaffold) markers -- they carry no valid genomic
+    # position, so no position-dependent step can use them.  MLM/FarmCPU already
+    # drop ALT (the chroms_unique filter); align MLMM so ALT markers are never
+    # tested against a kinship that excludes their own sequence.
+    _alt_keep = np.asarray(chroms).astype(str) != "ALT"
+    if not _alt_keep.all():
+        sid = np.asarray(sid)[_alt_keep]
+        chroms = np.asarray(chroms)[_alt_keep]
+        chroms_num = np.asarray(chroms_num)[_alt_keep]
+        positions = np.asarray(positions)[_alt_keep]
+        geno_std = geno_std[:, _alt_keep]
+
     # ---------------------------
     # SnpData for FastLMM (cached builder)
     # ---------------------------

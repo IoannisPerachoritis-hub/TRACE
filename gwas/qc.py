@@ -30,6 +30,12 @@ def allele_freq_from_called_dosage(G_dos):
     Returns p (length m), with NaN where no calls exist.
     """
     G = np.asarray(G_dos, float)
+    _gmax = float(np.nanmax(G)) if np.isfinite(G).any() else 0.0
+    if _gmax > 2.5:  # P9: polyploid dosage is a hard error, not silently clipped
+        raise ValueError(
+            f"Genotype dosage > 2 detected (maximum observed: {_gmax:g}). "
+            "TRACE models diploid panels; polyploid dosage coding is not supported."
+        )
     G = np.clip(G, 0.0, 2.0)  # defensive: ensure dosage in [0,2]
     called = np.isfinite(G)
     n_called = called.sum(axis=0).astype(float)
@@ -423,7 +429,7 @@ def _pipeline_phenotype_qc(geno_df, pheno, trait_col, norm_option, ind_miss_thre
 def _pipeline_snp_qc(geno_df, chroms, positions, sid,
                       maf_thresh, miss_thresh, mac_thresh, drop_alt,
                       info_scores=None, info_thresh=0.0,
-                      canonical=None):
+                      canonical=None, max_het=None, het_excess_p=None):
     """
     SNP-level QC: MAF, missingness, MAC, imputation quality;
     chromosome label cleaning; optional ALT chromosome removal;
@@ -445,6 +451,17 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     missing_rate = geno_df.isna().mean(axis=0)
 
     dos = geno_df.astype(float).values
+    # P9: refuse polyploid dosage coding loudly rather than silently clipping it
+    # to 2 (which would make the allele frequency -- and everything built on it
+    # -- wrong).  Disomic allopolyploids coded 0/1/2 per subgenome are fine.
+    _dmax = float(np.nanmax(dos)) if np.isfinite(dos).any() else 0.0
+    if _dmax > 2.5:
+        raise ValueError(
+            f"Genotype dosage > 2 detected (maximum observed: {_dmax:g}). "
+            "TRACE models diploid panels; polyploid dosage coding is not "
+            "supported. Disomic allopolyploid panels coded 0/1/2 per subgenome "
+            "are supported -- see Limitations."
+        )
     dos = np.where(np.isfinite(dos), np.clip(dos, 0.0, 2.0), np.nan)
     AC = np.nansum(dos, axis=0)
     n_called = np.sum(~np.isnan(dos), axis=0)
@@ -452,6 +469,34 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     AF = np.divide(AC, AN, out=np.full_like(AC, np.nan, dtype=float), where=(AN > 0))
     maf = np.minimum(AF, 1.0 - AF)
     mac = np.minimum(AC, AN - AC)
+
+    # ── P13: heterozygosity screen (report ALWAYS; filter only on a flag) ──
+    # This is a ONE-SIDED heterozygote-EXCESS screen, NEVER a two-sided HWE test.
+    # Excess heterozygosity flags paralog / repeat-mismapping artifacts (the
+    # mating-system-agnostic direction).  Heterozygote *deficit* is expected
+    # inbreeding biology in selfers (tomato, pepper) and is never screened -- so
+    # both --max-het and --het-excess-p default OFF, and "Median het" is reported
+    # regardless so a user can see the panel's heterozygosity without filtering.
+    n_het = np.sum(dos == 1.0, axis=0)
+    het_rate = np.divide(n_het, n_called,
+                         out=np.full_like(AC, np.nan, dtype=float),
+                         where=(n_called > 0))
+    het_median = float(np.nanmedian(het_rate)) if np.isfinite(het_rate).any() else 0.0
+
+    het_fail = np.zeros(len(maf), dtype=bool)
+    if max_het is not None:
+        het_fail |= np.isfinite(het_rate) & (het_rate > float(max_het))
+    if het_excess_p is not None:
+        from scipy.special import erfc  # lazy: only when the screen is armed
+        He = 2.0 * AF * (1.0 - AF)
+        exp_het = n_called * He
+        var_het = n_called * He * (1.0 - He)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            z = np.divide(n_het - exp_het, np.sqrt(var_het),
+                          out=np.full_like(AC, np.nan, dtype=float),
+                          where=(var_het > 0))
+        p_excess = 0.5 * erfc(z / np.sqrt(2.0))   # upper tail = heterozygote excess
+        het_fail |= np.isfinite(p_excess) & (p_excess < float(het_excess_p))
 
     # Imputation quality filter
     has_info = (info_scores is not None and info_thresh > 0
@@ -467,13 +512,16 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
         "Fail Missingness": int((missing_rate >= miss_thresh).sum()),
         "Fail MAC": int((mac < mac_thresh).sum()),
         "Fail INFO": int(info_fail.sum()),
+        "Median het": het_median,
+        "Fail HetExcess": int(het_fail.sum()),
     }
 
     keep_mask = (
             (maf > maf_thresh) &
             (missing_rate < miss_thresh) &
             (mac >= mac_thresh) &
-            (~info_fail)
+            (~info_fail) &
+            (~het_fail)
     )
     keep_mask = np.asarray(keep_mask, dtype=bool)
     qc_snp["Fail ANY"] = int((~keep_mask).sum())
@@ -498,6 +546,20 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     n_alt = int((chroms == "ALT").sum())
     qc_snp["ALT chromosomes"] = n_alt
 
+    # ── P6: non-autosome disclosure (report-only) -- ALT markers are already
+    #    excluded from kinship and the association scan; this only surfaces the
+    #    counts, split into non-autosomal (X/Y/MT) vs unplaced/scaffold ──
+    _alt_raw = pd.Series(chroms_raw).astype(str)[np.asarray(chroms) == "ALT"]
+    _nonauto = _alt_raw.str.fullmatch(
+        r"(?i)(chr)?(x|y|z|w|mt|m|pt|pltd|mtdna|chloroplast|mitochondri\w*)")
+    n_nonauto = int(_nonauto.fillna(False).sum()) if len(_alt_raw) else 0
+    qc_snp["Non-autosomal markers"] = n_nonauto
+    qc_snp["Unplaced/scaffold markers"] = int(len(_alt_raw) - n_nonauto)
+    if n_nonauto > 0:
+        _log_or_warn(
+            f"{n_nonauto} markers on non-autosomal sequences (X, Y, MT) excluded; "
+            "TRACE models autosomes only.")
+
     if n_alt > 0 and n_alt == len(chroms):
         sample = list(pd.Series(chroms_raw).unique()[:10])
         raise ValueError(
@@ -519,16 +581,8 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
         sid = sid[keep]
         if info_scores is not None:
             info_scores = info_scores[keep]
-
-        if len(chroms) == 0:
-            sample = list(pd.Series(chroms_raw).unique()[:10])
-            raise ValueError(
-                "No SNPs remain after dropping non-numeric chromosomes. "
-                "All variants were on unrecognized chromosome names.\n\n"
-                f"Original CHROM values (sample): {sample}\n\n"
-                "Uncheck 'Drop non-numeric chromosomes' to keep them, "
-                "or recode your VCF chromosomes to integers."
-            )
+        # P12: the former `if len(chroms) == 0` branch here was unreachable -- the
+        # all-ALT guard above (n_alt == len(chroms)) always raises first -- removed.
 
     # Sort by ChrNum / Pos
     ord_idx = np.lexsort((positions.astype(int), chroms_num.astype(int)))
@@ -689,6 +743,15 @@ def gwas_pipeline(
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
         _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions)
 
+    # QC report (P1-P5): report-only; never removes a sample/marker, never raises.
+    try:
+        from gwas import qc_report as _qcr
+        _qc_trait = (pheno[trait_col].to_numpy()
+                     if trait_col in getattr(pheno, "columns", []) else y.ravel())
+        qc_report = _qcr.compute_qc_report(geno_df, _qc_trait, trait_col, qc_snp=qc_snp)
+    except Exception:
+        qc_report = None
+
     return {
         "geno_imputed": geno_imputed,
         "geno_dosage_raw": geno_dosage_raw,
@@ -705,6 +768,7 @@ def gwas_pipeline(
         "y": y,
         "n_snps_raw": int(n_initial_snps),
         "qc_snp": qc_snp,
+        "qc_report": qc_report,
         "Z_for_pca": Z_for_pca,
         "chroms_grm": chroms_grm,
         "positions_grm": positions_grm,

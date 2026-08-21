@@ -719,6 +719,13 @@ def find_ld_clusters_genomewide(
     members (see block_mean_r2) — the block's coherence.
     """
 
+    # P16: refuse unanchored (ALT) markers up front -- they carry no valid
+    # genomic position, so they can neither seed a block (threshold set OR the
+    # top-N floor) nor form a meaningful LD window across concatenated scaffolds.
+    _keep_anchored = gwas_df["Chr"].astype(str).map(canon_chr) != "ALT"
+    if not _keep_anchored.all():
+        gwas_df = gwas_df[_keep_anchored].copy()
+
     # --- 1) Select significant SNPs ---
     significant = gwas_df[gwas_df["PValue"] < sig_thresh].copy()
     significant["Chr"] = significant["Chr"].astype(str).map(canon_chr)

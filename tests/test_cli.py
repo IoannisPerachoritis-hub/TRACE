@@ -82,11 +82,11 @@ class TestCLIArgParsing:
         parser = _build_parser()
         args = parser.parse_args([
             "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/",
-            "--no-report", "--no-plots", "--drop-alt", "-v",
+            "--no-report", "--no-plots", "-v",
         ])
         assert args.no_report is True
         assert args.no_plots is True
-        assert args.drop_alt is True
+        # P11: --drop-alt removed (ALT is always excluded); flag no longer exists.
         assert args.verbose is True
 
     def test_export_qc_flag(self):
