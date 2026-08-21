@@ -55,6 +55,15 @@ def _build_parser():
     qc.add_argument("--ind-miss", type=float, default=0.20, help="Per-individual missingness max (default: 0.20)")
     qc.add_argument("--info-thresh", type=float, default=0.0,
                      help="Imputation quality threshold (default: 0.0 = disabled)")
+    # P13: heterozygosity screen (one-sided heterozygote EXCESS; NOT two-sided HWE).
+    # Both OFF by default -> byte-identical QC. Excess het flags paralog / repeat-
+    # mismapping artifacts; heterozygote deficit (expected in selfers) is never screened.
+    qc.add_argument("--max-het", type=float, default=None,
+                     help="Heterozygosity screen: remove variants with observed "
+                          "heterozygosity above this rate, e.g. 0.20 (default: off).")
+    qc.add_argument("--het-excess-p", type=float, default=None,
+                     help="Heterozygosity screen: remove variants failing a one-sided "
+                          "heterozygote-excess test at this p-value (default: off).")
 
     # Normalization (short slugs for shell-friendliness)
     parser.add_argument(
@@ -130,10 +139,19 @@ def _build_parser():
                          help="LD r^2 threshold for block detection (default: 0.6)")
     ld_grp.add_argument("--ld-flank-kb", type=int, default=None,
                          help="LD flank window in kb (default: auto from LD decay)")
+    ld_grp.add_argument("--ld-seed-mode", default="suggestive",
+                         choices=["suggestive", "significant"],
+                         help="LD-block seed SNPs (mirrors the GUI): 'suggestive' "
+                              "(default) = the --ld-seed-p threshold plus the "
+                              "--ld-top-n floor; 'significant' = only SNPs passing "
+                              "the genome-wide --sig-thresh, with no top-N floor.")
     ld_grp.add_argument("--ld-seed-p", type=float, default=1e-5,
-                         help="Seed SNP p-threshold for LD blocks (default: 1e-5)")
+                         help="Seed SNP p-threshold for LD blocks in suggestive "
+                              "mode (default: 1e-5)")
     ld_grp.add_argument("--ld-top-n", type=int, default=10,
-                         help="Also seed top-N SNPs (default: 10)")
+                         help="Suggestive-mode FLOOR: always also seed the top-N "
+                              "SNPs by p-value, even when fewer than N pass "
+                              "--ld-seed-p (default: 10; 0 disables the floor).")
     ld_grp.add_argument("--hap-perms", type=int, default=1000,
                          help="Haplotype permutations (default: 1000)")
     ld_grp.add_argument("--no-annotation", action="store_true",
@@ -188,7 +206,9 @@ def _build_parser():
     parser.add_argument("--no-plots", action="store_true", help="Skip plot generation")
     parser.add_argument("--export-qc", action="store_true",
                          help="Export post-QC genotype matrix, SNP map, and phenotype for benchmarking")
-    parser.add_argument("--drop-alt", action="store_true", help="Drop ALT chromosomes")
+    # P11: --drop-alt removed. Unplaced/scaffold (ALT) markers carry no valid genomic
+    # position, so no position-dependent step can use them and they must never enter
+    # the significance divisor; TRACE now always excludes them (no flag).
     parser.add_argument("--n-chromosomes", type=int, default=None,
                          help="Number of chromosomes (default: auto-detect from VCF). "
                               "When set, only chromosomes 1..N are kept.")
@@ -566,8 +586,9 @@ def run_pipeline(args):
                  if args.n_chromosomes else None)
     geno_df, chroms, chroms_num, positions, sid, n_raw, qc_snp, info_scores = \
         _pipeline_snp_qc(geno_df, chroms, positions, sid,
-                         args.maf, args.miss, args.mac, args.drop_alt,
-                         info_scores, args.info_thresh, canonical=canonical)
+                         args.maf, args.miss, args.mac, True,  # P11: ALT always excluded
+                         info_scores, args.info_thresh, canonical=canonical,
+                         max_het=args.max_het, het_excess_p=args.het_excess_p)
     log.info("  QC: %s", qc_snp)
 
     log.info("Building genotype matrices…")
@@ -622,6 +643,22 @@ def run_pipeline(args):
 
     extra_csvs = {}  # additional CSVs to include in ZIP
     figures = {}     # figures to include in ZIP
+
+    # ── QC report (P1-P5): report-only statistics; never removes a sample or
+    #    marker and never breaks the run (wrapped) ──
+    try:
+        from gwas import qc_report as _qcr
+        _qc_trait = (pheno[args.trait].to_numpy()
+                     if args.trait in getattr(pheno, "columns", []) else y.ravel())
+        _qc_rep = _qcr.compute_qc_report(geno_df, _qc_trait, args.trait, qc_snp=qc_snp)
+        extra_csvs.update(_qcr.qc_report_dataframes(_qc_rep))
+        figures.update(_qcr.qc_report_figures(_qc_rep))
+        log.info("  QC report: %d het-outlier(s) |z|>3, %d relatedness pair(s), median F_IS %.3f",
+                 _qc_rep["sample_het"]["n_flagged"],
+                 _qc_rep["dup_pairs"]["n_pairs_flagged"],
+                 _qc_rep["variant_fis"]["median_fis"])
+    except Exception as _qc_err:  # pragma: no cover
+        log.warning("QC report skipped: %s", _qc_err)
 
     if getattr(args, "export_qc", False):
         log.info("Preparing QC'd genotype export for benchmarking…")
@@ -1003,6 +1040,17 @@ def run_pipeline(args):
     _report_ld_annotated = _report_hap_gwas = None
     _per_model_post = {}
 
+    # P14: LD-block seed mode (mirrors the GUI radio). "suggestive" (default) =
+    # the --ld-seed-p threshold + the --ld-top-n floor -> byte-identical to the
+    # prior CLI behaviour; "significant" = seeds restricted to the genome-wide
+    # --sig-thresh, with NO top-N floor. FDR (no single p-threshold) falls back to
+    # naive Bonferroni for the seed threshold, matching the GUI.
+    _ld_gw_thresh = primary_thresh if primary_thresh is not None else bonf_thresh_naive
+    if args.ld_seed_mode == "significant":
+        _ld_seed_thresh, _ld_seed_top_n = _ld_gw_thresh, 0
+    else:
+        _ld_seed_thresh, _ld_seed_top_n = args.ld_seed_p, args.ld_top_n
+
     for model_name, model_df in post_gwas_models:
         log.info("Post-GWAS: %s", model_name)
         m_hap_gwas = None
@@ -1010,15 +1058,23 @@ def run_pipeline(args):
         m_ld_blocks = pd.DataFrame()   # always defined; empty => no blocks (rescue still runs)
 
         # LD block detection
-        has_seeds = (model_df["PValue"] < args.ld_seed_p).any()
+        # P15: report both seed counts so the suggestive vs significant distinction
+        # is visible regardless of --ld-seed-mode (the top-N floor can also form
+        # non-significant blocks -- e.g. pepper forms 3 FarmCPU blocks this way).
+        _n_sugg = int((model_df["PValue"] < args.ld_seed_p).sum())
+        _n_sig = int((model_df["PValue"] < _ld_gw_thresh).sum())
+        log.info("  %d seed SNPs at p < %.1e, of which %d pass the genome-wide "
+                 "threshold (%.2e)", _n_sugg, args.ld_seed_p, _n_sig, _ld_gw_thresh)
+
+        has_seeds = (model_df["PValue"] < _ld_seed_thresh).any()
         if not has_seeds:
             # Also try top-N seeding
-            if args.ld_top_n > 0:
+            if _ld_seed_top_n > 0:
                 log.info("  No seed SNPs at p < %.1e; using top-%d seeding.",
-                         args.ld_seed_p, args.ld_top_n)
+                         _ld_seed_thresh, _ld_seed_top_n)
             else:
                 log.info("  No seed SNPs (p < %.1e) and no top-N seeding — no LD blocks "
-                         "(isolated-SNP rescue still runs).", args.ld_seed_p)
+                         "(isolated-SNP rescue still runs).", _ld_seed_thresh)
 
         try:
             m_ld_blocks = ld.find_ld_clusters_genomewide(
@@ -1026,7 +1082,7 @@ def run_pipeline(args):
                 geno_imputed=_geno_float, sid=sid,
                 ld_threshold=args.ld_r2, flank_kb=ld_flank_kb,
                 ld_decay_kb=ld_decay_kb, min_snps=3,
-                top_n=args.ld_top_n, sig_thresh=args.ld_seed_p,
+                top_n=_ld_seed_top_n, sig_thresh=_ld_seed_thresh,
             )
             m_ld_blocks, _ = ld.filter_contained_blocks(m_ld_blocks, min_contained=2)
         except Exception as e:

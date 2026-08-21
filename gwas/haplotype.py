@@ -123,6 +123,11 @@ def run_haplotype_block_gwas(
 
     # Normalize LD block schema
     haplo_df = normalize_ld_blocks_schema(haplo_df)
+    # P16: refuse unanchored (ALT) blocks -- their members span concatenated
+    # unplaced scaffolds, so asserting linkage/haplotype structure across the bin
+    # has no basis (align with MLM/FarmCPU/kinship, which all exclude ALT).
+    if "Chr" in haplo_df.columns:
+        haplo_df = haplo_df[haplo_df["Chr"].astype(str) != "ALT"].reset_index(drop=True)
 
     chroms = np.asarray(chroms)
     positions = np.asarray(positions)

@@ -179,10 +179,12 @@ class TestChromosomeGuard:
         assert len(out_chroms) == 3
 
     def test_error_shows_original_labels(self):
-        """Error message includes the actual CHROM values from the VCF."""
-        chroms = np.array(["1A", "1B", "1D", "2A", "2B"])
+        """Error message includes the actual CHROM values from the VCF.
+        (P8 made 1A/1B/1D valid allopolyploid subgenome labels, so this guard
+        test now uses genuinely-unrecognized scaffold/contig labels.)"""
+        chroms = np.array(["scaffold7", "scaffold8", "contigA", "contigB", "contigC"])
         geno_df, _, positions, sid = _make_snp_qc_inputs(chroms=chroms)
-        with pytest.raises(ValueError, match="1A"):
+        with pytest.raises(ValueError, match="scaffold7"):
             _pipeline_snp_qc(geno_df, chroms, positions, sid,
                              maf_thresh=0.0, miss_thresh=1.0,
                              mac_thresh=0, drop_alt=True)

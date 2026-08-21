@@ -852,12 +852,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # =========================
     # 4. GWAS preprocessing (VCF, QC, kinship, PCs)
     # =========================
-    drop_alt = st.sidebar.checkbox(
-        "Drop non-numeric chromosomes (scaffolds, MT, etc.)",
-        value=True,
-        help="Keep only numbered chromosomes (auto-detected from VCF); "
-             "drops scaffolds, mitochondrial, and other non-chromosomal sequences.",
-    )
+    # P10/P11: unplaced/scaffold (ALT) markers are always excluded -- they carry no
+    # valid genomic position, so no analysis can use them (and they must never enter
+    # the significance divisor). Not a user choice.
+    drop_alt = True
 
     # Load VCF bytes
     if vcf_file is not None:
@@ -1130,6 +1128,16 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
         if results.get("info_field"):
             st.info(f"Imputation quality field detected: **{results['info_field']}**")
+
+        # QC report (P1-P5): report-only heterozygosity / relatedness / F_IS / trait
+        _qc_report = results.get("qc_report")
+        if _qc_report:
+            with st.expander("QC Report — heterozygosity, relatedness, F_IS, trait", expanded=False):
+                from gwas import qc_report as _qcr
+                st.markdown(_qcr.render_qc_report_markdown(_qc_report))
+                for _qc_fn, _qc_fig in _qcr.qc_report_figures(_qc_report).items():
+                    st.pyplot(_qc_fig)
+                    plt.close(_qc_fig)
 
         # MAF distribution + per-chromosome breakdown (collapsible)
         with st.expander("Post-QC diagnostics", expanded=False):

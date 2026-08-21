@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import allel
 import numpy as np
@@ -195,16 +196,35 @@ def _clean_chr_series(chr_array_like, canonical=None):
 
     # keep only pure digits now
     is_digit = s.str.fullmatch(r"\d+")
-    num = pd.Series(np.where(is_digit, s, np.nan))
+    # P8: disomic-allopolyploid subgenome labels (wheat 1A/1B/1D ... 7D, oat, etc.)
+    # are DISTINCT linkage groups -- keep them, never collapse on the number
+    # (mapping 1A/1B/1D all to "1" would merge three non-recombining chromosomes
+    # and corrupt LOCO).  Barley 1H is still handled upstream (trailing-H strip).
+    is_subgenome = s.str.fullmatch(r"\d+[A-Za-z]+")
 
     if canonical is None:
-        # Auto-detect: any positive integer is a valid chromosome
-        lab = num.where(is_digit, other="ALT").astype(str)
+        # Auto-detect: any positive integer, or a <number><letter> subgenome label
+        lab = s.where(is_digit | is_subgenome, other="ALT").astype(str)
     else:
-        lab = num.where(num.isin(canonical), other="ALT").astype(str)
-    numcode = lab.where(lab != "ALT", other="0").astype(int)
+        lab = s.where((is_digit & s.isin(canonical)) | is_subgenome, other="ALT").astype(str)
 
-    uniq = pd.Index(sorted({int(x) for x in lab[lab!="ALT"].unique()}, key=int)).astype(str).tolist()
+    def _chr_numcode(label):
+        if label == "ALT":
+            return 0
+        if label.isdigit():
+            return int(label)                       # normal chromosomes: unchanged
+        m = re.fullmatch(r"(\d+)([A-Za-z]+)", label)
+        if m:
+            base, letters = int(m.group(1)), m.group(2).upper()
+            off = 0
+            for c in letters:
+                off = off * 26 + (ord(c) - ord("A") + 1)
+            return base * 1000 + off                # distinct + sortable; no clash with real chr #s
+        return 0
+
+    numcode = lab.map(_chr_numcode).astype(int)
+
+    uniq = sorted((str(x) for x in lab[lab != "ALT"].unique()), key=_chr_numcode)
     if "ALT" in lab.values:
         uniq = uniq + ["ALT"]
 
