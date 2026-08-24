@@ -715,7 +715,12 @@ def _impute_cached(_geno_df, vcf_hash, sample_set_hash, maf_thresh, miss_thresh,
     share the cache correctly.  ``_geno_df`` leads with an underscore so Streamlit
     excludes it from the key; the remaining args fully determine it (same VCF +
     sample set + QC params -> same post-QC geno_df).  The filters are NOT cached
-    (they cost ~91 ms and set the marker count / significance divisor)."""
+    (they cost ~91 ms and set the marker count / significance divisor).
+
+    CACHE-KEY CONTRACT: a future QC param that shapes the retained marker or
+    sample set -- e.g. the het-screen max_het / het_excess_p, today CLI-only and
+    never passed by gwas_pipeline -- MUST join this key when it is exposed, or the
+    imputation cache silently goes stale."""
     return _pipeline_build_geno_matrices(_geno_df, method=impute_method,
                                          impute_k=impute_k, impute_l=impute_l)
 
@@ -771,6 +776,10 @@ def gwas_pipeline(
         _pipeline_phenotype_qc(geno_df, pheno, trait_col,
                                norm_option, ind_miss_thresh)
 
+    # CACHE-KEY CONTRACT (see _impute_cached): _pipeline_snp_qc also accepts
+    # max_het / het_excess_p (het-screen filter) -- NOT threaded here, so the args
+    # keyed in _impute_cached fully determine the retained marker set. Expose either
+    # (gwas_pipeline signature / GUI) -> add it to the _impute_cached key too.
     geno_df, chroms, chroms_num, positions, sid, n_initial_snps, qc_snp, info_scores = \
         _pipeline_snp_qc(geno_df, chroms, positions, sid,
                          maf_thresh, miss_thresh, mac_thresh, drop_alt,
