@@ -70,7 +70,10 @@ def test_p5_report_structure_and_render(toy_geno):
     assert "QC_report_summary.csv" in dfs
     assert "QC_sample_heterozygosity.csv" in dfs
     md = qr.render_qc_report_markdown(rep)
-    assert "QC Report" in md and "F_IS" in md
+    # no redundant top-level title (the GUI expander is already titled); assert on
+    # real section content instead
+    assert "Per-sample heterozygosity" in md and "F_IS" in md
+    assert "# QC Report" not in md
     # user-facing headings carry no internal package IDs, and the marker breakdown
     # is not duplicated here (the GUI renders a curated version)
     assert "(P1)" not in md and "(P2)" not in md and "(P3)" not in md and "(P4)" not in md

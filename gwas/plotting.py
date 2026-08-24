@@ -704,6 +704,7 @@ def plot_maf_histogram(maf_values, maf_threshold=0.05,
     ax.set_ylabel("Number of SNPs")
     ax.set_title(title)
     fig.tight_layout()
+    return fig
 
 
 # ============================================================
