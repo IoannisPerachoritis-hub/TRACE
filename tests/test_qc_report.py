@@ -83,3 +83,53 @@ def test_p5_report_structure_and_render(toy_geno):
 def test_report_only_never_filters(toy_geno):
     rep = qr.compute_qc_report(toy_geno, [1.0] * 20, "t")
     assert rep["n_samples"] == 20 and rep["n_markers"] == 200
+
+
+# ── P4: imputation report ───────────────────────────────────────────────────
+def _geno(n=20, m=15, seed=0, missing=0.0):
+    rng = np.random.default_rng(seed)
+    G = rng.integers(0, 3, (n, m)).astype(float)
+    if missing:
+        G[rng.random((n, m)) < missing] = np.nan
+    return G, pd.DataFrame(G, index=[f"S{i}" for i in range(n)])
+
+
+def test_imputation_section_noop_on_complete_matrix():
+    G, df = _geno(missing=0.0)
+    rep = qr.compute_qc_report(df, [1.0] * 20, "t", geno_dosage_raw=G, geno_imputed=G,
+                               impute_method="mean")
+    md = qr.render_qc_report_markdown(rep)
+    assert rep["imputation"]["noop"] is True and rep["imputation"]["missing_cells"] == 0
+    assert "## Imputation" in md and "no-op" in md
+
+
+def test_imputation_section_ldknni_class_dist_sums_to_filled():
+    G, df = _geno(seed=1, missing=0.15)
+    raw = df.to_numpy(float)
+    rng = np.random.default_rng(2)
+    imp = np.where(np.isnan(raw), rng.integers(0, 3, raw.shape).astype(float), raw)
+    rep = qr.compute_qc_report(df, [1.0] * 20, "t", geno_dosage_raw=raw, geno_imputed=imp,
+                               impute_method="ldknni", impute_k=5, impute_l=20)
+    i = rep["imputation"]
+    assert i["noop"] is False and i["cells_filled"] == int(np.isnan(raw).sum())
+    assert sum(i["class_dist"].values()) == i["cells_filled"]
+    md = qr.render_qc_report_markdown(rep)
+    assert "Filled classes (LD-kNNi)" in md
+    assert "rounded-mean fill differs" in md      # the discordance line
+    assert i["discordance_vs_mean"] == int((np.rint(imp[np.isnan(raw)])
+                                            != np.rint(np.take(np.nanmean(raw, axis=0),
+                                                               np.where(np.isnan(raw))[1]))).sum())
+
+
+def test_imputation_section_mean_has_filled_count_but_no_class_dist():
+    G, df = _geno(seed=3, missing=0.15)
+    raw = df.to_numpy(float)
+    col_mean = np.nanmean(raw, axis=0)
+    imp = raw.copy()
+    inds = np.where(np.isnan(imp))
+    imp[inds] = np.take(col_mean, inds[1])          # per-column mean fill
+    rep = qr.compute_qc_report(df, [1.0] * 20, "t", geno_dosage_raw=raw, geno_imputed=imp,
+                               impute_method="mean")
+    i = rep["imputation"]
+    assert i["cells_filled"] == int(np.isnan(raw).sum()) and "class_dist" not in i
+    assert "Filled classes" not in qr.render_qc_report_markdown(rep)

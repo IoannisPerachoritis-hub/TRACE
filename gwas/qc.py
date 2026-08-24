@@ -704,6 +704,29 @@ def _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions):
 # Cached orchestrator (thin Streamlit wrapper)
 # ============================================================
 
+def _impute_cached(_geno_df, vcf_hash, sample_set_hash, maf_thresh, miss_thresh,
+                   mac_thresh, ind_miss_thresh, info_thresh, drop_alt, norm_option,
+                   canonical, impute_method, impute_k, impute_l):
+    """Cached imputation, keyed on the RETAINED SAMPLE SET (sample_set_hash), NOT
+    the trait.  Imputation depends on which samples survived phenotype QC (LD-kNNi's
+    LD ranking and its k neighbours are both computed across them), so a per-trait
+    cache would be wrong -- but two traits with an identical retained sample set
+    (and identical VCF + QC + impute params) produce an identical matrix, so they
+    share the cache correctly.  ``_geno_df`` leads with an underscore so Streamlit
+    excludes it from the key; the remaining args fully determine it (same VCF +
+    sample set + QC params -> same post-QC geno_df).  The filters are NOT cached
+    (they cost ~91 ms and set the marker count / significance divisor)."""
+    return _pipeline_build_geno_matrices(_geno_df, method=impute_method,
+                                         impute_k=impute_k, impute_l=impute_l)
+
+
+if st is not None:
+    _impute_cached = st.cache_data(
+        persist="disk", max_entries=4,
+        show_spinner="Imputing genotypes (cached)…",
+    )(_impute_cached)
+
+
 def gwas_pipeline(
     vcf_hash: str,
     pheno_hash: str,
@@ -753,9 +776,12 @@ def gwas_pipeline(
                          maf_thresh, miss_thresh, mac_thresh, drop_alt,
                          info_scores, info_thresh, canonical=canonical)
 
-    geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = \
-        _pipeline_build_geno_matrices(geno_df, method=impute_method,
-                                      impute_k=impute_k, impute_l=impute_l)
+    from gwas.utils import hash_bytes
+    sample_set_hash = hash_bytes(repr(tuple(sorted(geno_df.index.astype(str)))).encode())
+    geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = _impute_cached(
+        geno_df, vcf_hash, sample_set_hash, maf_thresh, miss_thresh, mac_thresh,
+        ind_miss_thresh, info_thresh, drop_alt, norm_option, canonical,
+        impute_method, impute_k, impute_l)
     qc_snp["Imputation method"] = impute_method
 
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
@@ -766,7 +792,10 @@ def gwas_pipeline(
         from gwas import qc_report as _qcr
         _qc_trait = (pheno[trait_col].to_numpy()
                      if trait_col in getattr(pheno, "columns", []) else y.ravel())
-        qc_report = _qcr.compute_qc_report(geno_df, _qc_trait, trait_col, qc_snp=qc_snp)
+        qc_report = _qcr.compute_qc_report(
+            geno_df, _qc_trait, trait_col, qc_snp=qc_snp,
+            geno_dosage_raw=geno_dosage_raw, geno_imputed=geno_imputed,
+            impute_method=impute_method, impute_k=impute_k, impute_l=impute_l)
     except Exception:
         qc_report = None
 

@@ -184,6 +184,44 @@ def trait_summary(trait_values, trait_col: str, n_original: int | None = None) -
 
 
 # ── P5 ─────────────────────────────────────────────────────────────────────
+def _imputation_summary(geno_dosage_raw, geno_imputed, method, impute_k, impute_l):
+    """P4 (report-only): what imputation did, so an instant no-op run is
+    distinguishable from a broken selector.  Both mean and LD-kNNi fill the SAME
+    cells (the missing set); only the value written differs -- so 'cells filled' is
+    one number and the class distribution (LD-kNNi writes discrete 0/1/2; mean
+    writes fractional dosages) is the substantive difference.  No 'N changed'
+    count, which would be identical between methods and tell the user nothing."""
+    out = {"method": method}
+    if method == "ldknni":
+        out["k"], out["l"] = int(impute_k), int(impute_l)
+    if geno_dosage_raw is None:
+        return out
+    raw = np.asarray(geno_dosage_raw, dtype=float)
+    miss = np.isnan(raw)
+    n_cells = int(raw.size)
+    n_missing = int(miss.sum())
+    per_marker_missing = miss.any(axis=0)
+    out.update(
+        missing_cells=n_missing,
+        missing_pct=round(100.0 * n_missing / n_cells, 4) if n_cells else 0.0,
+        markers_with_missing=int(per_marker_missing.sum()),
+        markers_zero_missing=int((~per_marker_missing).sum()),
+        cells_filled=n_missing,
+        noop=(n_missing == 0),
+    )
+    if n_missing and geno_imputed is not None:
+        filled = np.rint(np.asarray(geno_imputed, dtype=float)[miss]).astype(int)
+        if method == "ldknni":
+            out["class_dist"] = {a: int((filled == a).sum()) for a in (0, 1, 2)}
+            # one extra rounded-mean pass -- "does the choice matter on my data?"
+            col_mean = np.nanmean(raw, axis=0)
+            mean_fill = np.rint(np.take(col_mean, np.where(miss)[1])).astype(int)
+            nd = int((filled != mean_fill).sum())
+            out["discordance_vs_mean"] = nd
+            out["discordance_pct"] = round(100.0 * nd / n_missing, 2)
+    return out
+
+
 def compute_qc_report(
     geno_df: pd.DataFrame,
     trait_values,
@@ -193,6 +231,11 @@ def compute_qc_report(
     het_z_thresh: float = 3.0,
     dup_conc_thresh: float = 0.99,
     dup_sample_cap: int = 2000,
+    geno_dosage_raw=None,
+    geno_imputed=None,
+    impute_method: str = "mean",
+    impute_k: int = 5,
+    impute_l: int = 20,
 ) -> dict:
     """Assemble P1-P4 into one report dict.  Called from both orchestration
     paths right after the post-QC dosage matrix is built (before any LD-dedup
@@ -208,6 +251,8 @@ def compute_qc_report(
         "qc_snp": dict(qc_snp) if qc_snp else {},
         "n_samples": int(geno_df.shape[0]),
         "n_markers": int(geno_df.shape[1]),
+        "imputation": _imputation_summary(geno_dosage_raw, geno_imputed,
+                                          impute_method, impute_k, impute_l),
     }
 
 
@@ -218,6 +263,32 @@ def render_qc_report_markdown(report: dict) -> str:
     f = report["variant_fis"]
     t = report["trait"]
     lines = []
+    imp = report.get("imputation")
+    if imp:
+        _m = imp["method"] + (f" (k={imp['k']}, l={imp['l']})"
+                              if imp["method"] == "ldknni" else "")
+        lines += ["## Imputation", "", f"- Method: **{_m}**"]
+        if "missing_cells" in imp:
+            lines += [
+                f"- Missing calls in the QC'd matrix: **{imp['missing_cells']:,}** "
+                f"({imp['missing_pct']:.4g}% of cells)",
+                f"- Markers with at least one missing call: {imp['markers_with_missing']:,}; "
+                f"with none: {imp['markers_zero_missing']:,}",
+                f"- Cells filled: **{imp['cells_filled']:,}**",
+            ]
+            if imp["noop"]:
+                lines += ["- No missing calls; imputation was a no-op and both methods "
+                          "are equivalent for this panel."]
+            else:
+                if "class_dist" in imp:
+                    cd = imp["class_dist"]
+                    lines += [f"- Filled classes (LD-kNNi): "
+                              f"0 -> {cd[0]:,}, 1 -> {cd[1]:,}, 2 -> {cd[2]:,}"]
+                if "discordance_vs_mean" in imp:
+                    lines += [f"- LD-kNNi vs rounded-mean fill differs at "
+                              f"**{imp['discordance_vs_mean']:,}** of {imp['cells_filled']:,} "
+                              f"filled cells ({imp['discordance_pct']:g}%)"]
+        lines += [""]
     lines += [
         "## Per-sample heterozygosity",
         "",
@@ -273,8 +344,20 @@ def qc_report_dataframes(report: dict) -> dict:
     """Tidy CSV-able frames for the run ZIP (report-only)."""
     h, d, f, t = (report["sample_het"], report["dup_pairs"],
                   report["variant_fis"], report["trait"])
+    _imp = report.get("imputation", {})
+    _imp_rows = [
+        ("imputation_method", _imp.get("method", "mean")),
+        ("imputation_missing_cells", _imp.get("missing_cells", 0)),
+        ("imputation_cells_filled", _imp.get("cells_filled", 0)),
+    ]
+    if _imp.get("method") == "ldknni" and _imp.get("class_dist"):
+        cd = _imp["class_dist"]
+        _imp_rows += [("imputation_filled_class_0", cd[0]),
+                      ("imputation_filled_class_1", cd[1]),
+                      ("imputation_filled_class_2", cd[2]),
+                      ("imputation_discordance_vs_mean", _imp.get("discordance_vs_mean", 0))]
     summary = pd.DataFrame(
-        [
+        _imp_rows + [
             ("samples", report["n_samples"]),
             ("markers", report["n_markers"]),
             ("het_mean", round(h["mean"], 4)),
