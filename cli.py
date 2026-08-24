@@ -662,7 +662,10 @@ def run_pipeline(args):
         from gwas import qc_report as _qcr
         _qc_trait = (pheno[args.trait].to_numpy()
                      if args.trait in getattr(pheno, "columns", []) else y.ravel())
-        _qc_rep = _qcr.compute_qc_report(geno_df, _qc_trait, args.trait, qc_snp=qc_snp)
+        _qc_rep = _qcr.compute_qc_report(
+            geno_df, _qc_trait, args.trait, qc_snp=qc_snp,
+            geno_dosage_raw=geno_dosage_raw, geno_imputed=geno_imputed,
+            impute_method=args.impute, impute_k=args.impute_k, impute_l=args.impute_l)
         extra_csvs.update(_qcr.qc_report_dataframes(_qc_rep))
         figures.update(_qcr.qc_report_figures(_qc_rep))
         log.info("  QC report: %d het-outlier(s) |z|>3, %d relatedness pair(s), median F_IS %.3f",
@@ -679,6 +682,14 @@ def run_pipeline(args):
         )
         geno_export.index.name = "SampleID"
         extra_csvs["QC_genotype_matrix.csv"] = geno_export.reset_index()
+        # P3: also export the RAW dosage matrix (NaN preserved) -- the imputed
+        # export destroys the missing-call evidence.  QC_genotype_matrix.csv is
+        # unchanged; this is an additional file.
+        geno_raw_export = pd.DataFrame(
+            geno_dosage_raw, index=list(geno_df.index), columns=sid,
+        )
+        geno_raw_export.index.name = "SampleID"
+        extra_csvs["QC_genotype_raw.csv"] = geno_raw_export.reset_index()
         ref_vals = [allele_map.get(s, (".", "."))[0] for s in sid]
         alt_vals = [allele_map.get(s, (".", "."))[1] for s in sid]
         extra_csvs["QC_snp_map.csv"] = pd.DataFrame({
@@ -688,7 +699,9 @@ def run_pipeline(args):
         extra_csvs["QC_phenotype.csv"] = pd.DataFrame({
             "SampleID": list(geno_df.index), args.trait: y.ravel(),
         })
-        log.info("  QC export: %d samples x %d SNPs", geno_imputed.shape[0], geno_imputed.shape[1])
+        log.info("  QC export: %d samples x %d SNPs (impute=%s; raw missing %.3f%%)",
+                 geno_imputed.shape[0], geno_imputed.shape[1], args.impute,
+                 float(np.isnan(geno_dosage_raw).mean()) * 100.0)
 
     # Per-model PC counts (fall back to --n-pcs when not specified)
     n_pcs_mlm = min(args.n_pcs_mlm if args.n_pcs_mlm is not None else n_pcs, _max_avail)
