@@ -55,6 +55,16 @@ def _build_parser():
     qc.add_argument("--ind-miss", type=float, default=0.20, help="Per-individual missingness max (default: 0.20)")
     qc.add_argument("--info-thresh", type=float, default=0.0,
                      help="Imputation quality threshold (default: 0.0 = disabled)")
+    # Imputation of the GWAS mixed-model genotype matrix. Default mean is byte-identical
+    # to prior behaviour; ldknni is LD-kNNi (Money et al. 2015), opt-in.
+    qc.add_argument("--impute", default="mean", choices=["mean", "ldknni"],
+                     help="Genotype imputation for the GWAS matrix (default: mean). "
+                          "'ldknni' = LD-kNNi (Money et al. 2015): a discrete, "
+                          "LD-weighted k-NN imputer. Does NOT touch geno_dosage_raw.")
+    qc.add_argument("--impute-k", type=int, default=5,
+                     help="LD-kNNi neighbours per call (default: 5).")
+    qc.add_argument("--impute-l", type=int, default=20,
+                     help="LD-kNNi predictor SNPs by r2 (default: 20).")
     # P13: heterozygosity screen (one-sided heterozygote EXCESS; NOT two-sided HWE).
     # Both OFF by default -> byte-identical QC. Excess het flags paralog / repeat-
     # mismapping artifacts; heterozygote deficit (expected in selfers) is never screened.
@@ -591,9 +601,11 @@ def run_pipeline(args):
                          max_het=args.max_het, het_excess_p=args.het_excess_p)
     log.info("  QC: %s", qc_snp)
 
-    log.info("Building genotype matrices…")
+    log.info("Building genotype matrices (impute=%s)…", args.impute)
     geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = \
-        _pipeline_build_geno_matrices(geno_df)
+        _pipeline_build_geno_matrices(geno_df, method=args.impute,
+                                      impute_k=args.impute_k, impute_l=args.impute_l)
+    qc_snp["Imputation method"] = args.impute
 
     log.info("Building kinship matrix…")
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
@@ -1518,6 +1530,8 @@ def run_pipeline(args):
         "MAC threshold": args.mac,
         "Missingness threshold": args.miss,
         "Info threshold": args.info_thresh,
+        "Imputation method": (args.impute if args.impute == "mean"
+                              else f"ldknni (k={args.impute_k}, l={args.impute_l})"),
         "Normalization": args.norm,
         "Significance": sig_rule,
         "PCs_MLM": n_pcs_mlm,
