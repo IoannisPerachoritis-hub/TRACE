@@ -217,7 +217,7 @@ def render_qc_report_markdown(report: dict) -> str:
     d = report["dup_pairs"]
     f = report["variant_fis"]
     t = report["trait"]
-    lines = ["# QC Report", ""]
+    lines = []
     lines += [
         "## Per-sample heterozygosity",
         "",
