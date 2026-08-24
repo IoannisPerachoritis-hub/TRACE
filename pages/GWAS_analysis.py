@@ -456,6 +456,14 @@ LA1589,12.8,7.3
             ),
         )
 
+        impute_method = st.selectbox(
+            "Imputation method", ["mean", "ldknni"], index=0,
+            help=("How the GWAS matrix's missing calls are filled (mirrors CLI "
+                  "--impute). 'mean' (default) = per-SNP mean; 'ldknni' = LD-kNNi "
+                  "(Money et al. 2015), a discrete LD-weighted k-NN imputer. Does "
+                  "not touch the raw dosage matrix used by LD/haplotype/QC."),
+        )
+
 # -------------------------------
 # Sidebar – GWAS configuration
 # -------------------------------
@@ -933,6 +941,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         ind_miss_thresh=ind_miss_thresh,
         mac_thresh=mac_thresh,
         info_thresh=info_thresh,
+        impute_method=impute_method,
     )
 
     # Free VCF bytes from session state — no longer needed after parsing
@@ -1729,6 +1738,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             ind_miss_thresh=ind_miss_thresh,
                             mac_thresh=mac_thresh,
                             info_thresh=info_thresh,
+                            impute_method=impute_method,
                         )
                         y = results["y"]
                         iid = results["iid"]

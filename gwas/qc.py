@@ -597,26 +597,39 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     return geno_df, chroms, chroms_num, positions, sid, n_initial_snps, qc_snp, info_scores
 
 
-def _pipeline_build_geno_matrices(geno_df):
+def _pipeline_build_geno_matrices(geno_df, method="mean", impute_k=5, impute_l=20):
     """
     Build raw dosage matrix (with NaN for LD/haplotype), imputation rate,
-    mean-imputed matrix (for GWAS), and IID array.
+    imputed matrix (for GWAS), and IID array.
+
+    ``method`` selects how the GWAS matrix's missing calls are filled:
+    "mean" (default) = per-SNP mean (SimpleImputer); "ldknni" = LD-kNNi
+    (Money et al. 2015, see gwas/impute.py), an opt-in discrete imputer.
+    Only ``geno_imputed`` is affected -- ``geno_dosage_raw`` keeps its NaN and is
+    never imputed (LD, haplotypes and the QC diagnostics read it).
+    ``snp_imputation_rate`` stays the per-SNP missingness rate regardless of method.
 
     Returns
     -------
     geno_dosage_raw    : ndarray float32 (n_samples, n_snps), NaN for missing
     snp_imputation_rate: ndarray float32 (n_snps,)
-    geno_imputed       : ndarray float32 (n_samples, n_snps), mean-imputed
+    geno_imputed       : ndarray float32 (n_samples, n_snps), imputed
     iid                : ndarray str (n_samples, 2)
     """
     geno_dosage_raw = geno_df.astype("float32").to_numpy()
     snp_imputation_rate = geno_df.isna().mean(axis=0).values.astype(np.float32)
 
-    # Mean imputation ONLY for GWAS mixed model
-    # NOTE: mean imputation biases effect estimates toward zero for high-missingness SNPs.
-    # For publication, consider upstream imputation (Beagle/STITCH) for panels with >5% missingness.
-    imputer = SimpleImputer(strategy="mean")
-    geno_imputed = imputer.fit_transform(geno_df).astype("float32")
+    if method == "ldknni":
+        # LD-kNNi (opt-in): impute the raw dosage matrix (with NaN) to discrete
+        # {0,1,2}; geno_dosage_raw itself is not modified.
+        from gwas.impute import ld_knni
+        geno_imputed = ld_knni(geno_dosage_raw, k=impute_k, l=impute_l).astype("float32")
+    else:
+        # Mean imputation (default) ONLY for the GWAS mixed model -- unchanged.
+        # NOTE: mean imputation biases effect estimates toward zero for high-missingness SNPs.
+        # For publication, consider upstream imputation (Beagle/STITCH) for panels with >5% missingness.
+        imputer = SimpleImputer(strategy="mean")
+        geno_imputed = imputer.fit_transform(geno_df).astype("float32")
 
     iid = np.c_[geno_df.index.values, geno_df.index.values].astype(str)
 
@@ -703,6 +716,9 @@ def gwas_pipeline(
     mac_thresh,
     info_thresh=0.0,
     canonical=None,
+    impute_method="mean",
+    impute_k=5,
+    impute_l=20,
 ):
     """
     Cached preprocessing pipeline.
@@ -738,7 +754,9 @@ def gwas_pipeline(
                          info_scores, info_thresh, canonical=canonical)
 
     geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = \
-        _pipeline_build_geno_matrices(geno_df)
+        _pipeline_build_geno_matrices(geno_df, method=impute_method,
+                                      impute_k=impute_k, impute_l=impute_l)
+    qc_snp["Imputation method"] = impute_method
 
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
         _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions)

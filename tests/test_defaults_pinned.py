@@ -24,7 +24,7 @@ import pytest
 
 import annotation
 import cli
-from gwas import haplotype, ld, models, plotting, reports
+from gwas import haplotype, impute, ld, models, plotting, reports
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -217,6 +217,10 @@ SIGNATURE_DEFAULTS = [
     ("plotting.compute_r2_to_lead", plotting.compute_r2_to_lead, "min_pair_n", 15, "plotting.py:409"),
     # D-102: the shipped FarmCPU final scan is the classical OLS fixed-effect test.
     ("models.run_farmcpu", models.run_farmcpu, "final_scan", "ols", "gwas/models.py:1183"),
+    # LD-kNNi (Money et al. 2015) opt-in imputer -- the published k/l/c defaults.
+    ("impute.ld_knni", impute.ld_knni, "k", 5, "gwas/impute.py:153"),
+    ("impute.ld_knni", impute.ld_knni, "l", 20, "gwas/impute.py:153"),
+    ("impute.ld_knni", impute.ld_knni, "c", 1.0, "gwas/impute.py:153"),
 ]
 
 
@@ -236,7 +240,7 @@ def test_signature_default(label, fn, param, expected, loc):
 def test_signature_default_count_is_stable():
     """The pinned set is the signature defaults enumerated by T-72, plus D-102's
     FarmCPU final_scan. A new load-bearing default is added here deliberately."""
-    assert len(SIGNATURE_DEFAULTS) == 29
+    assert len(SIGNATURE_DEFAULTS) == 32
 
 
 # ===========================================================================
@@ -299,6 +303,8 @@ CLI_DEFAULTS = [
     ("species", "tomato", "cli.py --species"),
     ("genome_build", "SL3", "cli.py --genome-build"),
     ("seed", 42, "cli.py:104 --seed"),
+    # guard against an accidental default flip of imputation to LD-kNNi (type c).
+    ("impute", "mean", "cli.py --impute"),
 ]
 
 
