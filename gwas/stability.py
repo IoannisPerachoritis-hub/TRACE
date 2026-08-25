@@ -222,7 +222,7 @@ def ld_block_stability_screen(
     lead_retention = np.zeros(len(ref_int), dtype=int)
 
     ref_leads = [
-        set(_split_leads(r.get("Lead SNP", "")))
+        set(_split_leads(r.get("lead_snp", "")))
         for _, r in ref.iterrows()
     ]
 

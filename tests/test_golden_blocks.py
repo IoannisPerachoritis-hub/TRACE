@@ -21,7 +21,7 @@ from gwas.ld import filter_contained_blocks, find_ld_clusters_genomewide
 from tests.golden._canon import GOLDEN_DIR, canon_block_table, load_case
 from tests.golden._cases import TIER_A_CASES
 
-BLOCK_SCHEMA = ["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs", "Mean r2"]
+BLOCK_SCHEMA = ["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2"]
 
 
 def _detect(inp, params, *, min_snps=None):
@@ -75,7 +75,7 @@ def test_golden_filtered_block_table_is_unchanged(case):
 
 
 def test_below_min_snps_is_empty_with_full_schema():
-    """The below-min-SNPs case yields an EMPTY table carrying the full five-column
+    """The below-min-SNPs case yields an EMPTY table carrying the full column
     schema — this is the shape that catches a relaxed min_snps."""
     inp, _expected, meta = load_case("blocks_below_min_snps")
     got = _detect(inp, meta["params"])

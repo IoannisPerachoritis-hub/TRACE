@@ -109,7 +109,7 @@ def run_haplotype_block_gwas(
     if haplo_df is None or len(haplo_df) == 0:
         return pd.DataFrame(
             columns=[
-                "Chr", "Start", "End", "Lead SNP",
+                "Chr", "Start", "End", "lead_snp",
                 "n_snps", "n_haplotypes", "n_tested_haplotypes",
                 "df1", "df2",
                 "F_param", "PValue_param",
@@ -146,7 +146,7 @@ def run_haplotype_block_gwas(
         chr_sel = str(block["Chr"])
         start_bp = int(block["Start (bp)"])
         end_bp = int(block["End (bp)"])
-        lead_snp = str(block.get("Lead SNP", ""))
+        lead_snp = str(block.get("lead_snp", ""))
 
         region_mask = get_block_snp_mask(block, chroms, positions, sid)
 
@@ -370,7 +370,12 @@ def run_haplotype_block_gwas(
                 pcs=pcs_use,
             )
 
-            block_seed = stable_seed(chr_sel, start_bp, end_bp, lead_snp, trait_col, "FL")
+            # Seed the Freedman-Lane permutation from the block's coordinates only.
+            # The SNP id was dropped (P3): it is a reproducibility handle, not a
+            # statistical one (every seed gives an unbiased p-value), and it must not
+            # reference the lead_snp column (a p-value-derived quantity) -- otherwise
+            # any QC/normalisation change would silently reseed every permutation.
+            block_seed = stable_seed(chr_sel, start_bp, end_bp, trait_col, "FL")
             F_obs, pval_perm = freedman_lane_perm_pvalue(
                 y=y_test,
                 groups=g_test,
@@ -396,7 +401,7 @@ def run_haplotype_block_gwas(
                 "Chr": chr_sel,
                 "Start": start_bp,
                 "End": end_bp,
-                "Lead SNP": lead_snp,
+                "lead_snp": lead_snp,
                 "n_samples_block": int(n_samples_block_used),
                 "n_snps": int(n_snps_block),
                 "n_haplotypes": int(hap_counts.shape[0]),
@@ -428,7 +433,7 @@ def run_haplotype_block_gwas(
     if not results:
         return pd.DataFrame(
             columns=[
-                "Chr", "Start", "End", "Lead SNP",
+                "Chr", "Start", "End", "lead_snp",
                 "n_snps", "n_haplotypes", "n_tested_haplotypes",
                 "df1", "df2",
                 "F_param", "PValue_param",
@@ -639,7 +644,7 @@ def normalize_ld_blocks_schema(df: pd.DataFrame) -> pd.DataFrame:
       - Chr
       - Start (bp)
       - End (bp)
-      - Lead SNP
+      - lead_snp
     """
     if df is None or len(df) == 0:
         return df
@@ -656,14 +661,13 @@ def normalize_ld_blocks_schema(df: pd.DataFrame) -> pd.DataFrame:
     if "End (bp)" not in out.columns and "End" in out.columns:
         out = out.rename(columns={"End": "End (bp)"})
 
-    # Lead SNP variants
-    if "Lead SNP" not in out.columns:
-        if "Lead_SNP" in out.columns:
-            out = out.rename(columns={"Lead_SNP": "Lead SNP"})
-        elif "Lead" in out.columns:
-            out = out.rename(columns={"Lead": "Lead SNP"})
-        elif "Representative SNP" in out.columns:
-            out = out.rename(columns={"Representative SNP": "Lead SNP"})
+    # lead_snp variants (canonical name = lead_snp; alias the legacy "Lead SNP"
+    # spelling + older variants so pre-rename CSVs still load)
+    if "lead_snp" not in out.columns:
+        for _legacy in ("Lead SNP", "Lead_SNP", "Lead", "Representative SNP"):
+            if _legacy in out.columns:
+                out = out.rename(columns={_legacy: "lead_snp"})
+                break
 
     # Enforce presence of required columns
     required = ["Chr", "Start (bp)", "End (bp)"]
@@ -684,8 +688,8 @@ def normalize_ld_blocks_schema(df: pd.DataFrame) -> pd.DataFrame:
     out["Start (bp)"] = out["Start (bp)"].astype(int)
     out["End (bp)"] = out["End (bp)"].astype(int)
 
-    if "Lead SNP" not in out.columns:
-        out["Lead SNP"] = ""
+    if "lead_snp" not in out.columns:
+        out["lead_snp"] = ""
 
     return out
 

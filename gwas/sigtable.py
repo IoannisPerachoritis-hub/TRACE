@@ -142,7 +142,7 @@ def build_significant_snp_table(
         ec = "End (bp)" if "End (bp)" in blocks_df.columns else "End"
         for _, b in blocks_df.iterrows():
             block_rows.append((canon_chr(b["Chr"]), int(b[sc]), int(b[ec]),
-                               str(b.get("Lead SNP", "")),
+                               str(b.get("lead_snp", "")),
                                set(filter(None, str(b.get("SNP_IDs", "")).split(",")))))
     block_ann = {}
     if genes is not None and blocks_df is not None and len(blocks_df) > 0:

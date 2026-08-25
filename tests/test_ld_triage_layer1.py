@@ -31,7 +31,7 @@ def _synthetic():
     chroms = np.array(["1"] * 8)
     blocks = pd.DataFrame({
         "Chr": ["1", "1"], "Start (bp)": [100, 1100], "End (bp)": [400, 1400],
-        "Lead SNP": ["a0", "b0"], "SNP_IDs": ["a0,a1,a2,a3", "b0,b1,b2,b3"],
+        "lead_snp": ["a0", "b0"], "SNP_IDs": ["a0,a1,a2,a3", "b0,b1,b2,b3"],
     })
     gwas = pd.DataFrame({"SNP": sid, "PValue": [1e-9, 0.2, 0.3, 0.4, 1e-8, 0.2, 0.3, 0.4]})
     return blocks, chroms, positions, sid, geno, gwas
@@ -54,19 +54,33 @@ def test_block_ld_quality_correlated_vs_independent():
 
 def test_lead_absent_no_raise():
     blocks, chroms, positions, sid, geno, gwas = _synthetic()
-    blocks.loc[0, "Lead SNP"] = "not_a_snp"                   # lead absent from sid
+    blocks.loc[0, "lead_snp"] = "not_a_snp"                   # lead absent from sid
     blocks.loc[0, "SNP_IDs"] = "a1,a2,a3"                     # and not a member
     out = compute_block_ld_quality(blocks, chroms, positions, sid, geno, gwas)
     assert out.iloc[0]["ldq_lead_in_block"] == False          # noqa: E712 — pandas bool
 
 
-def test_multi_lead_deterministic():
+def test_single_lead_is_lead_snp():
+    """The producer now emits ONE min-p lead_snp per block (no seed-union), so
+    compute_block_ld_quality surfaces it unchanged: ldq_lead_snp == lead_snp,
+    ldq_n_leads == 1."""
     blocks, chroms, positions, sid, geno, gwas = _synthetic()
-    blocks.loc[0, "Lead SNP"] = "a3;a1;a0"                    # merged multi-lead
+    blocks.loc[0, "lead_snp"] = "a0"                          # single lead (min-p seed)
     out = compute_block_ld_quality(blocks, chroms, positions, sid, geno, gwas)
     row = out.iloc[0]
-    assert row["ldq_n_leads"] == 3
-    assert row["ldq_lead_snp"] == "a0"                        # smallest PValue among tokens
+    assert row["ldq_n_leads"] == 1
+    assert row["ldq_lead_snp"] == "a0"
+    assert row["ldq_lead_in_block"]                           # a0 is a member of SNP_IDs
+
+
+def test_legacy_lead_snp_column_still_resolves():
+    """Backward-compat: a pre-rename block table carrying a semicolon-joined "Lead SNP"
+    (and no lead_snp column) is still resolved to the min-p token."""
+    blocks, chroms, positions, sid, geno, gwas = _synthetic()
+    blocks = blocks.rename(columns={"lead_snp": "Lead SNP"})
+    blocks.loc[0, "Lead SNP"] = "a3;a1;a0"                    # legacy merged multi-lead
+    out = compute_block_ld_quality(blocks, chroms, positions, sid, geno, gwas)
+    assert out.iloc[0]["ldq_lead_snp"] == "a0"               # smallest PValue among tokens
 
 
 def test_lead_estimator_raw_vs_imputed_differ():

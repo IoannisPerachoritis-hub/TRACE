@@ -74,7 +74,7 @@ st.markdown("""
 | **Chr** | Chromosome |
 | **Start (bp)** / **End (bp)** | Physical boundaries of the LD block |
 | **N_SNPs** | Number of SNPs in the block |
-| **Lead SNP** | Most significant SNP(s) in the block |
+| **lead_snp** | The block's most significant SEEDING SNP (smallest GWAS p-value among the significant SNPs that formed the block). It may not be a member of the block's LD-connected SNPs. **lead_snp_pvalue** gives its p-value. |
 | **overlapping_genes** | Genes whose coordinates overlap with the block |
 | **upstream_gene_1** / **downstream_gene_1** | Nearest flanking genes outside the block |
 """)
@@ -126,7 +126,8 @@ documented in full — every column, type, and when it's emitted — in
 - **`LD_r2_long_*.csv`** / **`LD_r2_matrix_*.csv`** — the r² numbers behind the Local LD
   heatmap (long-format pairs, and the square matrix).
 - **`Regional_data_*.csv`** — per-SNP p-value, r²-to-lead, and block membership behind the
-  regional plot. A block's lead is the **seed** SNP and need not be a member, so
+  regional plot. A block's `lead_snp` is its **most significant seeding SNP** (the smallest
+  GWAS p-value among the significant SNPs that formed the block); it may not be a member, so
   `block_member = False` for the lead is expected, not a bug.
 
 Run `trace-gwas --help` for the `--covar` covariate flag and the numeric

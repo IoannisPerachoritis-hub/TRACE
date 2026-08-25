@@ -46,10 +46,10 @@ ETA2_COLUMNS = ["eta2_null_expected", "eta2_adj", "eta2_F_rank_delta"]
 NEW_COLUMNS = LDQ_COLUMNS + MLG_COLUMNS + TRIAGE_COLUMNS + ETA2_COLUMNS
 
 # existing inventories (spec §2.7); if any of these change, other guards catch it
-BLOCK_TABLE_COLUMNS = ["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs",
-                       "n_contained_blocks"]
+BLOCK_TABLE_COLUMNS = ["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue",
+                       "SNP_IDs", "n_contained_blocks"]
 HAPLOTYPE_TABLE_COLUMNS = [
-    "Chr", "Start", "End", "Lead SNP", "n_samples_block", "n_snps",
+    "Chr", "Start", "End", "lead_snp", "n_samples_block", "n_snps",
     "n_haplotypes", "n_tested_haplotypes", "df1", "df2", "n_permutations",
     "permutation_type", "F_param", "PValue_param", "F_perm", "P_perm", "PValue",
     "eta2", "hap_stats_json", "MidPos", "-log10p", "FDR_BH",

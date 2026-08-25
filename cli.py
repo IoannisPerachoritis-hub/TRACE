@@ -1180,8 +1180,8 @@ def run_pipeline(args):
                     _sig_snps = set(model_df.loc[model_df[_sig_col_name], "SNP"].astype(str))
                 _n_hm = 0
                 for _, _brow in m_ld_blocks.iterrows():
-                    _lead_snps = str(_brow.get("Lead SNP", "")).split(";")
-                    if not any(s.strip() in _sig_snps for s in _lead_snps):
+                    _lead = str(_brow.get("lead_snp", "")).strip()
+                    if _lead not in _sig_snps:
                         continue
                     _bchr = canon_chr(str(_brow["Chr"]))
                     _bstart = int(_brow.get("Start (bp)", _brow.get("Start", 0)))

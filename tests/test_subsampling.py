@@ -21,7 +21,7 @@ def _make_discovery_df(sid, chroms, positions, disc_freq):
 
 def _make_ld_blocks(blocks):
     """Build LD blocks DataFrame from list of (chr, start, end, lead) tuples."""
-    return pd.DataFrame(blocks, columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP"])
+    return pd.DataFrame(blocks, columns=["Chr", "Start (bp)", "End (bp)", "lead_snp"])
 
 
 def _make_raw_pvals(n_reps, n_snps, rng_seed=42):
