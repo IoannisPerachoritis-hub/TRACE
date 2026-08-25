@@ -762,44 +762,34 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 help="Transformations will overwrite the selected columns.",
             )
 
+            _NORM_LABELS = {
+                "None (raw values)": "none",
+                "Z-score (scaling, not normalisation)": "zscore",
+                "Log10 (refused if any value <= 0)": "log",
+                "Yeo-Johnson (robust; handles negatives)": "yeojohnson",
+                "Rank-based inverse normal (INT)": "int",
+            }
             norm_method = st.selectbox(
                 "Transformation method:",
-                [
-                    "None (raw values)",
-                    "Log10 (recommended for metabolites)",
-                    "Rank-based inverse normal (INT)",
-                ],
+                list(_NORM_LABELS),
+                help=(
+                    "z-score is a SCALING (does not change p-values; kept for "
+                    "effect-size comparability). Log10 / Yeo-Johnson / INT change the "
+                    "distribution. Log is refused (not shifted) when any value is <= 0."
+                ),
             )
+            _norm_slug = _NORM_LABELS[norm_method]
 
-            if cols_to_norm and norm_method != "None (raw values)":
+            if cols_to_norm and _norm_slug != "none":
+                from gwas.qc import normalise_phenotype
                 pheno_trans = pheno.copy()
-                import scipy.stats as ss
-
-                def safe_log10(x):
-                    x = x.astype(float)
-                    min_val = np.nanmin(x)
-                    shift = abs(min_val) + 1e-6 if min_val <= 0 else 0
-                    return np.log10(x + shift)
-
-                def rank_int(x):
-                    x = x.astype(float)
-                    mask = np.isfinite(x)
-                    if mask.sum() < 3:
-                        return x
-                    ranks = ss.rankdata(x[mask])
-                    u = (ranks - 0.5) / mask.sum()
-                    z = ss.norm.ppf(u)
-                    out = np.full_like(x, np.nan)
-                    out[mask] = z
-                    return out
 
                 for col in cols_to_norm:
-                    x = pd.to_numeric(pheno_trans[col], errors="coerce").astype(float)
-
-                    if norm_method == "Log10 (recommended for metabolites)":
-                        pheno_trans[col] = safe_log10(x)
-                    elif norm_method == "Rank-based inverse normal (INT)":
-                        pheno_trans[col] = rank_int(x)
+                    x = pd.to_numeric(pheno_trans[col], errors="coerce").to_numpy(float)
+                    y_out, _note = normalise_phenotype(x, _norm_slug)
+                    if _note:
+                        st.warning(f"'{col}': {_note}")
+                    pheno_trans[col] = y_out
 
                 st.write(f"Transformation '{norm_method}' applied.")
                 st.dataframe(pheno_trans[cols_to_norm].head())
@@ -895,9 +885,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         vcf_bytes = st.session_state["_persist_vcf_bytes"]
         is_gz = st.session_state.get("_persist_is_gz", False)
 
-    # Phenotype normalization: handled exclusively in Section 2b (Log10/INT).
-    # No additional sidebar normalization to avoid double-transformation.
-    norm_option = "None"
+    # Phenotype normalisation is handled exclusively in Section 2b (above); the
+    # pipeline must not re-transform, so it receives the 'none' slug.
+    norm_option = "none"
 
     n_pcs = st.sidebar.slider(
         "Number of PCs (MLM)",

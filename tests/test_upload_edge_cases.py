@@ -136,7 +136,7 @@ class TestNonNumericTrait:
             index=geno_df.index,
         )
         with pytest.raises(ValueError, match="no numeric values"):
-            _pipeline_phenotype_qc(geno_df, pheno, "trait", "None (raw values)", 0.5)
+            _pipeline_phenotype_qc(geno_df, pheno, "trait", "none", 0.5)
 
     def test_mixed_numeric_proceeds(self):
         """Trait with some numeric and some non-numeric should proceed."""
@@ -152,7 +152,7 @@ class TestNonNumericTrait:
         )
         # Should succeed — "NA" treated as missing
         geno_out, pheno_out, y = _pipeline_phenotype_qc(
-            geno_df, pheno, "trait", "None (raw values)", 0.5,
+            geno_df, pheno, "trait", "none", 0.5,
         )
         assert geno_out.shape[0] == 4  # one dropped (NA)
         assert not np.isnan(y).any()
