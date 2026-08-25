@@ -464,6 +464,25 @@ LA1589,12.8,7.3
                   "not touch the raw dosage matrix used by LD/haplotype/QC."),
         )
 
+        if impute_method == "ldknni":
+            impute_k = st.number_input(
+                "LD-kNNi neighbours (k)", min_value=1, max_value=50, value=5, step=1,
+                key="impute_k",
+                help=("How many nearest samples vote per missing call. 5 is the value "
+                      "Money et al. 2015 chose for their apple dataset (Fig S1), not a "
+                      "universal constant; it is near-optimal on both TRACE panels."),
+            )
+            impute_l = st.number_input(
+                "LD-kNNi predictor SNPs (l)", min_value=2, max_value=200, value=20, step=1,
+                key="impute_l",
+                help=("How many top-r2 SNPs restrict the distance. 20 is the apple value "
+                      "(Money et al. 2015); larger is NOT better -- on a sparse panel "
+                      "(pepper) l=100 cost ~4 concordance points vs l=10, because "
+                      "predictors beyond the strongest few are mostly noise."),
+            )
+        else:
+            impute_k, impute_l = 5, 20
+
 # -------------------------------
 # Sidebar – GWAS configuration
 # -------------------------------
@@ -942,6 +961,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         mac_thresh=mac_thresh,
         info_thresh=info_thresh,
         impute_method=impute_method,
+        impute_k=impute_k,
+        impute_l=impute_l,
     )
 
     # Free VCF bytes from session state — no longer needed after parsing
@@ -1739,6 +1760,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             mac_thresh=mac_thresh,
                             info_thresh=info_thresh,
                             impute_method=impute_method,
+                            impute_k=impute_k,
+                            impute_l=impute_l,
                         )
                         y = results["y"]
                         iid = results["iid"]
