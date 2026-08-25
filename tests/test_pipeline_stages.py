@@ -49,7 +49,7 @@ def small_pheno(small_geno_df, rng):
 class TestPipelinePhenotypeQc:
     def test_returns_aligned_shapes(self, small_geno_df, small_pheno):
         geno, pheno, y = _pipeline_phenotype_qc(
-            small_geno_df, small_pheno, "trait", "None (raw values)", 0.5,
+            small_geno_df, small_pheno, "trait", "none", 0.5,
         )
         assert geno.shape[0] == pheno.shape[0] == y.shape[0]
         assert geno.index.equals(pheno.index)
@@ -58,14 +58,14 @@ class TestPipelinePhenotypeQc:
         # Set first sample phenotype to NaN
         small_pheno.iloc[0, 0] = np.nan
         geno, pheno, y = _pipeline_phenotype_qc(
-            small_geno_df, small_pheno, "trait", "None (raw values)", 0.5,
+            small_geno_df, small_pheno, "trait", "none", 0.5,
         )
         assert geno.shape[0] == small_geno_df.shape[0] - 1
         assert not np.isnan(y).any()
 
     def test_zscore_normalization(self, small_geno_df, small_pheno):
         _, _, y = _pipeline_phenotype_qc(
-            small_geno_df, small_pheno, "trait", "Z-score (mean=0, sd=1)", 0.5,
+            small_geno_df, small_pheno, "trait", "zscore", 0.5,
         )
         assert abs(np.mean(y)) < 0.1
         assert abs(np.std(y) - 1.0) < 0.2
@@ -73,7 +73,7 @@ class TestPipelinePhenotypeQc:
     def test_rank_int_normalization(self, small_geno_df, small_pheno):
         _, _, y = _pipeline_phenotype_qc(
             small_geno_df, small_pheno, "trait",
-            "Rank-based inverse normal (INT)", 0.5,
+            "int", 0.5,
         )
         # INT output should have mean ~0 and sd ~1
         assert abs(np.mean(y)) < 0.1
@@ -86,7 +86,7 @@ class TestPipelinePhenotypeQc:
         )
         with pytest.raises(ValueError, match="near-zero variance"):
             _pipeline_phenotype_qc(
-                small_geno_df, pheno, "trait", "None (raw values)", 0.5,
+                small_geno_df, pheno, "trait", "none", 0.5,
             )
 
 

@@ -79,7 +79,9 @@ def _build_parser():
     parser.add_argument(
         "--norm", default="none",
         choices=["none", "zscore", "log", "yeojohnson", "int"],
-        help="Phenotype normalization: none, zscore, log, yeojohnson, int (default: none)",
+        help=("Phenotype normalisation slug: 'int' (rank-based inverse normal) "
+              "recommended; 'log'/'yeojohnson' change the distribution; 'zscore' is "
+              "scaling only (p-value-neutral). Default: none."),
     )
 
     # Model selection
@@ -464,15 +466,9 @@ def _interactive_wizard(parser):
         print("Aborted.")
         sys.exit(0)
 
-    # Apply norm mapping (same as non-interactive path)
-    norm_map = {
-        "none": "None (raw values)",
-        "zscore": "Z-score (mean=0, sd=1)",
-        "log": "Log transform (if positive)",
-        "yeojohnson": "Yeo-Johnson (robust Box-Cox)",
-        "int": "Rank-based inverse normal (INT)",
-    }
-    args.norm = norm_map.get(args.norm, args.norm)
+    # --norm is already a slug (none/zscore/log/yeojohnson/int) -- passed straight
+    # to normalise_phenotype, no display-string mapping (the mapping caused the
+    # en-dash no-op bug: hyphen 'Yeo-Johnson' never matched the en-dash key).
 
     return args
 
@@ -489,15 +485,8 @@ def run_pipeline(args):
     log = logging.getLogger("cli")
 
     # ── Validate inputs ──────────────────────────────────
-    # Map norm slug to display string expected by _pipeline_phenotype_qc
-    norm_map = {
-        "none": "None (raw values)",
-        "zscore": "Z-score (mean=0, sd=1)",
-        "log": "Log transform (if positive)",
-        "yeojohnson": "Yeo-Johnson (robust Box-Cox)",
-        "int": "Rank-based inverse normal (INT)",
-    }
-    args.norm = norm_map.get(args.norm, args.norm)
+    # --norm is a slug (none/zscore/log/yeojohnson/int) passed straight to
+    # normalise_phenotype -- no display-string mapping.
 
     # MLMM/FarmCPU require MLM as the primary model
     if "mlm" not in args.model and any(

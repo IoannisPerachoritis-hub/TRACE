@@ -2,7 +2,8 @@
 import numpy as np
 import pandas as pd
 import pytest
-from gwas.qc import allele_freq_from_called_dosage, valid_af_mask_from_called_dosage, _pipeline_snp_qc
+from gwas.qc import (allele_freq_from_called_dosage, valid_af_mask_from_called_dosage,
+                     _pipeline_snp_qc, normalise_phenotype)
 
 
 # ── allele_freq_from_called_dosage ───────────────────────────
@@ -188,3 +189,31 @@ class TestChromosomeGuard:
             _pipeline_snp_qc(geno_df, chroms, positions, sid,
                              maf_thresh=0.0, miss_thresh=1.0,
                              mac_thresh=0, drop_alt=True)
+
+
+def test_normalise_phenotype_slugs():
+    """Slug-keyed dispatch: each slug applies (or refuses) correctly; an unknown
+    slug is left raw with a note -- the class of bug the en-dash keys caused."""
+    y = np.array([1.0, 2, 4, 8, 16, 32])
+    out, note = normalise_phenotype(y, "none")
+    assert note is None and np.array_equal(out, y)
+    out, note = normalise_phenotype(y, "zscore")
+    assert note is None and abs(float(out.mean())) < 1e-9
+    out, note = normalise_phenotype(np.array([1.0, 10, 100]), "log")
+    assert note is None and np.allclose(out, [0, 1, 2])
+    yn = np.array([-1.0, 0, 5])
+    out, note = normalise_phenotype(yn, "log")           # refuse, not shift
+    assert note is not None and np.array_equal(out, yn)
+    out, note = normalise_phenotype(y, "yeojohnson")
+    assert note is None and not np.allclose(out, y)
+    out, note = normalise_phenotype(np.arange(1.0, 21.0), "int")
+    assert note is None and abs(float(out.mean())) < 1e-9
+    out, note = normalise_phenotype(y, "Yeo-Johnson")     # a display string is now unknown
+    assert note is not None and np.array_equal(out, y)
+
+
+def test_normalise_phenotype_preserves_nan():
+    y = np.array([1.0, np.nan, 3, np.nan, 5])
+    for slug in ("zscore", "log", "yeojohnson", "int"):
+        out, _ = normalise_phenotype(y, slug)
+        assert np.isnan(out[1]) and np.isnan(out[3]), slug

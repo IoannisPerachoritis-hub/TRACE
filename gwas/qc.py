@@ -336,6 +336,46 @@ def _pipeline_harmonize_ids(genotypes, samples, chroms, positions, vid, ref, alt
     return geno_df, pheno, chroms, positions, sid, info_scores, allele_map
 
 
+def normalise_phenotype(y, slug):
+    """Apply a phenotype transform, dispatched on a short SLUG (never a display
+    string -- a display/dash mismatch silently no-op'd Yeo-Johnson for a year).
+    Pure and NaN-preserving.
+
+    Slugs: 'none' (identity); 'zscore' (centre/scale -- a SCALING, exactly
+    p-value-neutral, kept only for effect-size comparability); 'log' (log10,
+    REFUSED with a note if any value <= 0 -- a shift would make every value depend
+    on the minimum observed); 'yeojohnson' (handles negatives); 'int' (rank-based
+    inverse normal, via gwas.utils._rank_int_1d).
+
+    Returns ``(y_out, note)``: ``note`` is None when applied, else a short string
+    saying why it was skipped, so the caller warns (CLI logging / GUI st.warning).
+    """
+    y = np.asarray(y, dtype=float).ravel()
+    if slug in ("none", "", None):
+        return y, None
+    finite = np.isfinite(y)
+    if slug == "zscore":
+        mean = float(np.nanmean(y))
+        std = float(np.nanstd(y)) or 1.0
+        return (y - mean) / std, None
+    if slug == "log":
+        if finite.any() and np.all(y[finite] > 0):
+            out = y.copy()
+            out[finite] = np.log10(y[finite])
+            return out, None
+        return y, "log transform skipped -- phenotype has non-positive values"
+    if slug == "yeojohnson":
+        from scipy.stats import yeojohnson
+        out = y.copy()
+        if int(finite.sum()) >= 2:
+            out[finite], _ = yeojohnson(y[finite])
+        return out, None
+    if slug == "int":
+        from gwas.utils import _rank_int_1d
+        return _rank_int_1d(y), None
+    return y, f"unknown normalisation '{slug}' -- phenotype left untransformed"
+
+
 def _pipeline_phenotype_qc(geno_df, pheno, trait_col, norm_option, ind_miss_thresh):
     """
     Extract phenotype vector, filter NaN samples, apply sample-level
@@ -404,24 +444,11 @@ def _pipeline_phenotype_qc(geno_df, pheno, trait_col, norm_option, ind_miss_thre
     if geno_df.shape[0] != y.shape[0]:
         raise RuntimeError("Genotype and phenotype lengths differ after filtering.")
 
-    # Normalization
-    if norm_option == "Z-score (mean=0, sd=1)":
-        y_mean = float(np.nanmean(y))
-        y_std = float(np.nanstd(y)) or 1.0
-        y = (y - y_mean) / y_std
-    elif norm_option == "Min–Max scaling (0–1)":
-        y_min, y_max = float(np.nanmin(y)), float(np.nanmax(y))
-        if y_max > y_min:
-            y = (y - y_min) / (y_max - y_min)
-    elif norm_option == "Log transform (if positive)" and np.all(y > 0):
-        y = np.log10(y)
-    elif norm_option == "Yeo–Johnson (robust Box–Cox)":
-        from scipy.stats import yeojohnson
-        y_trans, _ = yeojohnson(y.flatten())
-        y = y_trans.reshape(-1, 1)
-    elif norm_option == "Rank-based inverse normal (INT)":
-        from gwas.utils import _rank_int_1d
-        y = _rank_int_1d(y.ravel()).reshape(-1, 1)
+    # Normalization (slug-keyed dispatch -- see normalise_phenotype)
+    y_flat, _norm_note = normalise_phenotype(y.ravel(), norm_option)
+    y = y_flat.reshape(-1, 1)
+    if _norm_note and norm_option not in ("none", "", None):
+        log.warning("Phenotype '%s': %s", trait_col, _norm_note)
 
     return geno_df, pheno, y
 
