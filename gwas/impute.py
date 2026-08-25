@@ -124,6 +124,54 @@ def _ld_rank_topl(G, l=20, r2_cap=None, block_size=512, min_pair_n=20):
     return topl, topl_r2
 
 
+def empty_topl_fraction(G, target_idx=None, min_pair_n=20, max_targets=2000,
+                        block_size=512, random_state=0):
+    """Fraction of target SNPs with NO valid LD partner -- i.e. an empty top-l
+    predictor list, so ``ld_knni`` falls back to that SNP's per-SNP MODE for its
+    missing calls, NOT LD-kNNi.  A cheap diagnostic for the P4 imputation report.
+
+    A SNP's top-l is empty iff it has zero partner with (co-observed >= min_pair_n
+    AND r^2 > 0) -- independent of l -- so this reuses the blocked pairwise-complete
+    r^2 of ``_ld_rank_topl`` but only COUNTS empties, over a random subsample of
+    <= ``max_targets`` targets (predictors are always the full panel).  Cost is thus
+    ~ max_targets x m, not m x m.  ``target_idx`` restricts the scanned targets (the
+    report passes the markers WITH missing calls, the only ones that get imputed).
+
+    The empty fraction is driven by the min_pair_n floor: it is ~100% below ~2*
+    min_pair_n samples (no pair can reach the floor) and decays to ~0 as n grows.
+    Returns ``(fraction, n_scanned)``.
+    """
+    G = np.asarray(G, dtype=np.float32)
+    _, m = G.shape
+    Gt = np.ascontiguousarray(G.T)                       # (m, n_samples)
+    M = np.isfinite(Gt).astype(np.float32)
+    X0 = np.where(np.isfinite(Gt), Gt, 0.0).astype(np.float32)
+    X2 = (X0 * X0).astype(np.float32)
+    targets = (np.arange(m) if target_idx is None
+               else np.asarray(target_idx, dtype=np.int64))
+    if targets.size == 0:
+        return 0.0, 0
+    if targets.size > max_targets:
+        rng = np.random.default_rng(random_state)
+        targets = np.sort(rng.choice(targets, max_targets, replace=False))
+    n_empty = 0
+    for start in range(0, targets.size, block_size):
+        tb = targets[start:start + block_size]
+        Xb, Mb, X2b = X0[tb], M[tb], X2[tb]
+        n = Mb @ M.T
+        Sx, Sy = Xb @ M.T, Mb @ X0.T
+        Sxx, Syy = X2b @ M.T, Mb @ X2.T
+        Sxy = Xb @ X0.T
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cov = n * Sxy - Sx * Sy
+            denom = (n * Sxx - Sx * Sx) * (n * Syy - Sy * Sy)
+            r2 = np.where(denom > 0, (cov * cov) / denom, 0.0).astype(np.float32)
+        r2[n < min_pair_n] = 0.0
+        r2[np.arange(tb.size), tb] = 0.0                 # exclude self-correlation
+        n_empty += int((~(r2 > 0.0).any(axis=1)).sum())
+    return float(n_empty / targets.size), int(targets.size)
+
+
 def _ld_distances(P_a, P_b, c=1.0):
     """Pairwise LD-restricted taxicab distance (Eq. 3) between the rows of ``P_a`` and
     ``P_b`` over their shared predictor columns.  NaN = missing; a column is skipped

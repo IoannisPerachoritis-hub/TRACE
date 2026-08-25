@@ -219,6 +219,13 @@ def _imputation_summary(geno_dosage_raw, geno_imputed, method, impute_k, impute_
             nd = int((filled != mean_fill).sum())
             out["discordance_vs_mean"] = nd
             out["discordance_pct"] = round(100.0 * nd / n_missing, 2)
+            # P4: markers that fell back to per-SNP mode (empty top-l predictor
+            # list) -- silently NOT LD-kNNi.  Reuses the impute module's own r^2.
+            from gwas.impute import empty_topl_fraction
+            _mt = np.where(per_marker_missing)[0]
+            _fb, _sc = empty_topl_fraction(raw, target_idx=_mt)
+            out["mode_fallback_frac"] = round(_fb, 4)
+            out["mode_fallback_n_scanned"] = int(_sc)
     return out
 
 
@@ -288,6 +295,13 @@ def render_qc_report_markdown(report: dict) -> str:
                     lines += [f"- LD-kNNi vs rounded-mean fill differs at "
                               f"**{imp['discordance_vs_mean']:,}** of {imp['cells_filled']:,} "
                               f"filled cells ({imp['discordance_pct']:g}%)"]
+                if imp.get("mode_fallback_frac", 0) > 0:
+                    lines += [f"- \u26a0 ~{imp['mode_fallback_frac'] * 100:.1f}% of the "
+                              f"{imp['markers_with_missing']:,} markers with missing calls "
+                              f"(estimated over {imp['mode_fallback_n_scanned']:,} sampled) "
+                              f"had no LD predictor meeting the min_pair_n=20 co-observed "
+                              f"floor and were mode-imputed, NOT LD-kNNi -- this reaches "
+                              f"100% below ~22 samples."]
         lines += [""]
     lines += [
         "## Per-sample heterozygosity",
@@ -355,7 +369,10 @@ def qc_report_dataframes(report: dict) -> dict:
         _imp_rows += [("imputation_filled_class_0", cd[0]),
                       ("imputation_filled_class_1", cd[1]),
                       ("imputation_filled_class_2", cd[2]),
-                      ("imputation_discordance_vs_mean", _imp.get("discordance_vs_mean", 0))]
+                      ("imputation_discordance_vs_mean", _imp.get("discordance_vs_mean", 0)),
+                      ("imputation_mode_fallback_frac", _imp.get("mode_fallback_frac", 0.0)),
+                      ("imputation_mode_fallback_n_scanned",
+                       _imp.get("mode_fallback_n_scanned", 0))]
     summary = pd.DataFrame(
         _imp_rows + [
             ("samples", report["n_samples"]),

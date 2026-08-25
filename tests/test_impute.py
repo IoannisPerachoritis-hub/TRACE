@@ -11,7 +11,7 @@ import pytest
 from sklearn.impute import SimpleImputer
 
 from gwas.impute import (ld_knni, imputation_selfcheck, _ld_distances, _vote,
-                         _ld_rank_topl, _mode_or_zero)
+                         _ld_rank_topl, _mode_or_zero, empty_topl_fraction)
 from gwas.qc import _pipeline_build_geno_matrices
 
 
@@ -158,3 +158,21 @@ def test_selfcheck_reports_both_methods():
         assert 0.0 <= out[m]["discrete_concordance"] <= 1.0
     assert out["winner_concordance"] in ("mean", "ldknni")
     assert "rounded" in out["note"]                      # states the mean-rounding convention
+
+
+def test_empty_topl_fraction_100pct_below_min_pair_n():
+    # n < min_pair_n=20 -> no pair reaches the co-observed floor -> every SNP empty.
+    rng = np.random.default_rng(3)
+    G = rng.integers(0, 3, (18, 120)).astype(float)
+    G[rng.random(G.shape) < 0.05] = np.nan
+    frac, scanned = empty_topl_fraction(G, min_pair_n=20)
+    assert frac == 1.0 and scanned == 120
+
+
+def test_empty_topl_fraction_target_idx_and_subsample():
+    rng = np.random.default_rng(4)
+    G = rng.integers(0, 3, (40, 500)).astype(float)          # n >= min_pair_n
+    G[rng.random(G.shape) < 0.05] = np.nan
+    frac, scanned = empty_topl_fraction(G, target_idx=np.arange(300), max_targets=100)
+    assert 0.0 <= frac <= 1.0 and scanned == 100             # subsample cap honoured
+    assert empty_topl_fraction(G, target_idx=np.array([], dtype=int)) == (0.0, 0)

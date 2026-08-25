@@ -133,3 +133,28 @@ def test_imputation_section_mean_has_filled_count_but_no_class_dist():
     i = rep["imputation"]
     assert i["cells_filled"] == int(np.isnan(raw).sum()) and "class_dist" not in i
     assert "Filled classes" not in qr.render_qc_report_markdown(rep)
+    assert "mode_fallback_frac" not in i      # mean has no LD-predictor fallback
+
+
+def test_imputation_mode_fallback_disclosed_below_min_pair_n():
+    # n < min_pair_n=20 -> no pair reaches the co-observed floor -> every ldknni call
+    # falls back to per-SNP mode; the report must disclose it, not claim LD-kNNi.
+    rng = np.random.default_rng(7)
+    n = 18
+    raw = rng.integers(0, 3, (n, 150)).astype(float)
+    raw[rng.random(raw.shape) < 0.08] = np.nan
+    imp = np.where(np.isnan(raw), rng.integers(0, 3, raw.shape).astype(float), raw)
+    df = pd.DataFrame(raw, index=[f"S{k}" for k in range(n)])
+    rep = qr.compute_qc_report(df, [1.0] * n, "t", geno_dosage_raw=raw, geno_imputed=imp,
+                               impute_method="ldknni", impute_k=5, impute_l=20)
+    i = rep["imputation"]
+    assert i["mode_fallback_frac"] == 1.0 and i["mode_fallback_n_scanned"] > 0
+    assert "mode-imputed, NOT LD-kNNi" in qr.render_qc_report_markdown(rep)
+
+
+def test_imputation_no_mode_fallback_line_on_complete_matrix():
+    G, df = _geno(missing=0.0)
+    rep = qr.compute_qc_report(df, [1.0] * 20, "t", geno_dosage_raw=G, geno_imputed=G,
+                               impute_method="ldknni", impute_k=5, impute_l=20)
+    assert "mode_fallback_frac" not in rep["imputation"]      # no-op -> not computed
+    assert "mode-imputed" not in qr.render_qc_report_markdown(rep)
