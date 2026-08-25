@@ -748,63 +748,33 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     #   pheno_used_for_hap — column-standardized copy for LD/haplotype pages
 
     # ------------------------------------------------
-    # 2b. Optional phenotype transformations
+    # 2b. Phenotype QC and transformation
     # ------------------------------------------------
-    with st.expander("Optional: transform phenotype columns", expanded=False):
-        num_cols = pheno.select_dtypes(include=[np.number]).columns.tolist()
-
-        if not num_cols:
-            st.write("No numeric phenotype columns available for transformation.")
+    with st.expander("Phenotype QC and transformation", expanded=False):
+        _pheno_raw_df = st.session_state.get("pheno_raw", pheno)
+        _pheno_num_cols = _pheno_raw_df.select_dtypes(include=[np.number]).columns.tolist()
+        if not _pheno_num_cols:
+            st.write("No numeric phenotype columns available for QC / transformation.")
         else:
-            cols_to_norm = st.multiselect(
-                "Select phenotype columns to transform:",
-                num_cols,
-                help="Transformations will overwrite the selected columns.",
-            )
-
-            _NORM_LABELS = {
-                "None (raw values)": "none",
-                "Z-score (scaling, not normalisation)": "zscore",
-                "Log10 (refused if any value <= 0)": "log",
-                "Yeo-Johnson (robust; handles negatives)": "yeojohnson",
-                "Rank-based inverse normal (INT)": "int",
-            }
-            norm_method = st.selectbox(
-                "Transformation method:",
-                list(_NORM_LABELS),
-                help=(
-                    "z-score is a SCALING (does not change p-values; kept for "
-                    "effect-size comparability). Log10 / Yeo-Johnson / INT change the "
-                    "distribution. Log is refused (not shifted) when any value is <= 0."
-                ),
-            )
-            _norm_slug = _NORM_LABELS[norm_method]
-
-            if cols_to_norm and _norm_slug != "none":
-                from gwas.qc import normalise_phenotype
-                pheno_trans = pheno.copy()
-
-                for col in cols_to_norm:
-                    x = pd.to_numeric(pheno_trans[col], errors="coerce").to_numpy(float)
-                    y_out, _note = normalise_phenotype(x, _norm_slug)
-                    if _note:
-                        st.warning(f"'{col}': {_note}")
-                    pheno_trans[col] = y_out
-
-                st.write(f"Transformation '{norm_method}' applied.")
-                st.dataframe(pheno_trans[cols_to_norm].head())
-
-                # SAVE BACK transformed phenotype
-                pheno = pheno_trans
-
-                # DO NOT overwrite pheno_raw (preserves original upload)
-                # --- Record phenotype preprocessing (transformations) for manifest reproducibility ---
+            from pages._pheno_qc import PhenoQCContext
+            from pages._pheno_qc import diagnostics as _pheno_diag
+            # Read the ORIGINAL upload (pheno_raw) so the preview is idempotent and
+            # never double-transforms; the chosen transform is then applied to pheno
+            # for the run. This stays ABOVE the pheno_hash so switching the transform
+            # is a correct cache miss (the key is content-derived from the transformed
+            # frame -- do not move this below the hash).
+            _pheno_ctx = PhenoQCContext(
+                pheno_df=_pheno_raw_df, numeric_cols=_pheno_num_cols,
+                id_col=str(_pheno_raw_df.index.name or "ID"), source="session")
+            _qc_trait, _qc_method, _qc_transformed, _qc_ok = _pheno_diag.render(
+                _pheno_ctx, embedded=True, key_prefix="gwas_pheno_qc")
+            if _qc_ok and _qc_method != "None (raw values)":
+                pheno = pheno.copy()
+                pheno[_qc_trait] = _qc_transformed
                 st.session_state["pheno_transformations"] = {
-                    "transformation_method": str(norm_method),
-                    "columns_transformed": list(cols_to_norm),
+                    "transformation_method": str(_qc_method),
+                    "columns_transformed": [_qc_trait],
                 }
-
-                # Flag to prevent later sidebar normalization from applying again
                 st.session_state["pheno_already_transformed"] = True
 
     # =========================
