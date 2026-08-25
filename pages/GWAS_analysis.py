@@ -2632,8 +2632,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                 _m_sig_snps_set = set(_model_df.loc[_model_df[_sig_col], "SNP"].astype(str))
                                 _sig_blocks = []
                                 for _, _blk in _m_ld_blocks.iterrows():
-                                    _lead_snps = str(_blk.get("Lead SNP", "")).split(";")
-                                    if any(s.strip() in _m_sig_snps_set for s in _lead_snps):
+                                    _lead = str(_blk.get("lead_snp", "")).strip()
+                                    if _lead in _m_sig_snps_set:
                                         _sig_blocks.append(_blk)
                                 _sig_blocks_df = pd.DataFrame(_sig_blocks) if _sig_blocks else pd.DataFrame()
 

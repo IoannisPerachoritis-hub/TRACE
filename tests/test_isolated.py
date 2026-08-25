@@ -31,7 +31,7 @@ def _gwas(rows):
 
 
 def _blocks(rows):
-    return pd.DataFrame(rows, columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs"])
+    return pd.DataFrame(rows, columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "SNP_IDs"])
 
 
 # ---- T-42 find_unblocked_significant_snps ----
@@ -133,7 +133,7 @@ def test_run_merge_adjacent_markers():
     r = iv.iloc[0]
     assert (int(r["Start (bp)"]), int(r["End (bp)"])) == (100, 400)
     assert r["n_snps_in_run"] == 2
-    assert r["Lead SNP"] == "m300"                       # lowest p-value
+    assert r["lead_snp"] == "m300"                       # lowest p-value
 
 
 def test_separated_snps_make_two_overlapping_intervals():
@@ -150,7 +150,7 @@ def test_edge_flags_chr_start_and_end():
     chroms, positions, sid = _axis([100, 200, 300])
     unc = find_unblocked_significant_snps(
         _gwas([["m100", "1", 100, 1e-8], ["m300", "1", 300, 1e-8]]), _blocks([]), RULE, seed_p_used=1e-5)
-    iv = build_flanking_intervals(unc, chroms, positions, sid, edge_flank_bp=50).set_index("Lead SNP")
+    iv = build_flanking_intervals(unc, chroms, positions, sid, edge_flank_bp=50).set_index("lead_snp")
     assert iv.loc["m100", "edge_flag"] == "chr_start"
     assert int(iv.loc["m100", "Start (bp)"]) == 50       # clamped by edge_flank_bp
     assert iv.loc["m300", "edge_flag"] == "chr_end"

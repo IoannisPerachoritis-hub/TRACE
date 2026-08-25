@@ -382,7 +382,7 @@ def aggregate_subsampling_to_ld_blocks(
     Parameters
     ----------
     discovery_df : DataFrame from subsample_gwas_resampling
-    ld_blocks_df : DataFrame with Chr, Start (bp), End (bp), Lead SNP
+    ld_blocks_df : DataFrame with Chr, Start (bp), End (bp), lead_snp
     raw_pvals : ndarray (n_reps, n_snps)
     sid, chroms, positions : arrays aligned to raw_pvals columns
 
@@ -416,7 +416,7 @@ def aggregate_subsampling_to_ld_blocks(
         ch = str(block["Chr"])
         s = int(block["Start (bp)"])
         e = int(block["End (bp)"])
-        lead = str(block.get("Lead SNP", ""))
+        lead = str(block.get("lead_snp", ""))
 
         # SNPs in this block
         mask = get_block_snp_mask(block, chroms, positions, sid)
@@ -427,7 +427,7 @@ def aggregate_subsampling_to_ld_blocks(
                 "Chr": ch,
                 "Start (bp)": s,
                 "End (bp)": e,
-                "Lead SNP": lead,
+                "lead_snp": lead,
                 "n_snps_in_block": 0,
                 "BlockDiscoveryFreq": 0.0,
                 "BestSNP_DiscoveryFreq": 0.0,
@@ -470,7 +470,7 @@ def aggregate_subsampling_to_ld_blocks(
             "Chr": ch,
             "Start (bp)": s,
             "End (bp)": e,
-            "Lead SNP": lead,
+            "lead_snp": lead,
             "n_snps_in_block": int(snp_idx.size),
             "BlockDiscoveryFreq": block_disc_freq,
             "BestSNP_DiscoveryFreq": best_freq,

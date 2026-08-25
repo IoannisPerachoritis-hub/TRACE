@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 GOLDEN_DIR = Path(__file__).resolve().parent
-BLOCK_COLUMNS = ["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs"]
+BLOCK_COLUMNS = ["Chr", "Start (bp)", "End (bp)", "lead_snp", "SNP_IDs"]
 
 _LEAD_SPLIT = re.compile(r"[;,\s|]+")
 
@@ -46,7 +46,7 @@ def canon_block_table(df_or_path):
         chr_ = df["Chr"].astype(str)
         start = df["Start (bp)"].astype(float).round().astype("int64")
         end = df["End (bp)"].astype(float).round().astype("int64")
-        lead = df["Lead SNP"].map(lambda v: _tok(v, _LEAD_SPLIT.split))
+        lead = df["lead_snp"].map(lambda v: _tok(v, _LEAD_SPLIT.split))
         snpids = (
             df["SNP_IDs"].map(lambda v: _tok(v, lambda s: s.split(",")))
             if "SNP_IDs" in df.columns
@@ -54,9 +54,9 @@ def canon_block_table(df_or_path):
         )
         out = pd.DataFrame(
             {"Chr": chr_.values, "Start (bp)": start.values, "End (bp)": end.values,
-             "Lead SNP": lead.values, "SNP_IDs": snpids.values}
+             "lead_snp": lead.values, "SNP_IDs": snpids.values}
         )
-        out = out.sort_values(["Chr", "Start (bp)", "End (bp)", "Lead SNP"]).reset_index(drop=True)
+        out = out.sort_values(["Chr", "Start (bp)", "End (bp)", "lead_snp"]).reset_index(drop=True)
 
     return out.to_csv(index=False, lineterminator="\n")
 

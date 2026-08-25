@@ -69,7 +69,7 @@ ctx = LDContext(
 # stub the haplotype compute + enrichment so no real GWAS / core module runs
 _fake_hap = pd.DataFrame({
     "Chr": ["2", "2"], "Start": [1_000_000, 1_500_000], "End": [1_200_000, 1_700_000],
-    "Lead SNP": [sid[0], sid[5]], "n_snps": [5, 5], "PValue": [0.01, 0.2],
+    "lead_snp": [sid[0], sid[5]], "n_snps": [5, 5], "PValue": [0.01, 0.2],
 })
 def _hap_stub(*a, **k):
     return _fake_hap.copy(), {}

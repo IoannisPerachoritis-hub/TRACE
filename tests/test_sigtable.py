@@ -26,7 +26,7 @@ def _gwas(rows, extra=None):
 
 
 def _blocks(rows):
-    return pd.DataFrame(rows, columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs"])
+    return pd.DataFrame(rows, columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "SNP_IDs"])
 
 
 def _axis(positions, chrom="1"):

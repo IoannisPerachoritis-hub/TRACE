@@ -195,7 +195,7 @@ class TestConsolidateLdBlockTable:
             "Chr": ["1", "2"],
             "Start (bp)": [100, 500],
             "End (bp)": [400, 900],
-            "Lead SNP": ["snp1", "snp2"],
+            "lead_snp": ["snp1", "snp2"],
             "SNP_IDs": ["snp1;snp1b", "snp2;snp2b"],
         })
 

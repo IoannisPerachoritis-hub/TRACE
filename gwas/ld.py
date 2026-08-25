@@ -12,6 +12,28 @@ def _split_leads(x: str) -> list[str]:
 def _merge_leads(a, b) -> str:
     toks = set(_split_leads(a)) | set(_split_leads(b))
     return ";".join(sorted(toks))
+
+def _pick_lead_snp(tokens, pval_by_snp, pos_by_snp):
+    """Collapse a block's seeding SNPs to a single lead: the seed with the smallest
+    association p-value. Ties are broken by smaller genomic position (determinism
+    matters more than the choice). Tokens with a non-finite/absent p-value are
+    skipped; if no token has a finite p-value, returns ("", nan) -- never a fallback
+    to a positional marker. The lead is the block's most significant SEEDING SNP and
+    may NOT be a member of SNP_IDs (a block is an LD component in a flank window around
+    its seed; the seed is the signal that found it)."""
+    best_id, best_p, best_key = "", float("nan"), (np.inf, np.inf)
+    for t in tokens:
+        t = str(t)
+        if not t:
+            continue
+        p = pval_by_snp.get(t, np.inf)
+        if not np.isfinite(p):
+            continue
+        key = (float(p), float(pos_by_snp.get(t, np.inf)))
+        if key < best_key:
+            best_key, best_id, best_p = key, t, float(p)
+    return best_id, best_p
+
 def _interval_iou_bp(a_start: int, a_end: int, b_start: int, b_end: int) -> float:
     """
     IoU for 1D genomic intervals in bp, treated as continuous physical spans.
@@ -703,8 +725,11 @@ def find_ld_clusters_genomewide(
     """
     Peak-centric LD block detection.
 
-    Returns a DataFrame with columns: Chr, Start (bp), End (bp), Lead SNP, SNP_IDs,
-    Mean r2. LD blocks are connected components in an LD graph (r² >= threshold)
+    Returns a DataFrame with columns: Chr, Start (bp), End (bp), lead_snp,
+    lead_snp_pvalue, SNP_IDs, Mean r2. `lead_snp` is the block's most significant
+    SEEDING SNP (smallest GWAS p-value among the significant SNPs that formed the
+    block; ties -> smaller position) and MAY NOT be a member of SNP_IDs.
+    LD blocks are connected components in an LD graph (r² >= threshold)
     within a flank window around GWAS-significant SNPs, refined for contiguity.
 
     Scope: blocks are sought ONLY in flank_kb windows around significant SNPs
@@ -740,7 +765,7 @@ def find_ld_clusters_genomewide(
         )
 
     if significant.empty:
-        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP"])
+        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2"])
 
     flank_bp = int(round(float(flank_kb) * 1000.0))
 
@@ -872,7 +897,7 @@ def find_ld_clusters_genomewide(
                                ",".join(member_ids) if member_ids else ""])
 
     if not all_blocks:
-        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs", "Mean r2"])
+        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2"])
 
     df = pd.DataFrame(
         all_blocks,
@@ -918,6 +943,20 @@ def find_ld_clusters_genomewide(
         block_mean_r2(row, chroms, positions, sid, geno_imputed, min_pair_n)
         for _, row in out.iterrows()
     ]
+
+    # Collapse the seed-union "Lead SNP" (the significant SNPs that formed the block,
+    # accumulated across the IoU merge) to the SINGLE most-significant seed. The lead
+    # is the block's real association signal and may not be a member of SNP_IDs.
+    _pval_by_snp = dict(zip(gwas_df["SNP"].astype(str),
+                            pd.to_numeric(gwas_df["PValue"], errors="coerce")))
+    _pos_by_snp = dict(zip(gwas_df["SNP"].astype(str),
+                           pd.to_numeric(gwas_df["Pos"], errors="coerce")))
+    _leads = [_pick_lead_snp(_split_leads(v), _pval_by_snp, _pos_by_snp)
+              for v in out["Lead SNP"]]
+    out["lead_snp"] = [lp[0] for lp in _leads]
+    out["lead_snp_pvalue"] = [lp[1] for lp in _leads]
+    out = out[["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue",
+               "SNP_IDs", "Mean r2"]]
     return out
 
 def find_ld_blocks_from_genotypes(
@@ -1607,7 +1646,9 @@ def compute_block_ld_quality(blocks_df, chroms, positions, sid, geno_imputed, gw
         n_members = int(midx.size)
         member_sids = sid[midx]
 
-        lead_tokens = [t for t in str(block.get("Lead SNP", "")).split(";") if t]
+        # Read the canonical single lead (post-rename); tolerate a legacy multi-token
+        # "Lead SNP" for old CSVs. With a single lead_snp, ldq_lead_snp == lead_snp.
+        lead_tokens = [t for t in str(block.get("lead_snp", block.get("Lead SNP", ""))).split(";") if t]
         lead = _ldq_pick_lead(lead_tokens, member_sids, pval_by_snp)
         lead_in_block = bool(lead) and (lead in set(member_sids.tolist()))
 

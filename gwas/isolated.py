@@ -163,8 +163,8 @@ _UNBLOCKED_DTYPE = {
 # T-43 — flanking-marker intervals
 # ---------------------------------------------------------------------------
 INTERVAL_COLUMNS = [
-    "interval_id", "region_type", "Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs",
-    "n_snps_in_run", "lead_p_value", "lead_neg_log10_p", "omission_path",
+    "interval_id", "region_type", "Chr", "Start (bp)", "End (bp)", "lead_snp", "SNP_IDs",
+    "n_snps_in_run", "lead_snp_pvalue", "lead_neg_log10_p", "omission_path",
     "flank_up_snp_id", "flank_dn_snp_id", "flank_up_pos", "flank_dn_pos",
     "flank_up_is_significant", "flank_dn_is_significant",
     "dist_to_flank_up_bp", "dist_to_flank_dn_bp",
@@ -290,9 +290,9 @@ def build_flanking_intervals(
                 "interval_id": f"ISO_{canon_chr(ch)}_{start}_{end}",
                 "region_type": "isolated_snp_interval",
                 "Chr": canon_chr(ch), "Start (bp)": int(start), "End (bp)": int(end),
-                "Lead SNP": lead_id, "SNP_IDs": ",".join(run_ids),
+                "lead_snp": lead_id, "SNP_IDs": ",".join(run_ids),
                 "n_snps_in_run": len(run_ids),
-                "lead_p_value": lead_p,
+                "lead_snp_pvalue": lead_p,
                 "lead_neg_log10_p": float(-np.log10(lead_p)) if lead_p > 0 else np.inf,
                 "omission_path": omission,
                 "flank_up_snp_id": flank_up_id, "flank_dn_snp_id": flank_dn_id,
@@ -465,7 +465,7 @@ def annotate_isolated_intervals(
             long_rows.append({
                 "interval_id": r["interval_id"], "Chr": r["Chr"],
                 "interval_start_bp": int(r["Start (bp)"]), "interval_end_bp": int(r["End (bp)"]),
-                "lead_snp_id": r["Lead SNP"], "lead_p_value": r["lead_p_value"],
+                "lead_snp_id": r["lead_snp"], "lead_p_value": r["lead_snp_pvalue"],
                 "gene_id": gid, "gene_start": gstart, "gene_end": gend,
                 "gene_strand": info[2] if info else "", "gene_description": info[3] if info else "",
                 "gene_relation": rel, "dist_to_interval_bp": dist,

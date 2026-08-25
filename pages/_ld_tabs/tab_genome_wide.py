@@ -766,7 +766,7 @@ def _render_haplotype_gwas(
         st.caption(f"LD-block coherence unavailable: {_e}")
 
     show_cols = [c for c in [
-        "Chr", "Start", "End", "Lead SNP", "n_snps",
+        "Chr", "Start", "End", "lead_snp", "n_snps",
         "n_haplotypes", "n_tested_haplotypes",
         "n_samples_block", "n_samples_tested",          # T-34: the two view denominators, now visible
         "df1", "df2", "F_param", "PValue_param",
