@@ -333,7 +333,8 @@ def consolidate_ld_block_table(ld_blocks, hap_gwas=None, annotated_blocks=None):
             "Chr", "Start (bp)", "End (bp)",
             "PValue", "FDR_BH", "F_perm", "F_param",
             "n_haplotypes", "n_tested_haplotypes", "n_samples_block",
-            "eta2", "n_permutations",
+            "eta2", "eta2_ci_low", "eta2_ci_high", "omega2", "lead_snp_r2",
+            "n_permutations",
         ] if c in hm.columns]
         hsub = hm[keep].copy()
         hsub = hsub.rename(columns={
@@ -343,6 +344,8 @@ def consolidate_ld_block_table(ld_blocks, hap_gwas=None, annotated_blocks=None):
             "n_tested_haplotypes": "Hap_n_tested",
             "n_samples_block": "Hap_n_samples",
             "eta2": "Hap_eta2",
+            "eta2_ci_low": "Hap_eta2_ci_low", "eta2_ci_high": "Hap_eta2_ci_high",
+            "omega2": "Hap_omega2", "lead_snp_r2": "Hap_lead_r2",
             "n_permutations": "Hap_n_perms",
         })
         for df in [base, hsub]:

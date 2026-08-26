@@ -28,6 +28,81 @@ def _inv_simpson_from_counts(counts) -> float:
     return (1.0 / denom) if denom > 0 else float("nan")
 
 
+def _eta2_confint(F, df1, df2, conf=0.95):
+    """95% CI for the (partial) haplotype eta^2 via noncentral-F inversion
+    (Steiger 2004; MBESS conf.limits.ncf).
+
+    Uses the PARAMETRIC F (F_param), because the inversion assumes the parametric
+    noncentral-F sampling distribution; the permutation F cannot supply this interval
+    (permutation destroys the association, so its eta^2 sits at the null floor
+    ~= df1/(N-1), not around the effect). lam_lo/lam_hi invert ncf.cdf at 0.975/0.025;
+    eta^2 = lam / (lam + df1 + df2 + 1). Returns (lo, hi); (nan, nan) when undefined.
+    """
+    if not (np.isfinite(F) and F > 0 and df1 >= 1 and df2 >= 1):
+        return np.nan, np.nan
+    from scipy.stats import ncf, f as _f
+    from scipy.optimize import brentq
+    M = df1 + df2 + 1
+    a = 1.0 - conf
+    cdf0 = _f.cdf(F, df1, df2)                 # central-F cdf (noncentrality 0)
+
+    def _lam(target):
+        if cdf0 < target:                     # even nc=0 is already below the target
+            return 0.0
+        hi = 1.0
+        while ncf.cdf(F, df1, df2, hi) > target:   # ncf.cdf decreases in lam
+            hi *= 2.0
+            if hi > 1e8:
+                return hi
+        return brentq(lambda lam: ncf.cdf(F, df1, df2, lam) - target, 0.0, hi, xtol=1e-6)
+
+    lam_lo = _lam(1.0 - a / 2.0)               # 0.975 -> lower eta^2 bound
+    lam_hi = _lam(a / 2.0)                     # 0.025 -> upper eta^2 bound
+    return lam_lo / (lam_lo + M), lam_hi / (lam_hi + M)
+
+
+def _omega2_from_f(F, df1, df2):
+    """Omega-squared (variance explained, less upward-biased than eta^2 as the group
+    count grows): df1*(F-1) / (df1*F + df2 + 1). Uses the parametric F, consistent with
+    eta2. NOT clamped -- a block with F < 1 legitimately yields a negative value (the
+    haplotype grouping explains less than chance). Reported as a column, never a
+    replacement for eta2 (the k-dependent gap is far below the eta2 CI width here)."""
+    if not (np.isfinite(F) and df1 >= 1 and df2 >= 1):
+        return np.nan
+    denom = df1 * F + df2 + 1.0
+    return (float(df1) * (F - 1.0)) / denom if denom > 0 else np.nan
+
+
+def _lead_snp_partial_r2(lead_snp, sid, geno_imputed, sample_ids, test_samples,
+                         y_resid, X_pcs):
+    """Additive (1 df) partial R^2 of the block's lead SNP dosage on the PC-residualised
+    phenotype, over the SAME retained samples used for eta2. 1 df makes it comparable
+    across blocks where eta2 (df1 = groups-1) is not. The lead SNP may be a NON-member
+    of the block (it is the seeding SNP), so it is looked up in the FULL sid array.
+    Returns nan when the lead is empty/absent from sid/monomorphic in the retained set
+    or n < 4."""
+    if not lead_snp:
+        return np.nan
+    idx = np.flatnonzero(np.asarray(sid, dtype=str) == str(lead_snp))
+    if idx.size == 0:
+        return np.nan
+    dose = (pd.Series(np.asarray(geno_imputed[:, idx[0]], dtype=float),
+                      index=np.asarray(sample_ids, dtype=str))
+            .reindex(np.asarray(test_samples, dtype=str)).to_numpy(dtype=float))
+    y = np.asarray(y_resid, dtype=float)
+    ok = np.isfinite(dose) & np.isfinite(y)
+    if int(ok.sum()) < 4:
+        return np.nan
+    dose, y = dose[ok], y[ok]
+    if X_pcs is not None:                      # partial out the same PCs eta2 removed
+        Xp = np.asarray(X_pcs, dtype=float)[ok]
+        dose = dose - Xp @ np.linalg.lstsq(Xp, dose, rcond=None)[0]
+    if np.std(dose) < 1e-12 or np.std(y) < 1e-12:
+        return np.nan
+    r = np.corrcoef(y, dose)[0, 1]
+    return float(r * r) if np.isfinite(r) else np.nan
+
+
 def run_haplotype_block_gwas(
     haplo_df,
     chroms,
@@ -46,6 +121,22 @@ def run_haplotype_block_gwas(
 ):
     """
     Genome-wide haplotype/MLG association per LD block.
+
+    Effect sizes are reported on the **PC-residualised phenotype** (the phenotype after
+    the population-structure PCs are regressed out), consistent with the nested F-test:
+    ``eta2`` (variance explained by the haplotype grouping), its noncentral-F 95% CI
+    (``eta2_ci_low``/``eta2_ci_high``, from the parametric F), ``omega2`` (a less
+    upward-biased variance-explained estimate), and ``lead_snp_r2`` (the 1-df additive
+    R^2 of the block's lead SNP, comparable across blocks where eta2 is not because its
+    df is fixed at 1).
+
+    Two caveats apply to every haplotype effect size here: (1) ``eta2`` and ``omega2``
+    **grow with the number of haplotype groups** (more groups can only raise the
+    variance a categorical factor explains), so they are not directly comparable across
+    blocks with different group counts; (2) **neither estimate corrects for selection** --
+    blocks are tested because they were formed around GWAS-significant seeds, so the
+    reported effect sizes are conditional on that selection and are upward-biased as
+    estimates of a randomly-chosen block's effect.
     """
     hap_tables = {}
     # ------------------------------------------------------------
@@ -393,8 +484,19 @@ def run_haplotype_block_gwas(
             _beta  = np.linalg.lstsq(_X_pcs, y_test, rcond=None)[0]
             _y_for_effects = y_test - _X_pcs @ _beta
         else:
+            _X_pcs = None
             _y_for_effects = y_test
         hap_effects = compute_haplotype_effects(_y_for_effects, g_test)
+
+        # Effect-size statistics (additive; parametric; on the SAME PC-residualised
+        # phenotype + retained samples as eta2). eta2 == df1*F_param/(df1*F_param+df2),
+        # so these reuse F_param/df1/df2 and add no new estimation of eta2 itself.
+        _eta2_lo, _eta2_hi = _eta2_confint(F_param, df1, df2)
+        _om2 = _omega2_from_f(F_param, df1, df2)
+        _lead_r2 = _lead_snp_partial_r2(
+            lead_snp, sid, geno_imputed, sample_ids,
+            df_test["Sample"], _y_for_effects, _X_pcs,
+        )
 
         results.append(
             {
@@ -416,6 +518,13 @@ def run_haplotype_block_gwas(
                 "P_perm": float(pval_perm) if np.isfinite(pval_perm) else np.nan,
                 "PValue": float(pval_perm) if np.isfinite(pval_perm) else np.nan,
                 "eta2": hap_effects["eta2"],
+                # Effect-size additions (all additive; eta2 unchanged). eta2_ci_* =
+                # noncentral-F 95% CI on eta2; omega2 = less-biased variance-explained
+                # (not a replacement); lead_snp_r2 = 1-df additive R^2 of the lead SNP.
+                "eta2_ci_low": _eta2_lo,
+                "eta2_ci_high": _eta2_hi,
+                "omega2": _om2,
+                "lead_snp_r2": _lead_r2,
                 "hap_stats_json": json.dumps(hap_effects["hap_stats"]),
                 # T-31 Layer 2 — MLG fragmentation + sample retention. Additive:
                 # every value reuses names already in scope; no new estimation, no
