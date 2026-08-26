@@ -1,7 +1,8 @@
 """Re-run TRACE MLM GWAS with global kinship (--no-loco) for tomato datasets.
 
 Generates GWAS result ZIPs in benchmarks/loco_sensitivity/<run>/ using
-global kinship (no LOCO) with k=0 PCs, matching the deflation guard
+global kinship (no LOCO) with the per-panel published PC count
+(benchmarks/published_pc_counts.resolve_k), matching the band auto-PC
 selection. These are used by compare_loco.py for the LOCO ablation table.
 """
 import sys
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from benchmarks.rerun_trace_mlm import load_qc_dataset
+from benchmarks.published_pc_counts import resolve_k
 from gwas.kinship import (
     _standardize_geno_for_grm,
     _build_grm_from_Z,
@@ -34,13 +36,15 @@ RUNS = {
     "tomato_locule_number": "locule_number",
 }
 
-N_PCS = 0  # Matching deflation guard selection
-
 
 def run_global_mlm(run_name, trait_name):
-    """Run TRACE MLM with global kinship (no LOCO), k=0 PCs."""
+    """Run TRACE MLM with global kinship (no LOCO) at the panel's published PC count."""
+    # Per-panel published k -- NEVER a silent default. resolve_k raises on an unknown
+    # panel, so adding a non-tomato panel to RUNS uses its correct k (e.g. pepper_FWe=2),
+    # not the old hardcoded k=0 that silently deflated any panel put through this script.
+    n_pcs = resolve_k(run_name)
     print(f"\n{'='*60}")
-    print(f"  {run_name} ({trait_name}) -- GLOBAL kinship, k={N_PCS}")
+    print(f"  {run_name} ({trait_name}) -- GLOBAL kinship, k={n_pcs}")
     print(f"{'='*60}")
 
     geno, y, sid, chroms_str, chroms_num, positions, iid, trait_col = load_qc_dataset(run_name)
@@ -68,7 +72,7 @@ def run_global_mlm(run_name, trait_name):
         geno_imputed=geno,
         y=y,
         pcs_full=pcs_full,
-        n_pcs=N_PCS,
+        n_pcs=n_pcs,
         sid=sid,
         positions=positions,
         chroms=chroms_str,
