@@ -86,7 +86,7 @@ benchmarks/simulation/sim_summary/null_qq_data.csv
 benchmarks/simulation/sim_summary/power_fdr_curves.csv
 benchmarks/simulation/sim_summary/fp_chromosomal_distribution.csv
 benchmarks/simulation/sim_summary/fp_chromosomal_per_rep.csv
-benchmarks/loco_sensitivity/
+benchmarks/loco_sensitivity/*
 !benchmarks/loco_sensitivity/compare_loco.py
 !benchmarks/loco_sensitivity/loco_comparison.csv
 benchmarks/plink_qc/results/
