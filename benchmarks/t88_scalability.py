@@ -62,6 +62,21 @@ def _rss_mb():
     return _PROC.memory_info().rss / 1e6 if _PROC else float("nan")
 
 
+def _git_head():
+    """Actual committed HEAD of the tree that runs this script (machine-emitted, not hand-typed).
+
+    The provenance block used to print a hardcoded "TRACE-release committed HEAD" string, which is
+    how the note's SHA drifted stale (c3a4bdf) -- emit the real hash so it can never be mis-attributed.
+    """
+    try:
+        import subprocess
+        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(ROOT),
+                             capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
 def _run_ld(gwas_df, chroms, positions, geno, sid):
     blocks = ld.find_ld_clusters_genomewide(
         gwas_df=gwas_df, chroms=chroms, positions=positions,
@@ -151,11 +166,15 @@ def count_pairwise_r2(gwas_df, chroms, positions, geno, sid, *, defeat_cache):
 
 def main():
     proc_cpu = platform.processor() or platform.machine()
+    _sha = _git_head()
+    _ram_gb = psutil.virtual_memory().total / 1e9 if _PROC is not None else float("nan")
+    _phys = psutil.cpu_count(logical=False) if _PROC is not None else None
     print("=" * 96)
     print("  T-88 post-GWAS scalability envelope (measured points + memory + cache counts)")
     print("=" * 96)
-    print(f"  machine  : {proc_cpu} | os cpu_count = {os.cpu_count()} | {platform.system()} {platform.release()}")
-    print(f"  tree     : TRACE-release committed HEAD (run FROM TRACE-release)")
+    print(f"  machine  : {proc_cpu} | cores = {_phys} physical / {os.cpu_count()} logical | "
+          f"RAM {_ram_gb:.1f} GB | {platform.system()} {platform.release()}")
+    print(f"  tree     : TRACE-release, git HEAD = {_sha}")
     print(f"  timed ld : {ld.__file__}")
     print(f"  params   : flank=144kb, ld_decay=72.17kb, n_perm={N_PERM}, reps={REPS}, seed={SEED}")
     if _PROC is None:
