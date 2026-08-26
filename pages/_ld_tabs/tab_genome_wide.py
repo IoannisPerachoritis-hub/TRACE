@@ -771,7 +771,8 @@ def _render_haplotype_gwas(
         "n_samples_block", "n_samples_tested",          # T-34: the two view denominators, now visible
         "df1", "df2", "F_param", "PValue_param",
         "F_perm", "P_perm", "PValue", "FDR_qvalue",
-        "eta2", "EtaSq", "Frac_other", "Block_length_kb", "maf_median",  # T-34: enriched, now on screen
+        "eta2", "eta2_ci_low", "eta2_ci_high", "omega2", "lead_snp_r2",  # effect-size CI + omega2 + lead R^2
+        "EtaSq", "Frac_other", "Block_length_kb", "maf_median",  # T-34: enriched, now on screen
         "Mean r2", "Min r2", "Frac r2>=.6 to lead",     # LD-coherence (Change 2); Mean r2 == block table
     ] if c in _disp.columns]
 

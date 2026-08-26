@@ -87,7 +87,10 @@ st.markdown("""
 | **Hap_FDR_BH** | FDR-adjusted haplotype p-value |
 | **Hap_F_perm** | Observed F-statistic from the permutation test |
 | **Hap_F_param** | Parametric F-statistic (for reference) |
-| **Hap_eta2** | Effect size: proportion of phenotypic variance explained by haplotype differences. Multiply by 100 for percentage. |
+| **Hap_eta2** | Effect size: proportion of phenotypic variance explained by haplotype differences. Multiply by 100 for percentage. Computed on the PC-residualised phenotype; grows with the haplotype count and is not corrected for block selection. |
+| **Hap_eta2_ci_low** / **Hap_eta2_ci_high** | 95% confidence interval for Hap_eta2 (noncentral-F inversion of the parametric F). |
+| **Hap_omega2** | Omega-squared: a less upward-biased variance-explained estimate than eta2 (matters when there are many haplotype groups). Can be negative when the parametric F < 1. Reported alongside eta2, not as a replacement. |
+| **Hap_lead_r2** | Additive R² of the block's lead SNP (1 df), on the same PC-residualised phenotype. Comparable across blocks (fixed df), unlike eta2. The lead SNP may not be a block member. |
 | **Hap_n_haplotypes** | Total number of distinct haplotypes observed in the block |
 | **Hap_n_tested** | Number of haplotypes with sufficient sample size for testing |
 | **Hap_n_samples** | Number of samples with non-missing genotypes in the block |
