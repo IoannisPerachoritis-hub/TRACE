@@ -164,6 +164,17 @@ def _build_parser():
                          help="Suggestive-mode FLOOR: always also seed the top-N "
                               "SNPs by p-value, even when fewer than N pass "
                               "--ld-seed-p (default: 10; 0 disables the floor).")
+    ld_grp.add_argument("--ld-merge-mode", default="iou",
+                         choices=["iou", "correlation"],
+                         help="LD-block merge criterion: 'iou' (default) fuses "
+                              "overlapping blocks by interval overlap only; "
+                              "'correlation' additionally requires the cross-block "
+                              "seam AND the merged block's mean r^2 to reach "
+                              "--ld-merge-r2, so a reported block's markers are "
+                              "mutually correlated (splits LD-bridged clusters).")
+    ld_grp.add_argument("--ld-merge-r2", type=float, default=0.5,
+                         help="Mean-r^2 threshold for --ld-merge-mode correlation "
+                              "(default: 0.5).")
     ld_grp.add_argument("--hap-perms", type=int, default=1000,
                          help="Haplotype permutations (default: 1000)")
     ld_grp.add_argument("--no-annotation", action="store_true",
@@ -1097,6 +1108,7 @@ def run_pipeline(args):
                 ld_threshold=args.ld_r2, flank_kb=ld_flank_kb,
                 ld_decay_kb=ld_decay_kb, min_snps=3,
                 top_n=_ld_seed_top_n, sig_thresh=_ld_seed_thresh,
+                ld_merge_mode=args.ld_merge_mode, ld_merge_r2=args.ld_merge_r2,
             )
             m_ld_blocks, _ = ld.filter_contained_blocks(m_ld_blocks, min_contained=2)
         except Exception as e:

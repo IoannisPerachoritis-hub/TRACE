@@ -196,6 +196,8 @@ SIGNATURE_DEFAULTS = [
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "min_pair_n", 20, "gwas/ld.py:826"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "merge_iou", 0.3, "gwas/ld.py:827"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "gap_factor", 10.0, "gwas/ld.py:828"),
+    ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "ld_merge_mode", "iou", "gwas/ld.py (--ld-merge-mode)"),
+    ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "ld_merge_r2", 0.5, "gwas/ld.py (--ld-merge-r2)"),
     ("ld.find_ld_blocks_graph", ld.find_ld_blocks_graph, "min_snps", 3, "gwas/ld.py:690"),
     ("ld.find_ld_blocks_graph", ld.find_ld_blocks_graph, "adj_r2_min", 0.3, "gwas/ld.py:691"),
     ("ld.contiguous_segments_by_adjacent", ld.contiguous_segments_by_adjacent, "adj_r2_min", 0.3, "gwas/ld.py:445"),
@@ -240,7 +242,7 @@ def test_signature_default(label, fn, param, expected, loc):
 def test_signature_default_count_is_stable():
     """The pinned set is the signature defaults enumerated by T-72, plus D-102's
     FarmCPU final_scan. A new load-bearing default is added here deliberately."""
-    assert len(SIGNATURE_DEFAULTS) == 32
+    assert len(SIGNATURE_DEFAULTS) == 34
 
 
 # ===========================================================================

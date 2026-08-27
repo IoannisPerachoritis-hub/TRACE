@@ -553,6 +553,8 @@ def find_ld_blocks_graph(
     adj_r2_min: float = 0.3,   # dead default: live callers pass 0.2 (find_ld_clusters_genomewide)
     gap_factor: float = 10.0,
     region_sids: np.ndarray | None = None,
+    ld_merge_mode: str = "iou",
+    ld_merge_r2: float = 0.5,
 ):
     """
     LD block detection using a graph-based approach + contiguity refinement.
@@ -612,6 +614,12 @@ def find_ld_blocks_graph(
         iu = np.triu_indices_from(sub, k=1)
         vals = sub[iu]
         mean_r2 = float(np.nanmean(vals)) if (vals.size > 0 and np.any(np.isfinite(vals))) else np.nan
+        if ld_merge_mode == "correlation" and np.isfinite(mean_r2) and mean_r2 < ld_merge_r2:
+            _adj = np.array([r2[seg_idx[j], seg_idx[j + 1]] for j in range(seg_idx.size - 1)])
+            _k = int(np.argmin(np.where(np.isfinite(_adj), _adj, -np.inf)))
+            _emit_segment(seg_idx[:_k + 1])
+            _emit_segment(seg_idx[_k + 1:])
+            return
         member_ids = region_sids[seg_idx].tolist() if region_sids is not None else []
         blocks.append((start_bp, end_bp, int(seg_idx.size), mean_r2, member_ids))
 
@@ -703,6 +711,45 @@ def block_mean_r2(block_row, chroms, positions, sid, geno_imputed, min_pair_n: i
     return float(np.mean(fin)) if fin.size else np.nan
 
 
+def merge_coherence(row_a, row_b, chroms, positions, sid, geno_imputed, min_pair_n: int = 20):
+    """Cross-block seam + prospective-union coherence for a candidate merge.
+
+    Returns (cross_mean, union_mean): the mean r2 over the CROSS pairs between
+    block A and block B (a symmetric seam, so a fully-contained block still
+    yields a measurable seam), and the mean r2 over the UNION members (identical
+    in definition to block_mean_r2 of the merged block). Both come from a single
+    pairwise_r2 over the union. NaN when the union has <2 or >4000 informative
+    members, or no finite pair.
+    """
+    G_imp = np.asarray(geno_imputed, dtype=float)
+    chroms = np.asarray(chroms).astype(str)
+    positions = np.asarray(positions)
+    sid = np.asarray(sid).astype(str)
+    idx_a = np.where(get_block_snp_mask(row_a, chroms, positions, sid))[0]
+    idx_b = np.where(get_block_snp_mask(row_b, chroms, positions, sid))[0]
+    if idx_a.size:
+        idx_a = idx_a[np.nanvar(G_imp[:, idx_a], axis=0) > 0]
+    if idx_b.size:
+        idx_b = idx_b[np.nanvar(G_imp[:, idx_b], axis=0) > 0]
+    U = np.union1d(idx_a, idx_b)
+    if U.size:
+        U = U[np.argsort(positions[U])]
+    n = int(U.size)
+    if not (2 <= n <= 4000):
+        return (np.nan, np.nan)
+    r2U = np.asarray(pairwise_r2(G_imp[:, U], min_pair_n=min_pair_n))
+    _uvals = r2U[np.triu_indices(n, k=1)]
+    _ufin = _uvals[np.isfinite(_uvals)]
+    union_mean = float(np.mean(_ufin)) if _ufin.size else np.nan
+    in_a = np.isin(U, idx_a)
+    in_b = np.isin(U, idx_b)
+    _cross = np.triu(np.outer(in_a, in_b) | np.outer(in_b, in_a), k=1)
+    _cvals = r2U[_cross]
+    _cfin = _cvals[np.isfinite(_cvals)]
+    cross_mean = float(np.mean(_cfin)) if _cfin.size else np.nan
+    return (cross_mean, union_mean)
+
+
 def find_ld_clusters_genomewide(
     gwas_df,
     chroms,
@@ -719,7 +766,9 @@ def find_ld_clusters_genomewide(
     adj_r2_min=0.2,
     min_pair_n: int = 20,
     merge_iou=0.3,
-    gap_factor: float = 10.0
+    gap_factor: float = 10.0,
+    ld_merge_mode: str = "iou",
+    ld_merge_r2: float = 0.5
 ):
 
     """
@@ -765,7 +814,7 @@ def find_ld_clusters_genomewide(
         )
 
     if significant.empty:
-        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2"])
+        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2", "merge_r2"])
 
     flank_bp = int(round(float(flank_kb) * 1000.0))
 
@@ -890,6 +939,8 @@ def find_ld_clusters_genomewide(
             adj_r2_min=float(adj_r2_min),
             gap_factor=float(gap_factor),
             region_sids=region_sids,
+            ld_merge_mode=ld_merge_mode,
+            ld_merge_r2=ld_merge_r2,
         )
 
         for (start_bp, end_bp, n_snps, mean_r2, member_ids) in blocks:
@@ -897,7 +948,7 @@ def find_ld_clusters_genomewide(
                                ",".join(member_ids) if member_ids else ""])
 
     if not all_blocks:
-        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2"])
+        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2", "merge_r2"])
 
     df = pd.DataFrame(
         all_blocks,
@@ -910,6 +961,7 @@ def find_ld_clusters_genomewide(
 
     for _, row in df.iterrows():
         cur = row.to_dict()
+        cur["merge_r2"] = np.nan
 
         # try merge backward as long as overlaps remain high
         while merged and cur["Chr"] == merged[-1]["Chr"]:
@@ -918,7 +970,16 @@ def find_ld_clusters_genomewide(
                 cur["Start (bp)"], cur["End (bp)"],
                 last["Start (bp)"], last["End (bp)"]
             )
-            if iou > float(merge_iou):
+            do_merge = iou > float(merge_iou)
+            _cbr2 = np.nan
+            if do_merge:
+                _cbr2, _umr2 = merge_coherence(cur, last, chroms, positions,
+                                               sid, geno_imputed, min_pair_n)
+                if ld_merge_mode == "correlation" and not (
+                        np.isfinite(_cbr2) and _cbr2 >= ld_merge_r2 and
+                        np.isfinite(_umr2) and _umr2 >= ld_merge_r2):
+                    do_merge = False
+            if do_merge:
                 last["Start (bp)"] = int(min(last["Start (bp)"], cur["Start (bp)"]))
                 last["End (bp)"] = int(max(last["End (bp)"], cur["End (bp)"]))
                 last["Lead SNP"] = _merge_leads(last.get("Lead SNP", ""), cur.get("Lead SNP", ""))
@@ -926,6 +987,9 @@ def find_ld_clusters_genomewide(
                 last_ids = set(filter(None, last.get("SNP_IDs", "").split(",")))
                 cur_ids = set(filter(None, cur.get("SNP_IDs", "").split(",")))
                 last["SNP_IDs"] = ",".join(sorted(last_ids | cur_ids))
+                _cand = [x for x in (last.get("merge_r2"), cur.get("merge_r2"), _cbr2)
+                         if x is not None and np.isfinite(x)]
+                last["merge_r2"] = float(min(_cand)) if _cand else np.nan
                 cur = last
                 merged.pop()
             else:
@@ -956,7 +1020,7 @@ def find_ld_clusters_genomewide(
     out["lead_snp"] = [lp[0] for lp in _leads]
     out["lead_snp_pvalue"] = [lp[1] for lp in _leads]
     out = out[["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue",
-               "SNP_IDs", "Mean r2"]]
+               "SNP_IDs", "Mean r2", "merge_r2"]]
     return out
 
 def find_ld_blocks_from_genotypes(

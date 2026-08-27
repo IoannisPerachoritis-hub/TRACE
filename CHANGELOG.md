@@ -19,6 +19,14 @@ All notable changes to TRACE are documented in this file.
 - The per-block "Block Heatmaps" tab moved behind a "Legacy views" expander —
   superseded by the region selector's *Detected block* mode + the Local LD tab.
 
+### Fixed
+- **LD blocks could bridge uncorrelated SNP clusters.** The block merge fused
+  overlapping intervals with no correlation check, and the adjacency split only
+  tested consecutive pairs, so a long-range LD edge (or a chain of segment
+  merges) could join distinct clusters into one low-coherence block. The opt-in
+  `--ld-merge-mode correlation` gates both the within-segment split and the
+  cross-boundary merge on mean r² (see Added).
+
 ## [1.0.0] - 2026-04-21
 
 ### Initial release
