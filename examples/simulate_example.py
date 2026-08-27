@@ -14,6 +14,7 @@ Usage:
     python simulate_example.py
 """
 import gzip
+import io
 import os
 import sys
 
@@ -63,7 +64,9 @@ def _write_vcf(geno, mafs, path):
     """Write a minimal VCF 4.1 file (bgzip-compatible gzip)."""
     n_snps = geno.shape[1]
 
-    with gzip.open(path, "wt") as fh:
+    with open(path, "wb") as _raw, \
+            gzip.GzipFile(filename="", mode="wb", fileobj=_raw, mtime=0) as _gz, \
+            io.TextIOWrapper(_gz, encoding="utf-8", newline="\n") as fh:
         # Header
         fh.write("##fileformat=VCFv4.1\n")
         fh.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')

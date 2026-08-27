@@ -136,6 +136,15 @@ emits the underlying CSVs so the same plots can be regenerated externally.
 
 ---
 
+## Documentation
+
+- **[Quick-Start Tutorial](docs/tutorial.md)** — end-to-end walkthrough of both the CLI and the web app on the bundled example dataset.
+- **[CLI Reference](docs/cli_reference.md)** — every command-line flag, generated from the parser.
+- **[Output Files](docs/outputs.md)** — a column-by-column description of every CSV the pipeline writes.
+- **[Gene-Model Upload](docs/gene_model_upload.md)** — the format for supplying your own gene annotation.
+
+---
+
 ## Installation
 
 ### Requirements
@@ -286,7 +295,7 @@ TRACE/
 │
 ├── examples/                           # Synthetic quick-start tutorial dataset
 │   ├── simulate_example.py             # Generates example.vcf.gz + example_pheno.csv
-│   ├── example.vcf.gz                  # Simulated genotypes (60 samples × 150 SNPs, 3 chromosomes)
+│   ├── example.vcf.gz                  # Simulated genotypes (50 samples × 510 SNPs, 3 chromosomes)
 │   ├── example_pheno.csv               # Matching phenotype file (trait "Trait1")
 │   ├── run_example.sh                  # One-command end-to-end example run
 │   └── README.md                       # Example-specific usage notes

@@ -27,6 +27,7 @@ build/
 *.vcf.gz
 # Allow small example VCF
 !examples/*.vcf
+!examples/*.vcf.gz
 *.bcf
 *.bed
 *.bim
