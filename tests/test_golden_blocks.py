@@ -21,7 +21,7 @@ from gwas.ld import filter_contained_blocks, find_ld_clusters_genomewide
 from tests.golden._canon import GOLDEN_DIR, canon_block_table, load_case
 from tests.golden._cases import TIER_A_CASES
 
-BLOCK_SCHEMA = ["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2"]
+BLOCK_SCHEMA = ["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2", "merge_r2"]
 
 
 def _detect(inp, params, *, min_snps=None):
