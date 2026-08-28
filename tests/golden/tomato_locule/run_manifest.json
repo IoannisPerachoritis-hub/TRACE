@@ -10,6 +10,7 @@
   "sig_thresh": 1e-05,
   "gap_factor": 10.0,
   "merge_iou": 0.3,
+  "ld_merge_mode": "occupancy",
   "min_contained": 2,
   "n_perm": 1000,
   "min_hap_count": 5,
@@ -22,7 +23,7 @@
   "genes_csv": "data\\Sol_genes_SL3.csv",
   "descriptions_csv": null,
   "trait_col": "locule_number",
-  "n_blocks": 6,
+  "n_blocks": 3,
   "haplotype_missing_columns": [],
   "annotated_missing_columns": []
 }

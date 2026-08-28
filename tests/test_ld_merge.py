@@ -107,15 +107,16 @@ def test_merge_r2_column_present_and_nan_when_no_merge():
     assert np.isnan(float(out["merge_r2"].iloc[0]))   # single block, never merged
 
 
-def test_default_mode_is_iou():
+def test_default_mode_is_occupancy():
     gwas_df, chroms, positions, geno, sid = _one_block_inputs()
     default = ld.find_ld_clusters_genomewide(
         gwas_df=gwas_df, chroms=chroms, positions=positions,
         geno_imputed=geno.astype(float), sid=sid,
         ld_threshold=0.6, flank_kb=50, min_snps=3, top_n=0, sig_thresh=1e-5)
-    explicit = _detect(mode="iou")
+    explicit = _detect(mode="occupancy")
     pd.testing.assert_frame_equal(default.reset_index(drop=True),
                                   explicit.reset_index(drop=True))
+    assert int(default.attrs.get("n_occupancy_discarded", -1)) == 0
 
 
 def test_correlation_mode_runs_and_invariant_synth():
@@ -174,6 +175,33 @@ def test_correlation_invariant_and_splits_bridged_block_tomato():
         # the 0.427 bridged block must be gone (split) once coherence is required
         still = (corr["Start (bp)"].astype(int) == 47301921) & (corr["End (bp)"].astype(int) == 47657766)
         assert not still.any(), f"bridged lead block survived at r2={r2}"
+
+
+# --------------------------------------------------------------------------- #
+# occupancy default (D-109): disjoint blocks
+# --------------------------------------------------------------------------- #
+@pytest.mark.golden
+def test_occupancy_disjoint_tomato():
+    gwas_df, chroms, positions, geno, sid = _load_tomato_qc()
+    out = ld.find_ld_clusters_genomewide(
+        gwas_df=gwas_df, chroms=chroms, positions=positions,
+        geno_imputed=geno.astype(float), sid=sid, ld_threshold=0.6,
+        flank_kb=144, ld_decay_kb=72.17, min_snps=3, top_n=10, sig_thresh=1e-5,
+        adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0)   # default = occupancy
+    # 6 overlapping iou blocks -> 3 disjoint occupancy blocks; 18 candidates discarded.
+    assert len(out) == 3
+    assert int(out.attrs["n_occupancy_discarded"]) == 18
+    assert bool(out["merge_r2"].isna().all())   # no merges under occupancy
+    iv = sorted((int(r["Start (bp)"]), int(r["End (bp)"])) for _, r in out.iterrows())
+    for (s1, e1), (s2, e2) in zip(iv, iv[1:]):
+        assert e1 < s2, "blocks overlap in coordinates"
+    mem = [set(str(r["SNP_IDs"]).split(",")) for _, r in out.iterrows()]
+    for i in range(len(mem)):
+        for j in range(i + 1, len(mem)):
+            assert not (mem[i] & mem[j]), "blocks share members"
+    # the published lead region resolves to ONE block ending at 47,515,290
+    lead = out[out["Start (bp)"].astype(int) == 47301921]
+    assert len(lead) == 1 and int(lead["End (bp)"].iloc[0]) == 47515290
 
 
 # --------------------------------------------------------------------------- #
