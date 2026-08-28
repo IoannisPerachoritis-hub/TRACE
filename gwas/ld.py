@@ -4,7 +4,10 @@ import matplotlib.patches as patches
 from scipy.stats import linregress
 import re
 import hashlib
+import logging
 from annotation import canon_chr
+
+log = logging.getLogger(__name__)
 def _split_leads(x: str) -> list[str]:
     toks = re.split(r"[;,\s|]+", str(x))
     return [t for t in toks if t and t.lower() != "nan"]
@@ -555,6 +558,7 @@ def find_ld_blocks_graph(
     region_sids: np.ndarray | None = None,
     ld_merge_mode: str = "iou",
     ld_merge_r2: float = 0.5,
+    _discard_out=None,
 ):
     """
     LD block detection using a graph-based approach + contiguity refinement.
@@ -607,6 +611,8 @@ def find_ld_blocks_graph(
     def _emit_segment(seg_idx: np.ndarray):
         """Compute block tuple for a segment of indices."""
         if seg_idx.size < min_snps:
+            if _discard_out is not None and seg_idx.size > 0:
+                _discard_out.append(int(seg_idx.size))
             return
         start_bp = int(region_pos[seg_idx].min())
         end_bp = int(region_pos[seg_idx].max())
@@ -820,6 +826,7 @@ def find_ld_clusters_genomewide(
 
 
     all_blocks = []
+    _discards = []
     # Cache r² per (chr, start, end, m) window to avoid recomputing for overlapping lead SNPs
     _r2_window_cache = {}
 
@@ -941,14 +948,22 @@ def find_ld_clusters_genomewide(
             region_sids=region_sids,
             ld_merge_mode=ld_merge_mode,
             ld_merge_r2=ld_merge_r2,
+            _discard_out=_discards,
         )
 
         for (start_bp, end_bp, n_snps, mean_r2, member_ids) in blocks:
             all_blocks.append([chr_sel, start_bp, end_bp, snp_id,
                                ",".join(member_ids) if member_ids else ""])
 
+    if ld_merge_mode == "correlation" and _discards:
+        log.info(
+            "LD-merge correlation dropped %d fragment(s) below min_snps=%d -- "
+            "regions below the r2=%.2f coherence threshold are not reported.",
+            len(_discards), min_snps, ld_merge_r2)
     if not all_blocks:
-        return pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2", "merge_r2"])
+        _empty = pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2", "merge_r2"])
+        _empty.attrs["n_fragments_discarded"] = int(len(_discards))
+        return _empty
 
     df = pd.DataFrame(
         all_blocks,
@@ -1021,6 +1036,7 @@ def find_ld_clusters_genomewide(
     out["lead_snp_pvalue"] = [lp[1] for lp in _leads]
     out = out[["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue",
                "SNP_IDs", "Mean r2", "merge_r2"]]
+    out.attrs["n_fragments_discarded"] = int(len(_discards))
     return out
 
 def find_ld_blocks_from_genotypes(
