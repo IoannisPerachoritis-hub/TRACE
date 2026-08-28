@@ -756,6 +756,103 @@ def merge_coherence(row_a, row_b, chroms, positions, sid, geno_imputed, min_pair
     return (cross_mean, union_mean)
 
 
+def _iou_merge_blocks(df, chroms, positions, sid, geno_imputed, min_pair_n,
+                      merge_iou, ld_merge_mode, ld_merge_r2):
+    """Overlapping-window IoU merge (pre-D-109 behaviour; reachable via
+    --ld-merge-mode iou/correlation). Fuses blocks whose interval IoU exceeds
+    merge_iou; in correlation mode a fuse also requires the cross-block seam AND
+    the merged-block mean r2 to reach ld_merge_r2 (Gate B)."""
+    # Merge overlapping blocks (IoU > 0.3)
+    merged = []
+    df = df.sort_values(["Chr", "Start (bp)"])
+
+    for _, row in df.iterrows():
+        cur = row.to_dict()
+        cur["merge_r2"] = np.nan
+
+        # try merge backward as long as overlaps remain high
+        while merged and cur["Chr"] == merged[-1]["Chr"]:
+            last = merged[-1]
+            iou = _interval_iou_bp(
+                cur["Start (bp)"], cur["End (bp)"],
+                last["Start (bp)"], last["End (bp)"]
+            )
+            do_merge = iou > float(merge_iou)
+            _cbr2 = np.nan
+            if do_merge:
+                _cbr2, _umr2 = merge_coherence(cur, last, chroms, positions,
+                                               sid, geno_imputed, min_pair_n)
+                if ld_merge_mode == "correlation" and not (
+                        np.isfinite(_cbr2) and _cbr2 >= ld_merge_r2 and
+                        np.isfinite(_umr2) and _umr2 >= ld_merge_r2):
+                    do_merge = False
+            if do_merge:
+                last["Start (bp)"] = int(min(last["Start (bp)"], cur["Start (bp)"]))
+                last["End (bp)"] = int(max(last["End (bp)"], cur["End (bp)"]))
+                last["Lead SNP"] = _merge_leads(last.get("Lead SNP", ""), cur.get("Lead SNP", ""))
+                # Union member SNP IDs
+                last_ids = set(filter(None, last.get("SNP_IDs", "").split(",")))
+                cur_ids = set(filter(None, cur.get("SNP_IDs", "").split(",")))
+                last["SNP_IDs"] = ",".join(sorted(last_ids | cur_ids))
+                _cand = [x for x in (last.get("merge_r2"), cur.get("merge_r2"), _cbr2)
+                         if x is not None and np.isfinite(x)]
+                last["merge_r2"] = float(min(_cand)) if _cand else np.nan
+                cur = last
+                merged.pop()
+            else:
+                break
+
+        merged.append(cur)
+
+
+    return pd.DataFrame(merged)
+
+
+def _occupancy_select(df, chroms, positions, pval_by_snp, pos_by_snp):
+    """Greedy occupancy selection -> disjoint LD blocks (D-109).
+
+    Overlapping +/-flank windows produce candidate blocks that share markers, so a
+    shared marker would inflate the BH denominator. Accept candidates in order of
+    best-member p-value (ties: wider span, then lower start); accept only if no
+    marker position inside [Start, End] is already claimed, and on acceptance claim
+    the WHOLE span -- making coordinate- and membership-disjointness automatic.
+    Rejected candidates are discarded whole (never trimmed). Returns (out, n)."""
+    chr_str = np.asarray(chroms).astype(str)
+    positions = np.asarray(positions)
+    rows = df.to_dict("records")
+    for r in rows:
+        _lead, _bmp = _pick_lead_snp(_split_leads(r.get("SNP_IDs", "")),
+                                     pval_by_snp, pos_by_snp)
+        r["_bmp"] = float(_bmp) if np.isfinite(_bmp) else np.inf
+        r["_span"] = int(r["End (bp)"]) - int(r["Start (bp)"])
+    accepted = []
+    n_discarded = 0
+    for ch in pd.unique(df["Chr"].astype(str)):
+        cands = [r for r in rows if str(r["Chr"]) == ch]
+        cands.sort(key=lambda r: (r["_bmp"], -r["_span"], int(r["Start (bp)"])))
+        chr_pos = positions[chr_str == ch]
+        order = np.argsort(chr_pos, kind="stable")
+        sorted_pos = chr_pos[order]
+        claimed = np.zeros(chr_pos.size, dtype=bool)
+        for r in cands:
+            s = int(r["Start (bp)"]); e = int(r["End (bp)"])
+            lo = int(np.searchsorted(sorted_pos, s, "left"))
+            hi = int(np.searchsorted(sorted_pos, e, "right"))
+            span_idx = order[lo:hi]
+            if span_idx.size and claimed[span_idx].any():
+                n_discarded += 1
+                continue
+            claimed[span_idx] = True
+            accepted.append({k: r[k] for k in
+                             ("Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs")})
+    out = pd.DataFrame(accepted,
+                       columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs"])
+    if not out.empty:
+        out = out.sort_values(["Chr", "Start (bp)"]).reset_index(drop=True)
+    out["merge_r2"] = np.nan
+    return out, n_discarded
+
+
 def find_ld_clusters_genomewide(
     gwas_df,
     chroms,
@@ -773,7 +870,7 @@ def find_ld_clusters_genomewide(
     min_pair_n: int = 20,
     merge_iou=0.3,
     gap_factor: float = 10.0,
-    ld_merge_mode: str = "iou",
+    ld_merge_mode: str = "occupancy",
     ld_merge_r2: float = 0.5
 ):
 
@@ -970,49 +1067,26 @@ def find_ld_clusters_genomewide(
         columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs"]
     ).drop_duplicates()
 
-    # Merge overlapping blocks (IoU > 0.3)
-    merged = []
-    df = df.sort_values(["Chr", "Start (bp)"])
+    # Best-member p-value lookup (used by the occupancy priority pass AND the
+    # lead-SNP collapse below).
+    _pval_by_snp = dict(zip(gwas_df["SNP"].astype(str),
+                            pd.to_numeric(gwas_df["PValue"], errors="coerce")))
+    _pos_by_snp = dict(zip(gwas_df["SNP"].astype(str),
+                           pd.to_numeric(gwas_df["Pos"], errors="coerce")))
 
-    for _, row in df.iterrows():
-        cur = row.to_dict()
-        cur["merge_r2"] = np.nan
-
-        # try merge backward as long as overlaps remain high
-        while merged and cur["Chr"] == merged[-1]["Chr"]:
-            last = merged[-1]
-            iou = _interval_iou_bp(
-                cur["Start (bp)"], cur["End (bp)"],
-                last["Start (bp)"], last["End (bp)"]
-            )
-            do_merge = iou > float(merge_iou)
-            _cbr2 = np.nan
-            if do_merge:
-                _cbr2, _umr2 = merge_coherence(cur, last, chroms, positions,
-                                               sid, geno_imputed, min_pair_n)
-                if ld_merge_mode == "correlation" and not (
-                        np.isfinite(_cbr2) and _cbr2 >= ld_merge_r2 and
-                        np.isfinite(_umr2) and _umr2 >= ld_merge_r2):
-                    do_merge = False
-            if do_merge:
-                last["Start (bp)"] = int(min(last["Start (bp)"], cur["Start (bp)"]))
-                last["End (bp)"] = int(max(last["End (bp)"], cur["End (bp)"]))
-                last["Lead SNP"] = _merge_leads(last.get("Lead SNP", ""), cur.get("Lead SNP", ""))
-                # Union member SNP IDs
-                last_ids = set(filter(None, last.get("SNP_IDs", "").split(",")))
-                cur_ids = set(filter(None, cur.get("SNP_IDs", "").split(",")))
-                last["SNP_IDs"] = ",".join(sorted(last_ids | cur_ids))
-                _cand = [x for x in (last.get("merge_r2"), cur.get("merge_r2"), _cbr2)
-                         if x is not None and np.isfinite(x)]
-                last["merge_r2"] = float(min(_cand)) if _cand else np.nan
-                cur = last
-                merged.pop()
-            else:
-                break
-
-        merged.append(cur)
-
-    out = pd.DataFrame(merged)
+    if ld_merge_mode == "occupancy":
+        # Greedy occupancy selection -> disjoint blocks (D-109, the default).
+        out, _n_occ_discarded = _occupancy_select(
+            df, chroms, positions, _pval_by_snp, _pos_by_snp)
+        if _n_occ_discarded:
+            log.info("LD-block occupancy discarded %d overlapping candidate(s) "
+                     "(a marker was already claimed by a stronger block).",
+                     _n_occ_discarded)
+    else:
+        # Overlapping-window IoU merge (reachable via --ld-merge-mode iou/correlation).
+        out = _iou_merge_blocks(df, chroms, positions, sid, geno_imputed,
+                                min_pair_n, merge_iou, ld_merge_mode, ld_merge_r2)
+        _n_occ_discarded = 0
     # Surface each block's within-block coherence over its FINAL (post-merge)
     # members. Byte-identical to compute_block_ld_quality's ldq_r2_mean (pinned by
     # test); the per-segment mean_r2 the merge discards is NOT reused, because a
@@ -1023,13 +1097,8 @@ def find_ld_clusters_genomewide(
         for _, row in out.iterrows()
     ]
 
-    # Collapse the seed-union "Lead SNP" (the significant SNPs that formed the block,
-    # accumulated across the IoU merge) to the SINGLE most-significant seed. The lead
-    # is the block's real association signal and may not be a member of SNP_IDs.
-    _pval_by_snp = dict(zip(gwas_df["SNP"].astype(str),
-                            pd.to_numeric(gwas_df["PValue"], errors="coerce")))
-    _pos_by_snp = dict(zip(gwas_df["SNP"].astype(str),
-                           pd.to_numeric(gwas_df["Pos"], errors="coerce")))
+    # Collapse the seed-union "Lead SNP" to the SINGLE most-significant seed (may be a
+    # non-member). Uses the _pval_by_snp built above the block-selection pass.
     _leads = [_pick_lead_snp(_split_leads(v), _pval_by_snp, _pos_by_snp)
               for v in out["Lead SNP"]]
     out["lead_snp"] = [lp[0] for lp in _leads]
@@ -1037,6 +1106,7 @@ def find_ld_clusters_genomewide(
     out = out[["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue",
                "SNP_IDs", "Mean r2", "merge_r2"]]
     out.attrs["n_fragments_discarded"] = int(len(_discards))
+    out.attrs["n_occupancy_discarded"] = int(_n_occ_discarded)
     return out
 
 def find_ld_blocks_from_genotypes(

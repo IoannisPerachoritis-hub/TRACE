@@ -52,6 +52,7 @@ def _rebuild(tmp_path):
         genes_csv=Path(genes) if genes else None,
         descriptions_csv=Path(descr) if descr else None,
         trait_col=manifest.get("trait_col"),
+        ld_merge_mode=manifest.get("ld_merge_mode", "occupancy"),
     )
     return tmp_path
 

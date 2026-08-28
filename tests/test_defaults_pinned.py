@@ -196,7 +196,7 @@ SIGNATURE_DEFAULTS = [
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "min_pair_n", 20, "gwas/ld.py:826"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "merge_iou", 0.3, "gwas/ld.py:827"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "gap_factor", 10.0, "gwas/ld.py:828"),
-    ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "ld_merge_mode", "iou", "gwas/ld.py (--ld-merge-mode)"),
+    ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "ld_merge_mode", "occupancy", "gwas/ld.py (--ld-merge-mode)"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "ld_merge_r2", 0.5, "gwas/ld.py (--ld-merge-r2)"),
     ("ld.find_ld_blocks_graph", ld.find_ld_blocks_graph, "min_snps", 3, "gwas/ld.py:690"),
     ("ld.find_ld_blocks_graph", ld.find_ld_blocks_graph, "adj_r2_min", 0.3, "gwas/ld.py:691"),

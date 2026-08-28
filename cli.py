@@ -164,14 +164,15 @@ def _build_parser():
                          help="Suggestive-mode FLOOR: always also seed the top-N "
                               "SNPs by p-value, even when fewer than N pass "
                               "--ld-seed-p (default: 10; 0 disables the floor).")
-    ld_grp.add_argument("--ld-merge-mode", default="iou",
-                         choices=["iou", "correlation"],
-                         help="LD-block merge criterion: 'iou' (default) fuses "
-                              "overlapping blocks by interval overlap only; "
-                              "'correlation' additionally requires the cross-block "
-                              "seam AND the merged block's mean r^2 to reach "
-                              "--ld-merge-r2, so a reported block's markers are "
-                              "mutually correlated (splits LD-bridged clusters).")
+    ld_grp.add_argument("--ld-merge-mode", default="occupancy",
+                         choices=["occupancy", "iou", "correlation"],
+                         help="LD-block merge criterion. 'occupancy' (default) makes "
+                              "blocks disjoint by greedy occupancy selection -- accept "
+                              "the strongest-seeded candidate, claim its whole span, "
+                              "discard overlapping candidates -- so no marker is tested "
+                              "in more than one block; 'iou' fuses overlapping blocks by "
+                              "interval overlap; 'correlation' adds a cross-block seam + "
+                              "merged-block mean-r^2 requirement (--ld-merge-r2) to iou.")
     ld_grp.add_argument("--ld-merge-r2", type=float, default=0.5,
                          help="Mean-r^2 threshold for --ld-merge-mode correlation "
                               "(default: 0.5).")
