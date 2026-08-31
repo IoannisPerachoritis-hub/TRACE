@@ -860,7 +860,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     norm_option = "none"
 
     n_pcs = st.sidebar.slider(
-        "Number of PCs (MLM)",
+        "MLM PCs",
         min_value=0,
         max_value=20,
         value=4,
@@ -869,36 +869,35 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         help=(
             "Number of principal components used as fixed-effect covariates "
             "in the MLM (FaST-MLM) model. MLMM and FarmCPU default to this "
-            "value unless overridden in the expander below."
+            "value unless overridden below."
         ),
     )
 
     # --- Per-model PC overrides ---
     # Each selected multi-locus model can use a different PC count from MLM.
-    # Widgets only render when the model is in `model_choices`; otherwise the
+    # Sliders render only when the model is in `model_choices`; otherwise the
     # override falls back to the MLM value above.
     n_pcs_mlmm = n_pcs
     n_pcs_farmcpu = n_pcs
-    with st.sidebar.expander("Per-model PC overrides", expanded=False):
-        if "MLMM (iterative cofactors)" in model_choices:
-            n_pcs_mlmm = st.number_input(
-                "MLMM PCs",
-                min_value=0, max_value=20,
-                value=int(n_pcs), step=1, key="n_pcs_mlmm_override",
-                help="PC count used for MLMM covariates. Defaults to the MLM value.",
-            )
-        if "FarmCPU (multi-locus)" in model_choices:
-            n_pcs_farmcpu = st.number_input(
-                "FarmCPU PCs",
-                min_value=0, max_value=20,
-                value=int(n_pcs), step=1, key="n_pcs_farmcpu_override",
-                help="PC count used for FarmCPU covariates. Defaults to the MLM value.",
-            )
-        if not model_choices:
-            st.caption(
-                "Overrides appear when MLMM or FarmCPU is selected in "
-                "'Additional GWAS models' above."
-            )
+    if "MLMM (iterative cofactors)" in model_choices:
+        n_pcs_mlmm = st.sidebar.slider(
+            "MLMM PCs",
+            min_value=0, max_value=20,
+            value=int(n_pcs), step=1, key="n_pcs_mlmm_override",
+            help="PC count used for MLMM covariates. Defaults to the MLM value.",
+        )
+    if "FarmCPU (multi-locus)" in model_choices:
+        n_pcs_farmcpu = st.sidebar.slider(
+            "FarmCPU PCs",
+            min_value=0, max_value=20,
+            value=int(n_pcs), step=1, key="n_pcs_farmcpu_override",
+            help="PC count used for FarmCPU covariates. Defaults to the MLM value.",
+        )
+    if not model_choices:
+        st.sidebar.caption(
+            "Overrides appear when MLMM or FarmCPU is selected in "
+            "'Additional GWAS models' above."
+        )
 
     # --- Build stable cache keys ---
     vcf_hash = hash_bytes(vcf_bytes)
@@ -1255,123 +1254,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         "pcs": st.session_state["pcs"],
         "covar_reader": st.session_state["covar_reader"],
     }
-
-    # ================================================================
-    #       AUTO PC SELECTION (lambda-based)
-    # ================================================================
-
-    with st.sidebar.expander("Auto-select PCs (lambda-based)", expanded=False):
-        st.caption(
-            "Scan the selected association model at different PC counts "
-            "and pick the one with λGC closest to 1.0 (well-calibrated "
-            "population structure correction)."
-        )
-        _scan_model = st.selectbox(
-            "Model to scan",
-            ["MLM", "MLMM", "FarmCPU"],
-            key="scan_pcs_model",
-            help=(
-                "Run the λGC-vs-PCs scan for the selected association "
-                "model. MLMM and FarmCPU are slower than MLM."
-            ),
-        )
-        max_pc_scan = st.slider("Max PCs to scan", 2, 15, 10, key="max_pc_scan")
-        if st.button("Scan PCs", key="scan_pcs_btn"):
-            pcs_full_arr = st.session_state["pcs_full"]
-            prog = st.progress(0, text="Scanning PC counts...")
-            def _pc_progress(k, total):
-                prog.progress(
-                    k / total,
-                    text=f"Running {_scan_model} with {k} PCs… ({k+1}/{total})",
-                )
-            pc_scan_df = auto_select_pcs(
-                geno_imputed=geno_imputed,
-                y=y,
-                sid=sid,
-                chroms=chroms,
-                chroms_num=chroms_num,
-                positions=positions,
-                iid=iid,
-                Z_grm=st.session_state["Z_grm"],
-                chroms_grm=st.session_state["chroms_grm"],
-                K_base=K,
-                pcs_full=pcs_full_arr,
-                max_pcs=max_pc_scan,
-                progress_callback=_pc_progress,
-                use_loco=use_loco,
-                model=_scan_model.lower(),
-            )
-            prog.empty()
-            st.session_state["pc_scan_df"] = pc_scan_df
-            st.session_state["pc_scan_model"] = _scan_model
-
-        if "pc_scan_df" in st.session_state:
-            pc_df = st.session_state["pc_scan_df"]
-            _scan_model_shown = st.session_state.get("pc_scan_model", "MLM")
-            st.caption(f"Last scan: **{_scan_model_shown}**")
-            st.dataframe(
-                pc_df.style.apply(
-                    lambda row: ["background-color: #d4edda" if row["recommended"] == "★" else "" for _ in row],
-                    axis=1,
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-            # Lambda vs PCs chart
-            import plotly.graph_objects as go
-            fig_pc = go.Figure()
-            fig_pc.add_trace(go.Scatter(
-                x=pc_df["n_pcs"], y=pc_df["lambda_gc"],
-                mode="lines+markers", name=f"λGC ({_scan_model_shown})",
-            ))
-            fig_pc.add_hline(y=1.0, line_dash="dash", line_color="red",
-                             annotation_text="λ = 1.0")
-            fig_pc.update_layout(
-                xaxis_title="Number of PCs",
-                yaxis_title="λGC",
-                height=300,
-                margin=dict(t=30, b=30),
-            )
-            st.plotly_chart(fig_pc, use_container_width=True)
-            download_plotly_fig(
-                fig_pc,
-                filename=f"PC_lambda_curve_{_scan_model_shown}_{trait_col}.html",
-                label="Download PC lambda curve",
-            )
-
-            # "Use recommended" button
-            best_row = pc_df.loc[pc_df["recommended"] == "★"]
-            if not best_row.empty:
-                best_k = int(best_row.iloc[0]["n_pcs"])
-                best_lam = best_row.iloc[0]["lambda_gc"]
-                st.write(
-                    f"Recommended ({_scan_model_shown}): **{best_k} PCs** "
-                    f"(λGC = {best_lam})"
-                )
-                # Propagate the recommended PC count to every widget tied
-                # to the scanned model via an on_click callback. Callbacks
-                # fire BEFORE the next script run, so the target widgets
-                # haven't been instantiated yet — writing to session_state
-                # inside the button branch instead raises
-                # StreamlitAPIException because the PC widgets already
-                # rendered earlier in this run.
-                def _apply_recommended_pcs(model: str, k: int) -> None:
-                    if model == "MLM":
-                        st.session_state["n_pcs_mlm_slider"] = k
-                    elif model == "MLMM":
-                        st.session_state["n_pcs_mlmm_override"] = k
-                    elif model == "FarmCPU":
-                        st.session_state["n_pcs_farmcpu_override"] = k
-                    # One-click pipeline manual widget (same naming
-                    # convention as the factory: pipe_pcs_<model_lower>)
-                    st.session_state[f"pipe_pcs_{model.lower()}"] = k
-
-                st.button(
-                    f"Use {best_k} PCs",
-                    key="use_recommended_pcs",
-                    on_click=_apply_recommended_pcs,
-                    args=(_scan_model_shown, best_k),
-                )
 
     # ================================================================
     #       ONE-CLICK FULL ANALYSIS PIPELINE
@@ -3206,6 +3088,123 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # ================================================================
 
     st.header("Single-trait GWAS (detailed view)")
+
+    # ================================================================
+    #       AUTO PC SELECTION (lambda-based)
+    # ================================================================
+
+    with st.expander("Auto-select PCs (lambda-based)", expanded=False):
+        st.caption(
+            "Scan the selected association model at different PC counts "
+            "and pick the one with λGC closest to 1.0 (well-calibrated "
+            "population structure correction)."
+        )
+        _scan_model = st.selectbox(
+            "Model to scan",
+            ["MLM", "MLMM", "FarmCPU"],
+            key="scan_pcs_model",
+            help=(
+                "Run the λGC-vs-PCs scan for the selected association "
+                "model. MLMM and FarmCPU are slower than MLM."
+            ),
+        )
+        max_pc_scan = st.slider("Max PCs to scan", 2, 15, 10, key="max_pc_scan")
+        if st.button("Scan PCs", key="scan_pcs_btn"):
+            pcs_full_arr = st.session_state["pcs_full"]
+            prog = st.progress(0, text="Scanning PC counts...")
+            def _pc_progress(k, total):
+                prog.progress(
+                    k / total,
+                    text=f"Running {_scan_model} with {k} PCs… ({k+1}/{total})",
+                )
+            pc_scan_df = auto_select_pcs(
+                geno_imputed=geno_imputed,
+                y=y,
+                sid=sid,
+                chroms=chroms,
+                chroms_num=chroms_num,
+                positions=positions,
+                iid=iid,
+                Z_grm=st.session_state["Z_grm"],
+                chroms_grm=st.session_state["chroms_grm"],
+                K_base=K,
+                pcs_full=pcs_full_arr,
+                max_pcs=max_pc_scan,
+                progress_callback=_pc_progress,
+                use_loco=use_loco,
+                model=_scan_model.lower(),
+            )
+            prog.empty()
+            st.session_state["pc_scan_df"] = pc_scan_df
+            st.session_state["pc_scan_model"] = _scan_model
+
+        if "pc_scan_df" in st.session_state:
+            pc_df = st.session_state["pc_scan_df"]
+            _scan_model_shown = st.session_state.get("pc_scan_model", "MLM")
+            st.caption(f"Last scan: **{_scan_model_shown}**")
+            st.dataframe(
+                pc_df.style.apply(
+                    lambda row: ["background-color: #d4edda" if row["recommended"] == "★" else "" for _ in row],
+                    axis=1,
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            # Lambda vs PCs chart
+            import plotly.graph_objects as go
+            fig_pc = go.Figure()
+            fig_pc.add_trace(go.Scatter(
+                x=pc_df["n_pcs"], y=pc_df["lambda_gc"],
+                mode="lines+markers", name=f"λGC ({_scan_model_shown})",
+            ))
+            fig_pc.add_hline(y=1.0, line_dash="dash", line_color="red",
+                             annotation_text="λ = 1.0")
+            fig_pc.update_layout(
+                xaxis_title="Number of PCs",
+                yaxis_title="λGC",
+                height=300,
+                margin=dict(t=30, b=30),
+            )
+            st.plotly_chart(fig_pc, use_container_width=True)
+            download_plotly_fig(
+                fig_pc,
+                filename=f"PC_lambda_curve_{_scan_model_shown}_{trait_col}.html",
+                label="Download PC lambda curve",
+            )
+
+            # "Use recommended" button
+            best_row = pc_df.loc[pc_df["recommended"] == "★"]
+            if not best_row.empty:
+                best_k = int(best_row.iloc[0]["n_pcs"])
+                best_lam = best_row.iloc[0]["lambda_gc"]
+                st.write(
+                    f"Recommended ({_scan_model_shown}): **{best_k} PCs** "
+                    f"(λGC = {best_lam})"
+                )
+                # Propagate the recommended PC count to every widget tied
+                # to the scanned model via an on_click callback. Callbacks
+                # fire BEFORE the next script run, so the target widgets
+                # haven't been instantiated yet — writing to session_state
+                # inside the button branch instead raises
+                # StreamlitAPIException because the PC widgets already
+                # rendered earlier in this run.
+                def _apply_recommended_pcs(model: str, k: int) -> None:
+                    if model == "MLM":
+                        st.session_state["n_pcs_mlm_slider"] = k
+                    elif model == "MLMM":
+                        st.session_state["n_pcs_mlmm_override"] = k
+                    elif model == "FarmCPU":
+                        st.session_state["n_pcs_farmcpu_override"] = k
+                    # One-click pipeline manual widget (same naming
+                    # convention as the factory: pipe_pcs_<model_lower>)
+                    st.session_state[f"pipe_pcs_{model.lower()}"] = k
+
+                st.button(
+                    f"Use {best_k} PCs",
+                    key="use_recommended_pcs",
+                    on_click=_apply_recommended_pcs,
+                    args=(_scan_model_shown, best_k),
+                )
 
     # --- Run GWAS button (prevents auto-trigger on every sidebar change) ---
     # Reset trigger when trait changes so user must re-click
