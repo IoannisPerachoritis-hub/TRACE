@@ -2510,6 +2510,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     min_snps=3,
                                     top_n=_pipe_ld_top_n if _ld_suggestive else 0,
                                     sig_thresh=_pipe_ld_sig_p if _ld_suggestive else _pipe_sig_thresh,
+                                    # Name the merge mode explicitly: find_ld_clusters_genomewide
+                                    # defaults to "occupancy" but the sibling find_ld_blocks_graph
+                                    # defaults to "iou" -- passing it guards against a silent flip.
+                                    ld_merge_mode="occupancy",
                                 )
                                 _n_before_filter = len(_m_ld_blocks)
                                 _m_ld_blocks, _ = ld.filter_contained_blocks(
@@ -2534,6 +2538,61 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         except Exception as e:
                             logging.exception("Pipeline LD detection failed for %s", _model_name)
                             st.write(f"  {_model_name} LD detection skipped: {e}")
+
+                        # --- Significant-SNP table + isolated-SNP rescue (P1/P3): one-click
+                        #     output parity with cli.py:1127-1176. Runs for EVERY model, block
+                        #     or not (a positional set-difference vs the final block table; never
+                        #     touches the detector). The rule comes from rule_from_streamlit; the
+                        #     table call mirrors the CLI (raw --ld-seed-p / --ld-top-n, real gene
+                        #     frame), NOT the Post-GWAS tab (which hard-codes seed_p_used=1e-5 /
+                        #     genes=None). Additive: emits parallel CSVs only. ---
+                        try:
+                            from gwas.significance import rule_from_streamlit as _pp_rule_fn
+                            from gwas.isolated import run_isolated_snp_rescue as _pp_rescue_fn
+                            from gwas.sigtable import (build_significant_snp_table as _pp_sig_fn,
+                                                       project_unblocked as _pp_unb_fn)
+                            _pp_rule = _pp_rule_fn(_pipe_sig_rule, len(_model_df), _pipe_meff,
+                                                   custom_thresh=None)
+                            _pp_blocks = _m_ld_blocks if _m_ld_blocks is not None else pd.DataFrame()
+                            _pp_geno_raw = st.session_state.get("geno_dosage_raw")
+                            # Mirror the CLI's RAW --ld-seed-p / --ld-top-n (sigtable/isolated use
+                            # the flag values, not the mode-effective seed):
+                            _pp_seed_p = (_pipe_ld_sig_p if _pipe_ld_sig_p is not None
+                                          else float(st.session_state.get("pipe_ld_sig_p", 1e-5)))
+                            _pp_top_n = (_pipe_ld_top_n if _pipe_ld_seed.startswith("Suggestive")
+                                         else int(st.session_state.get("pipe_ld_top_n", 10)))
+                            # Effective flank / decay -> interval bp (mirror cli.py:1027-1034):
+                            _pp_edge_bp = int(_pipe_ld_flank) * 1000 if _pipe_ld_flank else 300_000
+                            _pp_decay_bp = int(_pipe_ld_decay_kb * 1000) if _pipe_ld_decay_kb else None
+                            _pp_species = ("custom" if _pipe_species == "Other (upload files)"
+                                           else _pipe_species)
+                            _rescue = _pp_rescue_fn(
+                                _model_df, _pp_blocks, _pp_rule, chroms, positions, sid,
+                                genes=_pipe_genes_df, seed_p_used=_pp_seed_p, top_n_used=_pp_top_n,
+                                edge_flank_bp=_pp_edge_bp, max_interval_bp=5_000_000,
+                                low_res_bp=None, ld_decay_bp=_pp_decay_bp,
+                            )
+                            if _rescue.n_uncovered > 0:
+                                _pipe_extra_tables[f"Isolated_SNP_intervals_{_model_name}.csv"] = (
+                                    _rescue.intervals)
+                                if _rescue.genes_long is not None and not _rescue.genes_long.empty:
+                                    _pipe_extra_tables[
+                                        f"Isolated_SNP_candidate_genes_{_model_name}.csv"] = _rescue.genes_long
+                            _sigtab = _pp_sig_fn(
+                                _model_df, _pp_blocks, _pp_rule, chroms, positions, sid,
+                                geno_dosage_raw=_pp_geno_raw, genes=_pipe_genes_df,
+                                seed_p_used=_pp_seed_p, top_n_used=_pp_top_n,
+                                edge_flank_bp=_pp_edge_bp, max_interval_bp=5_000_000,
+                                low_res_bp=None, ld_decay_bp=_pp_decay_bp,
+                                genome_build=(_pipe_genome_build or "SL3"), species=_pp_species,
+                            )
+                            if not _sigtab.empty:
+                                _pipe_extra_tables[f"Significant_SNPs_{_model_name}.csv"] = _sigtab
+                                _pipe_extra_tables[f"Unblocked_SNPs_{_model_name}.csv"] = (
+                                    _pp_unb_fn(_sigtab))
+                        except Exception as e:
+                            logging.exception("Significant-SNP table / rescue failed for %s", _model_name)
+                            st.write(f"  {_model_name} significant-SNP table skipped: {e}")
 
                         # --- Haplotype testing ---
                         if _m_ld_blocks is not None and not _m_ld_blocks.empty:
@@ -2616,6 +2675,59 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                             pass  # narrative is best-effort
                             except Exception:
                                 logging.exception("LD block consolidation failed for %s", _model_name)
+
+                        # --- LD-quality triage (P2): one-click parity with cli.py:1302-1343.
+                        #     r2_coherent bound to the run's LD r2 (a self-consistency check on
+                        #     the detector, not a new opinion). Additive; never a filter -> a NEW
+                        #     supplementary LD_triage_{model}.csv, no p/F/eta2/boundary changes. ---
+                        if _m_ld_blocks is not None and not _m_ld_blocks.empty:
+                            try:
+                                from gwas.ld import (compute_block_ld_quality as _pp_cblq,
+                                                     maf_from_matrix as _pp_maf)
+                                from gwas.triage import (TriageThresholds as _pp_TT,
+                                                         triage_blocks as _pp_tb,
+                                                         add_eta2_comparability as _pp_eta)
+                                _pp_geno_raw = st.session_state.get("geno_dosage_raw")
+                                _pp_m = _pp_cblq(
+                                    _m_ld_blocks, chroms, positions, sid, _geno_float, _model_df,
+                                    geno_dosage_raw=_pp_geno_raw, r2_coherent=_pipe_ld_r2).copy()
+                                _pp_m["_c"] = _pp_m["Chr"].astype(str).map(canon_chr)
+                                _pp_m["_s"] = _pp_m["Start (bp)"].astype(int)
+                                _pp_m["_e"] = _pp_m["End (bp)"].astype(int)
+                                if _m_hap_gwas is not None and not _m_hap_gwas.empty:
+                                    _pp_h = _m_hap_gwas.rename(
+                                        columns={"Start": "Start (bp)", "End": "End (bp)"}).copy()
+                                    _pp_h["_c"] = _pp_h["Chr"].astype(str).map(canon_chr)
+                                    _pp_h["_s"] = _pp_h["Start (bp)"].astype(int)
+                                    _pp_h["_e"] = _pp_h["End (bp)"].astype(int)
+                                    _pp_l2 = ["_c", "_s", "_e"] + [
+                                        c for c in _pp_h.columns if c.startswith("mlg_") or c in (
+                                            "eta2", "df1", "df2", "F_perm", "F_param",
+                                            "n_samples_tested", "n_samples_block", "n_tested_haplotypes")]
+                                    _pp_m = _pp_m.merge(_pp_h[_pp_l2], on=["_c", "_s", "_e"], how="left")
+                                _pp_m = _pp_m.drop(columns=["_c", "_s", "_e"])
+                                _pp_m = _pp_eta(_pp_m)
+                                _pp_sida = np.asarray(sid).astype(str)
+                                _pp_G = np.asarray(_pp_geno_raw, float) if _pp_geno_raw is not None else None
+                                _pp_nc, _pp_mf = [], []
+                                for _pp_lead in _pp_m["ldq_lead_snp"].astype(str):
+                                    _pp_c1, _pp_m1 = np.nan, np.nan
+                                    if _pp_G is not None and _pp_lead:
+                                        _pp_ix = np.where(_pp_sida == _pp_lead)[0]
+                                        if len(_pp_ix):
+                                            _pp_col = _pp_G[:, int(_pp_ix[0])]
+                                            _pp_gg = np.rint(_pp_col[np.isfinite(_pp_col)])
+                                            _pp_c1 = int(sum(
+                                                int((_pp_gg == _k).sum()) >= 3 for _k in (0, 1, 2)))
+                                            _pp_m1 = float(_pp_maf(_pp_G[:, [int(_pp_ix[0])]], "dosage012")[0])
+                                    _pp_nc.append(_pp_c1); _pp_mf.append(_pp_m1)
+                                _pp_m["n_lead_classes_ge"] = _pp_nc
+                                _pp_m["lead_maf"] = _pp_mf
+                                _pp_thr = _pp_TT(r2_coherent=_pipe_ld_r2, lead_r2_frac=0.50,
+                                                 min_group_n=3, enabled=True)
+                                _pipe_extra_tables[f"LD_triage_{_model_name}.csv"] = _pp_tb(_pp_m, _pp_thr)
+                            except Exception as e:
+                                logging.exception("LD triage failed for %s", _model_name)
 
                         # --- LD heatmaps for significant blocks (deduplicated across models) ---
                         # Gated by the one-click "Generate LD block heatmap PNGs"
@@ -2888,6 +3000,13 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
                     # --- Step N: Generate report ---
                     _status.update(label=f"Step {_step}: Generating report...")
+                    # Addition B: block-detection provenance. Effective detection params +
+                    # the find_ld_clusters_genomewide defaults for the params the call inherits
+                    # (read from the signature so the manifest can't drift if a default changes).
+                    import inspect as _pp_ins
+                    _pp_lddef = {k: p.default for k, p in
+                                 _pp_ins.signature(ld.find_ld_clusters_genomewide).parameters.items()}
+                    _pp_sugg_meta = _pipe_ld_seed.startswith("Suggestive")
                     _pipe_meta = {
                         "Run date": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "Pipeline": "One-Click Full Analysis",
@@ -2904,6 +3023,17 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         "M_eff_threshold": f"{_pipe_meff_thresh:.2e}" if _pipe_meff_thresh is not None else "N/A",
                         "LD_decay_kb": round(_pipe_ld_decay_kb, 1) if _pipe_ld_decay_kb else "N/A",
                         "LD_flank_kb": _pipe_ld_flank,
+                        "LD_r2 (--ld-r2)": _pipe_ld_r2,
+                        "LD_seed_p (effective)": (_pipe_ld_sig_p if _pp_sugg_meta else _pipe_sig_thresh),
+                        "LD_top_n (effective)": (_pipe_ld_top_n if _pp_sugg_meta else 0),
+                        "LD_merge_mode (--ld-merge-mode)": "occupancy",
+                        "LD_merge_r2 (--ld-merge-r2)": _pp_lddef.get("ld_merge_r2"),
+                        "LD_merge_iou": _pp_lddef.get("merge_iou"),
+                        "LD_adj_r2_min": _pp_lddef.get("adj_r2_min"),
+                        "LD_gap_factor": _pp_lddef.get("gap_factor"),
+                        "LD_min_snps": 3,
+                        "Hap_min_group_size (--hap-min-group-size)": 3,
+                        "Hap_n_perm": int(_pipe_hap_perms),
                         **{f"LD_blocks_{mn}": len(tb) if tb is not None else 0
                            for mn, tb in [(mn, _pipe_extra_tables.get(f"LD_blocks_annotated_{mn}.csv"))
                                           for mn, _ in _post_gwas_models]},

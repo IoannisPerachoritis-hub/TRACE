@@ -1477,6 +1477,14 @@ def run_pipeline(args):
             )
             figures["PCA_scatter.png"] = fig_pca
 
+        if pca_eigenvalues is not None:
+            # P4: scree plot (eigenvalues already computed; parity with the GUI which
+            # renders plot_pca_scree). Gated on availability, not n_pcs_mlm >= 2, so it
+            # emits even at k=0 (e.g. the tomato deflation-guard panel).
+            from gwas.plotting import plot_pca_scree
+            figures["PCA_scree.png"] = plot_pca_scree(
+                pca_eigenvalues, n_pcs_used=n_pcs_mlm, title="PCA Scree Plot")
+
     # ── Per-SNP effect boxplots + plotting ledger (T-21/T-84–86) ──────────
     # Primary model only. The significant-SNP table stays complete — this only
     # bounds how many figures the report embeds (--snp-plots / --max-snp-plots),
@@ -1533,6 +1541,12 @@ def run_pipeline(args):
     else:
         _gm_meta = "none"
 
+    # Addition B: block-detection provenance. Effective detection seed/top-N (P14) +
+    # the find_ld_clusters_genomewide defaults for the params the call inherits.
+    import inspect as _md_ins
+    from gwas import ld as _md_ld
+    _md_lddef = {k: p.default for k, p in
+                 _md_ins.signature(_md_ld.find_ld_clusters_genomewide).parameters.items()}
     meta = {
         "VCF": str(vcf_path),
         "Phenotype": str(pheno_path),
@@ -1567,6 +1581,17 @@ def run_pipeline(args):
         "LD decay (kb)": round(ld_decay_kb, 1) if ld_decay_kb else "N/A",
         "LD decay grid-limited (n_chr)": _ld_decay_n_censored,
         "LD flank (kb)": ld_flank_kb if ld_flank_kb else "N/A",
+        "LD_r2 (--ld-r2)": args.ld_r2,
+        "LD_seed_p (effective)": _ld_seed_thresh,
+        "LD_top_n (effective)": _ld_seed_top_n,
+        "LD_merge_mode (--ld-merge-mode)": args.ld_merge_mode,
+        "LD_merge_r2 (--ld-merge-r2)": args.ld_merge_r2,
+        "LD_merge_iou": _md_lddef.get("merge_iou"),
+        "LD_adj_r2_min": _md_lddef.get("adj_r2_min"),
+        "LD_gap_factor": _md_lddef.get("gap_factor"),
+        "LD_min_snps": 3,
+        "Hap_min_group_size (--hap-min-group-size)": args.hap_min_group_size,
+        "Hap_n_perm": args.hap_perms,
         "LD blocks (MLM)": len(ld_blocks_mlm) if ld_blocks_mlm is not None else "N/A",
         "Subsampling reps": args.boot_reps if args.subsampling else "N/A",
         "Auto PCs": "Yes" if args.auto_pcs else "No",
