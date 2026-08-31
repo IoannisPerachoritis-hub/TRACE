@@ -128,15 +128,7 @@ explore the tabs:
 - **LD Decay** — genome-wide LD decay, which sets the default block window.
 - **LD Blocks & Haplotypes** — detected blocks, haplotype-based association tests, and per-block MLG summaries.
 
-### Step 3 — Phenotype Normality & Distribution Check
-
-Open **Phenotype Normality & Distribution Check**. This standalone tool loads your
-phenotype file and reports per-trait normality (Shapiro–Wilk, skew) with
-raw-vs-transformed panels, and lets you preview a transform (none / log /
-Yeo-Johnson / inverse-normal). It is typically run **before** the GWAS in Step 1
-when a trait looks skewed, so you can choose an appropriate transform.
-
-### Step 4 — Help & Reference
+### Step 3 — Help & Reference
 
 Open **Help & Reference** for the output-file glossary, a column glossary, and
 guidance on interpreting results for breeding decisions.
