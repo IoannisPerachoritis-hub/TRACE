@@ -523,6 +523,40 @@ model_choices = st.sidebar.multiselect(
     ),
 )
 
+# --- Per-model PC counts (grouped right under the model selector) ---
+# MLM always runs, so its PC slider is always shown. The MLMM / FarmCPU PC sliders
+# appear only when that model is selected in 'Additional GWAS models' above; each
+# defaults to the MLM value.
+n_pcs = st.sidebar.slider(
+    "MLM PCs",
+    min_value=0,
+    max_value=20,
+    value=0,
+    step=1,
+    key="n_pcs_mlm_slider",
+    help=(
+        "Number of principal components used as fixed-effect covariates "
+        "in the MLM (FaST-MLM) model. MLMM and FarmCPU default to this "
+        "value unless overridden below."
+    ),
+)
+n_pcs_mlmm = n_pcs
+n_pcs_farmcpu = n_pcs
+if "MLMM (iterative cofactors)" in model_choices:
+    n_pcs_mlmm = st.sidebar.slider(
+        "MLMM PCs",
+        min_value=0, max_value=20,
+        value=int(n_pcs), step=1, key="n_pcs_mlmm_override",
+        help="PC count used for MLMM covariates. Defaults to the MLM value.",
+    )
+if "FarmCPU (multi-locus)" in model_choices:
+    n_pcs_farmcpu = st.sidebar.slider(
+        "FarmCPU PCs",
+        min_value=0, max_value=20,
+        value=int(n_pcs), step=1, key="n_pcs_farmcpu_override",
+        help="PC count used for FarmCPU covariates. Defaults to the MLM value.",
+    )
+
 # --- MLMM tuning parameters ---
 if advanced_mode:
     st.sidebar.subheader("MLMM configuration")
@@ -858,37 +892,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # Phenotype normalisation is handled exclusively in Section 2b (above); the
     # pipeline must not re-transform, so it receives the 'none' slug.
     norm_option = "none"
-
-    n_pcs = st.sidebar.slider(
-        "MLM PCs",
-        min_value=0,
-        max_value=20,
-        value=0,
-        step=1,
-        key="n_pcs_mlm_slider",
-        help=(
-            "Number of principal components used as fixed-effect covariates "
-            "in the MLM (FaST-MLM) model. MLMM and FarmCPU default to this "
-            "value unless overridden below."
-        ),
-    )
-
-    # --- Per-model PC overrides ---
-    # MLMM and FarmCPU each get their own PC slider, always shown, defaulting to
-    # the MLM value above. The count is applied only when that model actually runs
-    # (which models run is controlled by 'Additional GWAS models' above).
-    n_pcs_mlmm = st.sidebar.slider(
-        "MLMM PCs",
-        min_value=0, max_value=20,
-        value=int(n_pcs), step=1, key="n_pcs_mlmm_override",
-        help="PC count used for MLMM covariates. Defaults to the MLM value.",
-    )
-    n_pcs_farmcpu = st.sidebar.slider(
-        "FarmCPU PCs",
-        min_value=0, max_value=20,
-        value=int(n_pcs), step=1, key="n_pcs_farmcpu_override",
-        help="PC count used for FarmCPU covariates. Defaults to the MLM value.",
-    )
 
     # --- Build stable cache keys ---
     vcf_hash = hash_bytes(vcf_bytes)
