@@ -2,9 +2,9 @@
   "case": "varitome_locule",
   "tier": "B",
   "trait": "locule_number",
-  "source": "benchmarks/qc_data/tomato_locule_number (Varitome, 165x43974) \u2014 genotypes NOT committed",
+  "source": "benchmarks/qc_data/tomato_locule_number (Varitome, 164x43749 after the R2.2 missing-as-reference parse fix + MAF>=0.05 boundary alignment) \u2014 genotypes NOT committed",
   "gwas_csv": "platform_GWAS_locule_number.csv",
-  "reproduces": "Supp Table S8 (six MLM LD blocks), read back from an actual run at the reproducing params \u2014 not from the PDF",
+  "reproduces": "the disjoint occupancy LD blocks (4) on the corrected genotypes, read back from an actual run at the reproducing params \u2014 not from the PDF. NOTE: the golden pins the occupancy detector output, NOT the iou-merged six-block Table S8 (occupancy became the default at D-109; the parse fix then made block 3's lead non-significant and surfaced a 4th, non-significant block).",
   "median_decay_kb": 72.17,
   "params": {
     "flank_kb": 144,

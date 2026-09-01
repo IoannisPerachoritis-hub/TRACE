@@ -23,3 +23,30 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
 - significance: no call flipped. All 3 remaining blocks FDR_BH < 0.05 (P_perm at the 0.000999 floor); the lead-locus block stays significant (eta2 0.347). The weak 0.005994 block was one of the discarded overlapping candidates.
 - plumbing: capture_golden + test_golden_published._rebuild now thread ld_merge_mode via the manifest.
 
+## 2026-09-01 -- R2.2: missing-as-reference parse fix + MAF>=0.05 boundary alignment (TYPE c; synced from DEV)
+- PROVENANCE: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (Solanaceae-gwas, commit 9e661cc) and
+  CANNOT be regenerated in TRACE-release -- release ships no source VCF and no QC checkpoint (benchmarks/qc_data is
+  gitignored and untracked here). They were copied byte-for-byte from DEV, and the accompanying gwas/qc.py fix was
+  applied identically. The real-data golden tests (test_golden_published, test_golden_blocks::...varitome...) skip on
+  a clean clone / CI for want of qc_data; they cannot re-derive these values in this repo.
+- reason (same defect as DEV): gwas/qc.py:137 built dosage with scikit-allel `to_n_alt()` at the default `fill=0`, so
+  every missing genotype (`./.`, half-missing `0/.`) became 0 (reference) and the `G[G<0]=np.nan` guard was a no-op.
+  Consequence: the per-SNP `--miss` and per-sample `--ind-miss` filters were inert, mean/LD-kNNi imputation never ran,
+  and MAF + the VanRaden GRM's 2p were computed with missing counted as reference. Fix: `to_n_alt(fill=-1)` so missing
+  -> NaN. Coupled MAF-boundary alignment (same change): keep_mask `(maf > maf_thresh)` -> `(maf >= maf_thresh)` and the
+  QC report "Fail MAF" `(maf <= maf_thresh)` -> `(maf < maf_thresh)` (exact complement; Fail MAF + Pass MAF == Total).
+- golden consequence (tomato_locule): the 21.7%-missing sample BGV006336 is now excluded (165 -> 164 samples); markers
+  43,974 -> 43,749; on the corrected genotypes the occupancy detector emits 4 disjoint blocks (was 3) -- block 3's lead
+  SL25ch02p47391467 falls to p=1.19e-6 (just above Bonferroni -> non-significant) and a 4th, NON-significant block at
+  47,644,058-47,718,411 (P_perm 0.22) surfaces. No reported locus/conclusion changes (the chr2 locule locus stands,
+  min p 2.7e-13 -> 4.2e-13; lead-block eta2 0.350 -> 0.367).
+- cases synced (byte-for-byte from DEV): tomato_locule/{ld_blocks,haplotype_blocks,annotated_blocks}.csv +
+  run_manifest.json (n_samples 165->164, n_snps 43974->43749, n_significant_bonf 12->11, n_significant_meff 44->43,
+  n_blocks 3->4, meff_value 242->249, gwas_csv_sha256 30ebef29...); varitome_locule/{expected_blocks.csv,meta.json};
+  GOLDEN_LOCK recomputed (6d42a073... -> f2733277...). Tier-A synthetic blocks_* UNCHANGED (the VCF parse never runs
+  there).
+- verification: release's byte-identical block-detection code (find_ld_clusters_genomewide, filter_contained_blocks,
+  run_haplotype_block_gwas, annotate_ld_blocks -- all confirmed byte-identical to DEV), run on DEV's FIXED qc_data
+  (platform_GWAS sha256 30ebef29... == the manifest), reproduces these fixtures EXACTLY (ld_blocks 4x6, haplotype 4x17,
+  annotated 4x14, rebuilt manifest 164/43749/11/4/meff249). test_golden_lock recomputes the digest to f2733277...
+

@@ -134,7 +134,7 @@ def _pipeline_parse_vcf_biallelic(callset):
     positions = positions[is_biallelic]
     gt = gt[is_biallelic]
 
-    G = allel.GenotypeArray(gt).to_n_alt().astype("float32")
+    G = allel.GenotypeArray(gt).to_n_alt(fill=-1).astype("float32")
     G[G < 0] = np.nan
 
     genotypes = G.T
@@ -535,7 +535,7 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
 
     qc_snp = {
         "Total SNPs": int(len(maf)),
-        "Fail MAF": int((maf <= maf_thresh).sum()),
+        "Fail MAF": int((maf < maf_thresh).sum()),
         "Fail Missingness": int((missing_rate >= miss_thresh).sum()),
         "Fail MAC": int((mac < mac_thresh).sum()),
         "Fail INFO": int(info_fail.sum()),
@@ -544,7 +544,7 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     }
 
     keep_mask = (
-            (maf > maf_thresh) &
+            (maf >= maf_thresh) &
             (missing_rate < miss_thresh) &
             (mac >= mac_thresh) &
             (~info_fail) &
