@@ -863,7 +863,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         "MLM PCs",
         min_value=0,
         max_value=20,
-        value=4,
+        value=0,
         step=1,
         key="n_pcs_mlm_slider",
         help=(
@@ -874,30 +874,21 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     )
 
     # --- Per-model PC overrides ---
-    # Each selected multi-locus model can use a different PC count from MLM.
-    # Sliders render only when the model is in `model_choices`; otherwise the
-    # override falls back to the MLM value above.
-    n_pcs_mlmm = n_pcs
-    n_pcs_farmcpu = n_pcs
-    if "MLMM (iterative cofactors)" in model_choices:
-        n_pcs_mlmm = st.sidebar.slider(
-            "MLMM PCs",
-            min_value=0, max_value=20,
-            value=int(n_pcs), step=1, key="n_pcs_mlmm_override",
-            help="PC count used for MLMM covariates. Defaults to the MLM value.",
-        )
-    if "FarmCPU (multi-locus)" in model_choices:
-        n_pcs_farmcpu = st.sidebar.slider(
-            "FarmCPU PCs",
-            min_value=0, max_value=20,
-            value=int(n_pcs), step=1, key="n_pcs_farmcpu_override",
-            help="PC count used for FarmCPU covariates. Defaults to the MLM value.",
-        )
-    if not model_choices:
-        st.sidebar.caption(
-            "Overrides appear when MLMM or FarmCPU is selected in "
-            "'Additional GWAS models' above."
-        )
+    # MLMM and FarmCPU each get their own PC slider, always shown, defaulting to
+    # the MLM value above. The count is applied only when that model actually runs
+    # (which models run is controlled by 'Additional GWAS models' above).
+    n_pcs_mlmm = st.sidebar.slider(
+        "MLMM PCs",
+        min_value=0, max_value=20,
+        value=int(n_pcs), step=1, key="n_pcs_mlmm_override",
+        help="PC count used for MLMM covariates. Defaults to the MLM value.",
+    )
+    n_pcs_farmcpu = st.sidebar.slider(
+        "FarmCPU PCs",
+        min_value=0, max_value=20,
+        value=int(n_pcs), step=1, key="n_pcs_farmcpu_override",
+        help="PC count used for FarmCPU covariates. Defaults to the MLM value.",
+    )
 
     # --- Build stable cache keys ---
     vcf_hash = hash_bytes(vcf_bytes)
@@ -1331,7 +1322,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     with _col:
                         _pipe_manual_pcs[_mname] = st.number_input(
                             f"{_mname} PCs", min_value=0, max_value=20,
-                            value=4, step=1, key=f"pipe_pcs_{_mname.lower()}",
+                            value=0, step=1, key=f"pipe_pcs_{_mname.lower()}",
                         )
             _pipe_sig_rule = st.selectbox(
                 "Significance threshold",
