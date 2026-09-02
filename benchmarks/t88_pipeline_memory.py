@@ -128,12 +128,14 @@ def main():
         print("  (memory point -- NOT a runtime/scalability benchmark)")
         return
 
-    full = ["--model", "mlm", "mlmm", "farmcpu", "--auto-pcs"]
+    # R1.4: --auto-pcs was removed; the CLI uses the fixed --n-pcs default. The old
+    # variant B (MLM + auto-PC scan) is retired -- it now measures the same as A.
+    full = ["--model", "mlm", "mlmm", "farmcpu"]
     variants = [
-        ("A: MLM only, no auto-PC, no plots/report", ["--model", "mlm", "--no-plots", "--no-report"]),
-        ("B: MLM + auto-PC, no plots/report",        ["--model", "mlm", "--auto-pcs", "--no-plots", "--no-report"]),
-        ("C: 3 models + auto-PC (full ANALYSIS), no plots/report", full + ["--no-plots", "--no-report"]),
-        ("D: full CLI run (3 models + auto-PC + plots + report)", full),
+        ("A: MLM only, no plots/report", ["--model", "mlm", "--no-plots", "--no-report"]),
+        ("B: MLM (fixed PCs), no plots/report",  ["--model", "mlm", "--no-plots", "--no-report"]),
+        ("C: 3 models (full ANALYSIS), no plots/report", full + ["--no-plots", "--no-report"]),
+        ("D: full CLI run (3 models + plots + report)", full),
         (f"E: D + subsampling ({args.boot_reps} LOCO resamples)", full + ["--subsampling", "--boot-reps", str(args.boot_reps), "--boot-jobs", "1"]),
     ]
     res = {}

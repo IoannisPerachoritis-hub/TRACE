@@ -25,7 +25,8 @@ from gwas.kinship import (
     _ld_prune_for_grm_by_chr_bp,
     _standardize_geno_for_grm,
 )
-from gwas.models import auto_select_pcs
+# R1.4: auto_select_pcs was removed from the shipped tool; recovered for reproducibility.
+from benchmarks._pc_band_select import auto_select_pcs
 from annotation import canon_chr
 
 QC_DIR = ROOT / "benchmarks" / "qc_data"

@@ -34,7 +34,7 @@ class TestCLIArgParsing:
         assert args.mac == 5
         assert args.ind_miss == 0.20
         assert args.info_thresh == 0.0
-        assert args.n_pcs == 4
+        assert args.n_pcs == 0  # R1.4: auto-PC selector removed; fixed default is 0 PCs
         assert args.model == ["mlm"]
         assert args.no_report is False
         assert args.no_plots is False
@@ -104,32 +104,22 @@ class TestCLIArgParsing:
         ])
         assert args.export_qc is False
 
-    def test_auto_pcs_defaults(self):
+    def test_auto_pc_flags_removed(self):
+        # R1.4: the lambda-GC auto-PC selector was removed; its flags no longer
+        # parse and the fixed default is 0 PCs (no auto-selection).
         parser = _build_parser()
         args = parser.parse_args([
             "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/",
         ])
-        assert args.auto_pcs is False
-        assert args.pc_strategy == "band"
-        assert args.max_pcs == 10
-
-    def test_auto_pcs_enabled(self):
-        parser = _build_parser()
-        args = parser.parse_args([
-            "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/",
-            "--auto-pcs", "--pc-strategy", "closest_to_1", "--max-pcs", "15",
-        ])
-        assert args.auto_pcs is True
-        assert args.pc_strategy == "closest_to_1"
-        assert args.max_pcs == 15
-
-    def test_invalid_pc_strategy_rejected(self):
-        parser = _build_parser()
-        with pytest.raises(SystemExit):
-            parser.parse_args([
-                "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/",
-                "--pc-strategy", "invalid",
-            ])
+        assert args.n_pcs == 0
+        assert not hasattr(args, "auto_pcs")
+        for _flag in ("--auto-pcs", "--pc-strategy", "--max-pcs",
+                      "--pc-band-lo", "--pc-parsimony-tol"):
+            with pytest.raises(SystemExit):
+                parser.parse_args([
+                    "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y",
+                    "--output", "o/", _flag, "1",
+                ])
 
     def test_subsampling_defaults(self):
         parser = _build_parser()
@@ -264,14 +254,11 @@ class TestInteractiveHelpers:
         args.trait = "Yield"
         args.output = "results/"
         args.model = ["mlm", "mlmm", "farmcpu"]
-        args.auto_pcs = True
-        args.pc_strategy = "closest_to_1"
         args.subsampling = True
         args.boot_reps = 50
         args.boot_jobs = -1
         cmd = _build_equivalent_command(args)
         assert "--model mlm mlmm farmcpu" in cmd
-        assert "--auto-pcs" in cmd
         assert "--subsampling" in cmd
         assert "--boot-reps 50" in cmd
         assert "--boot-jobs -1" in cmd

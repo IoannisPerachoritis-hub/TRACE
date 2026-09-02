@@ -8,16 +8,25 @@ All notable changes to TRACE are documented in this file.
 - **Renamed the "LD Analysis" page to "Post-GWAS Analysis"** (sidebar shows
   "Post GWAS Analysis"), aligning the app with the manuscript's terminology.
   The page URL changed to `/Post_GWAS_Analysis`.
+- **`--n-pcs` default changed 4 → 0** (fixed PC count; TRACE no longer auto-selects PCs).
 
 ### Added
 - **Regional Plot tab** (locus-zoom-style): −log₁₀(p) vs position around a lead
   SNP, coloured by r² to the lead, with the detected LD block shaded and a gene
   track; interactive (Plotly) + static (PNG/SVG/PDF) with numeric CSV export.
 - **Local LD** tab gained numeric r² export (long `SNP_A,SNP_B,r2` + square matrix).
+- **PC-selection diagnostics** (report-only): the run report + GUI now show the
+  genotype-PCA eigenvalue spectrum and a conventional-criteria table (Kaiser /
+  cumulative-variance / Marchenko–Pastur edge / broken-stick; Horn's parallel
+  analysis opt-in via `--pc-diagnostics-parallel`). These REPORT and never set the
+  PC count.
 
 ### Removed
 - The per-block "Block Heatmaps" tab moved behind a "Legacy views" expander —
   superseded by the region selector's *Detected block* mode + the Local LD tab.
+- **The λGC auto-PC selector** and its flags (`--auto-pcs`, `--pc-strategy`,
+  `--max-pcs`, `--pc-band-lo/-hi`, `--pc-parsimony-tol`). TRACE now uses a fixed
+  `--n-pcs` default plus the report-only PC-selection diagnostics above (R1.4).
 
 ### Fixed
 - **LD blocks could bridge uncorrelated SNP clusters.** The block merge fused

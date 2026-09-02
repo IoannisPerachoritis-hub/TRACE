@@ -119,7 +119,7 @@ CLI flag, so headless / HPC runs produce the same artifacts as the UI.
 | MLMM                                    | GWAS Analysis            | `--models mlm,mlmm`                                       |
 | TRACE-FarmCPU                           | GWAS Analysis            | `--models mlm,farmcpu`                                    |
 | Cross-model consensus                   | GWAS Analysis            | automatic when ≥ 2 models requested (`CrossModel_Consensus.csv`) |
-| Auto-PC selection (band)                | GWAS Analysis            | `--pc-strategy band` (default), `--n-pcs INT` to override |
+| PC covariates + selection diagnostics   | GWAS Analysis            | `--n-pcs INT` (fixed; default 0); report includes PC-selection diagnostics |
 | QC: MAF / MAC / missingness / INFO      | GWAS Analysis            | `--maf`, `--mac`, `--miss`, `--info`                      |
 | Significance threshold                  | GWAS Analysis            | `--sig-rule {meff,bonferroni,fdr}`                        |
 | LD blocks + haplotype testing           | Post-GWAS Analysis       | `--ld-blocks`, `--haplotype-test`                         |

@@ -6,23 +6,29 @@ Auto-generated from `cli.py` by `python scripts/gen_cli_reference.py`. Do not ed
 usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
                   [--output OUTPUT] [--maf MAF] [--miss MISS] [--mac MAC]
                   [--ind-miss IND_MISS] [--info-thresh INFO_THRESH]
+                  [--impute {mean,ldknni}] [--impute-k IMPUTE_K]
+                  [--impute-l IMPUTE_L] [--max-het MAX_HET]
+                  [--het-excess-p HET_EXCESS_P]
                   [--norm {none,zscore,log,yeojohnson,int}]
                   [--model {mlm,mlmm,farmcpu} [{mlm,mlmm,farmcpu} ...]]
                   [--n-pcs N_PCS] [--no-loco] [--n-pcs-mlm N_PCS_MLM]
                   [--n-pcs-mlmm N_PCS_MLMM] [--n-pcs-farmcpu N_PCS_FARMCPU]
                   [--covar COVAR] [--covar-cols COVAR_COLS]
-                  [--sig-thresh {meff,bonferroni,fdr,PVALUE}] [--auto-pcs]
-                  [--pc-strategy {band,closest_to_1}] [--max-pcs MAX_PCS]
-                  [--pc-band-lo PC_BAND_LO] [--pc-band-hi PC_BAND_HI]
-                  [--pc-parsimony-tol PC_PARSIMONY_TOL] [--subsampling]
-                  [--boot-reps BOOT_REPS] [--boot-frac BOOT_FRAC]
-                  [--boot-thresh BOOT_THRESH] [--boot-jobs BOOT_JOBS]
-                  [--seed SEED] [--ld-r2 LD_R2] [--ld-flank-kb LD_FLANK_KB]
+                  [--sig-thresh {meff,bonferroni,fdr,PVALUE}]
+                  [--pc-diagnostics-parallel]
+                  [--pc-diagnostics-pa-reps PC_DIAGNOSTICS_PA_REPS]
+                  [--pc-diagnostics-pa-seed PC_DIAGNOSTICS_PA_SEED]
+                  [--subsampling] [--boot-reps BOOT_REPS]
+                  [--boot-frac BOOT_FRAC] [--boot-thresh BOOT_THRESH]
+                  [--boot-jobs BOOT_JOBS] [--seed SEED] [--ld-r2 LD_R2]
+                  [--ld-flank-kb LD_FLANK_KB]
+                  [--ld-seed-mode {suggestive,significant}]
                   [--ld-seed-p LD_SEED_P] [--ld-top-n LD_TOP_N]
-                  [--hap-perms HAP_PERMS] [--no-annotation]
-                  [--genome-build {SL3,SL4}] [--species {tomato,custom}]
-                  [--gene-model GENE_MODEL] [--no-triage]
-                  [--triage-r2-coherent TRIAGE_R2_COHERENT]
+                  [--ld-merge-mode {occupancy,iou,correlation}]
+                  [--ld-merge-r2 LD_MERGE_R2] [--hap-perms HAP_PERMS]
+                  [--no-annotation] [--genome-build {SL3,SL4}]
+                  [--species {tomato,custom}] [--gene-model GENE_MODEL]
+                  [--no-triage] [--triage-r2-coherent TRIAGE_R2_COHERENT]
                   [--triage-lead-r2-frac TRIAGE_LEAD_R2_FRAC]
                   [--hap-min-count HAP_MIN_COUNT]
                   [--hap-min-group-size HAP_MIN_GROUP_SIZE]
@@ -32,7 +38,7 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
                   [--isolated-low-res-kb ISOLATED_LOW_RES_KB]
                   [--snp-plots {none,capped,all}]
                   [--max-snp-plots MAX_SNP_PLOTS] [--collapse-r2 COLLAPSE_R2]
-                  [--no-report] [--no-plots] [--export-qc] [--drop-alt]
+                  [--no-report] [--no-plots] [--export-qc]
                   [--n-chromosomes N_CHROMOSOMES] [-v] [--interactive]
 
 TRACE — Trait Resolution and Candidate Evaluation (CLI)
@@ -44,12 +50,14 @@ options:
   --trait TRAIT         Trait column name in phenotype file
   --output OUTPUT       Output directory
   --norm {none,zscore,log,yeojohnson,int}
-                        Phenotype normalization: none, zscore, log,
-                        yeojohnson, int (default: none)
+                        Phenotype normalisation slug: 'int' (rank-based
+                        inverse normal) recommended; 'log'/'yeojohnson' change
+                        the distribution; 'zscore' is scaling only (p-value-
+                        neutral). Default: none.
   --model {mlm,mlmm,farmcpu} [{mlm,mlmm,farmcpu} ...]
                         GWAS models to run (default: mlm). mlmm/farmcpu
                         require mlm.
-  --n-pcs N_PCS         Number of PCs as covariates (default: 4)
+  --n-pcs N_PCS         Number of PCs as covariates (default: 0)
   --no-loco             Use global kinship instead of LOCO (for benchmarking)
   --n-pcs-mlm N_PCS_MLM
                         PCs for MLM (overrides --n-pcs)
@@ -73,7 +81,6 @@ options:
   --no-plots            Skip plot generation
   --export-qc           Export post-QC genotype matrix, SNP map, and phenotype
                         for benchmarking
-  --drop-alt            Drop ALT chromosomes
   --n-chromosomes N_CHROMOSOMES
                         Number of chromosomes (default: auto-detect from VCF).
                         When set, only chromosomes 1..N are kept.
@@ -88,21 +95,31 @@ QC thresholds:
   --ind-miss IND_MISS   Per-individual missingness max (default: 0.20)
   --info-thresh INFO_THRESH
                         Imputation quality threshold (default: 0.0 = disabled)
+  --impute {mean,ldknni}
+                        Genotype imputation for the GWAS matrix (default:
+                        mean). 'ldknni' = LD-kNNi (Money et al. 2015): a
+                        discrete, LD-weighted k-NN imputer. Does NOT touch
+                        geno_dosage_raw.
+  --impute-k IMPUTE_K   LD-kNNi neighbours per call (default: 5).
+  --impute-l IMPUTE_L   LD-kNNi predictor SNPs by r2 (default: 20).
+  --max-het MAX_HET     Heterozygosity screen: remove variants with observed
+                        heterozygosity above this rate, e.g. 0.20 (default:
+                        off).
+  --het-excess-p HET_EXCESS_P
+                        Heterozygosity screen: remove variants failing a one-
+                        sided heterozygote-excess test at this p-value
+                        (default: off).
 
-Auto PC selection:
-  --auto-pcs            Auto-select PCs via lambda scan (overrides
-                        --n-pcs/--n-pcs-*)
-  --pc-strategy {band,closest_to_1}
-                        Auto PC strategy (default: band)
-  --max-pcs MAX_PCS     Max PCs to scan in auto mode (default: 10)
-  --pc-band-lo PC_BAND_LO
-                        Lower lambda_GC bound for band strategy (default:
-                        0.95)
-  --pc-band-hi PC_BAND_HI
-                        Upper lambda_GC bound for band strategy (default:
-                        1.05)
-  --pc-parsimony-tol PC_PARSIMONY_TOL
-                        Parsimony tolerance for band fallback (default: 0.02)
+PC-selection diagnostics:
+  --pc-diagnostics-parallel
+                        Also run Horn's parallel analysis in the PC
+                        diagnostics (permutation cost; informational only --
+                        never sets the PC count)
+  --pc-diagnostics-pa-reps PC_DIAGNOSTICS_PA_REPS
+                        Permutations for --pc-diagnostics-parallel (default:
+                        200)
+  --pc-diagnostics-pa-seed PC_DIAGNOSTICS_PA_SEED
+                        Seed for --pc-diagnostics-parallel (default: 0)
 
 Subsampling stability:
   --subsampling         Run subsampling GWAS stability screening (MLM only)
@@ -122,9 +139,29 @@ LD & post-GWAS:
   --ld-r2 LD_R2         LD r^2 threshold for block detection (default: 0.6)
   --ld-flank-kb LD_FLANK_KB
                         LD flank window in kb (default: auto from LD decay)
+  --ld-seed-mode {suggestive,significant}
+                        LD-block seed SNPs (mirrors the GUI): 'suggestive'
+                        (default) = the --ld-seed-p threshold plus the --ld-
+                        top-n floor; 'significant' = only SNPs passing the
+                        genome-wide --sig-thresh, with no top-N floor.
   --ld-seed-p LD_SEED_P
-                        Seed SNP p-threshold for LD blocks (default: 1e-5)
-  --ld-top-n LD_TOP_N   Also seed top-N SNPs (default: 10)
+                        Seed SNP p-threshold for LD blocks in suggestive mode
+                        (default: 1e-5)
+  --ld-top-n LD_TOP_N   Suggestive-mode FLOOR: always also seed the top-N SNPs
+                        by p-value, even when fewer than N pass --ld-seed-p
+                        (default: 10; 0 disables the floor).
+  --ld-merge-mode {occupancy,iou,correlation}
+                        LD-block merge criterion. 'occupancy' (default) makes
+                        blocks disjoint by greedy occupancy selection --
+                        accept the strongest-seeded candidate, claim its whole
+                        span, discard overlapping candidates -- so no marker
+                        is tested in more than one block; 'iou' fuses
+                        overlapping blocks by interval overlap; 'correlation'
+                        adds a cross-block seam + merged-block mean-r^2
+                        requirement (--ld-merge-r2) to iou.
+  --ld-merge-r2 LD_MERGE_R2
+                        Mean-r^2 threshold for --ld-merge-mode correlation
+                        (default: 0.5).
   --hap-perms HAP_PERMS
                         Haplotype permutations (default: 1000)
   --no-annotation       Skip gene annotation
