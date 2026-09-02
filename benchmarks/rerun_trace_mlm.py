@@ -21,7 +21,8 @@ from gwas.kinship import (
     _ld_prune_for_grm_by_chr_bp,
     _build_loco_kernels_impl,
 )
-from gwas.models import _run_gwas_impl, auto_select_pcs
+from gwas.models import _run_gwas_impl
+from benchmarks.published_pc_counts import resolve_k
 from gwas.utils import PhenoData
 
 QC_DIR = ROOT / "benchmarks" / "qc_data"
@@ -105,25 +106,11 @@ def run_trace_mlm(run_name, trait_name):
     idx_sort = np.argsort(eigvals)[::-1]
     pcs_full = eigvecs[:, idx_sort[:10]]
 
-    # Auto-PC selection
-    result_df = auto_select_pcs(
-        geno_imputed=geno,
-        y=y,
-        sid=sid,
-        chroms=chroms_str,
-        chroms_num=chroms_num,
-        positions=positions,
-        iid=iid,
-        Z_grm=Z_grm,
-        chroms_grm=chroms_pruned,
-        K_base=K_base,
-        pcs_full=pcs_full,
-        max_pcs=10,
-        strategy="band",
-    )
-    rec = result_df[result_df["recommended"] == "\u2605"]
-    n_pcs = int(rec["n_pcs"].values[0]) if len(rec) > 0 else 0
-    print(f"  Auto-PC selected: k = {n_pcs}")
+    # R1.4: auto-PC selector removed. This script writes the SHIPPED platform_GWAS_*.csv
+    # artefacts, so use the published (manuscript) PC count -- published_pc_counts = 0/0/0/2.
+    # pcs_full (top-10 eigvecs) is unchanged; _run_gwas_impl slices [:, :n_pcs].
+    n_pcs = resolve_k(run_name)
+    print(f"  Fixed PC count (published): k = {n_pcs}")
 
     # Build LOCO kernels
     K0, K_by_chr, _ = _build_loco_kernels_impl(

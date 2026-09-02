@@ -90,7 +90,7 @@ def _build_parser():
         choices=["mlm", "mlmm", "farmcpu"],
         help="GWAS models to run (default: mlm). mlmm/farmcpu require mlm.",
     )
-    parser.add_argument("--n-pcs", type=int, default=4, help="Number of PCs as covariates (default: 4)")
+    parser.add_argument("--n-pcs", type=int, default=0, help="Number of PCs as covariates (default: 0)")
     parser.add_argument("--no-loco", action="store_true",
                         help="Use global kinship instead of LOCO (for benchmarking)")
     parser.add_argument("--n-pcs-mlm", type=int, default=None, help="PCs for MLM (overrides --n-pcs)")
@@ -113,21 +113,15 @@ def _build_parser():
              "fdr (q<0.05), or a numeric p-value such as 5e-8.",
     )
 
-    # Auto PC selection
-    pc_grp = parser.add_argument_group("Auto PC selection")
-    pc_grp.add_argument("--auto-pcs", action="store_true",
-                         help="Auto-select PCs via lambda scan (overrides --n-pcs/--n-pcs-*)")
-    pc_grp.add_argument("--pc-strategy", default="band",
-                         choices=["band", "closest_to_1"],
-                         help="Auto PC strategy (default: band)")
-    pc_grp.add_argument("--max-pcs", type=int, default=10,
-                         help="Max PCs to scan in auto mode (default: 10)")
-    pc_grp.add_argument("--pc-band-lo", type=float, default=0.95,
-                         help="Lower lambda_GC bound for band strategy (default: 0.95)")
-    pc_grp.add_argument("--pc-band-hi", type=float, default=1.05,
-                         help="Upper lambda_GC bound for band strategy (default: 1.05)")
-    pc_grp.add_argument("--pc-parsimony-tol", type=float, default=0.02,
-                         help="Parsimony tolerance for band fallback (default: 0.02)")
+    # PC-selection diagnostics (report-only; TRACE uses the fixed --n-pcs default and never auto-selects)
+    pc_grp = parser.add_argument_group("PC-selection diagnostics")
+    pc_grp.add_argument("--pc-diagnostics-parallel", action="store_true",
+                        help="Also run Horn's parallel analysis in the PC diagnostics (permutation cost; "
+                             "informational only -- never sets the PC count)")
+    pc_grp.add_argument("--pc-diagnostics-pa-reps", type=int, default=200,
+                        help="Permutations for --pc-diagnostics-parallel (default: 200)")
+    pc_grp.add_argument("--pc-diagnostics-pa-seed", type=int, default=0,
+                        help="Seed for --pc-diagnostics-parallel (default: 0)")
 
     # Subsampling GWAS
     boot_grp = parser.add_argument_group("Subsampling stability")
@@ -286,14 +280,10 @@ def _build_equivalent_command(args):
     parts.append(f"--output {args.output}")
     if args.model != ["mlm"]:
         parts.append(f"--model {' '.join(args.model)}")
-    if args.auto_pcs:
-        parts.append("--auto-pcs")
-        if args.pc_strategy != "band":
-            parts.append(f"--pc-strategy {args.pc_strategy}")
-        if args.max_pcs != 10:
-            parts.append(f"--max-pcs {args.max_pcs}")
-    elif args.n_pcs != 4:
+    if args.n_pcs != 0:
         parts.append(f"--n-pcs {args.n_pcs}")
+    if getattr(args, "pc_diagnostics_parallel", False):
+        parts.append("--pc-diagnostics-parallel")
     if args.subsampling:
         parts.append(f"--subsampling --boot-reps {args.boot_reps}")
         if args.boot_jobs != 1:
@@ -327,10 +317,7 @@ def _print_summary(args):
     print(f"  Trait:      {args.trait}")
     print(f"  Output:     {args.output}")
     print(f"  Models:     {', '.join(m.upper() for m in args.model)}")
-    if args.auto_pcs:
-        print(f"  PCs:        Auto ({args.pc_strategy}, max={args.max_pcs})")
-    else:
-        print(f"  PCs:        {args.n_pcs}")
+    print(f"  PCs:        {args.n_pcs} (fixed)")
     _thresh_labels = {"meff": "M_eff (LD-aware)", "bonferroni": "Bonferroni", "fdr": "FDR q<0.05"}
     print(f"  Threshold:  {_thresh_labels.get(args.sig_thresh, args.sig_thresh)}")
     print(f"  QC:         MAF={args.maf}, miss={args.miss}, MAC={args.mac}")
@@ -395,16 +382,9 @@ def _interactive_wizard(parser):
 
     # ── Step 3: PCs ──
     print(f"\n{Fore.YELLOW}-- Principal Components --{Style.RESET_ALL}")
-    auto = click.confirm("Auto-select PCs via lambda scan? (recommended)", default=True)
-    args.auto_pcs = auto
-    if auto:
-        args.pc_strategy = click.prompt(
-            "  Strategy", type=click.Choice(["band", "closest_to_1"]),
-            default="band",
-        )
-        args.max_pcs = click.prompt("  Max PCs to scan", type=int, default=10)
-    else:
-        args.n_pcs = click.prompt("  Number of PCs", type=int, default=4)
+    print("  TRACE uses a fixed number of PCs (no auto-selection); the run report includes")
+    print("  eigenvalue-spectrum + conventional-criteria diagnostics to inform the choice.")
+    args.n_pcs = click.prompt("  Number of PCs", type=int, default=0)
 
     # ── Step 4: Optional features ──
     print(f"\n{Fore.YELLOW}-- Optional Features --{Style.RESET_ALL}")
@@ -709,98 +689,30 @@ def run_pipeline(args):
     n_pcs_mlmm = min(args.n_pcs_mlmm if args.n_pcs_mlmm is not None else n_pcs_mlm, _max_avail)
     n_pcs_fc = min(args.n_pcs_farmcpu if args.n_pcs_farmcpu is not None else n_pcs, _max_avail)
 
-    # ── Auto PC selection (overrides manual per-model counts) ──
-    if args.auto_pcs:
-        from gwas.models import auto_select_pcs
-        log.info("Auto-selecting PCs (strategy=%s, max=%d)…", args.pc_strategy, args.max_pcs)
-
-        pc_df = auto_select_pcs(
-            geno_imputed, y, sid, chroms, chroms_num, positions,
-            iid, Z_for_pca, chroms_grm, K, pcs_full,
-            max_pcs=min(args.max_pcs, _max_avail),
-            strategy=args.pc_strategy,
-            use_loco=not getattr(args, "no_loco", False),
-            band_lo=getattr(args, "pc_band_lo", 0.95),
-            band_hi=getattr(args, "pc_band_hi", 1.05),
-            parsimony_tolerance=getattr(args, "pc_parsimony_tol", 0.02),
+    # ── PC-selection diagnostics (report-only; R1.4 -- REPORTS, never selects) ──
+    # The lambda-GC auto-PC selector was removed (D-R1.4-FINAL): TRACE uses the fixed
+    # --n-pcs default and reports the eigenvalue spectrum + conventional criteria so
+    # the user can judge the choice.  No criterion sets n_pcs; zero model fits.
+    _pc_diag = None
+    try:
+        from gwas.pc_diagnostics import compute_pc_diagnostics
+        _pc_diag = compute_pc_diagnostics(
+            Z_for_pca, n=int(Z_for_pca.shape[0]), m=int(Z_for_pca.shape[1]),
+            prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
+            spectrum_depth=20,
+            run_parallel_analysis=getattr(args, "pc_diagnostics_parallel", False),
+            pa_B=getattr(args, "pc_diagnostics_pa_reps", 200),
+            pa_seed=getattr(args, "pc_diagnostics_pa_seed", 0),
         )
-        extra_csvs["PC_selection_lambda.csv"] = pc_df
-
-        # MLM best k
-        best_mlm = pc_df.loc[pc_df["recommended"] == "★"]
-        if not best_mlm.empty:
-            n_pcs_mlm = int(best_mlm.iloc[0]["n_pcs"])
-        log.info("  MLM auto-selected: %d PCs", n_pcs_mlm)
-
-        # MLMM inherits MLM
-        n_pcs_mlmm = n_pcs_mlm
-
-        # FarmCPU independent scan (if selected)
-        if "farmcpu" in args.model:
-            from gwas.models import run_farmcpu as _run_fc_scan
-            log.info("  Scanning PCs for FarmCPU…")
-            fc_lambdas = []
-            _scan_max = min(args.max_pcs, _max_avail)
-            for k in range(0, _scan_max + 1):
-                try:
-                    _fc_covar = _make_covar(k)
-                    _fc_df, _, _ = _run_fc_scan(
-                        geno_imputed, sid, chroms, chroms_num, positions, iid,
-                        pheno_reader, K0, _fc_covar,
-                        final_scan="ols", verbose=False,  # D-103: FarmCPU MLM final scan frozen out (published OLS)
-                        use_loco=not getattr(args, "no_loco", False),
-                    )
-                    fc_lambdas.append(
-                        compute_lambda_gc(_fc_df["PValue"].values, trim=False)
-                    )
-                except Exception:
-                    fc_lambdas.append(np.nan)
-
-            # Pick PC count using the same band strategy as MLM
-            from gwas.models import select_best_pc_from_lambdas
-            fc_valid = [np.isfinite(v) for v in fc_lambdas]
-            if any(fc_valid):
-                n_pcs_fc = select_best_pc_from_lambdas(
-                    fc_lambdas, strategy=args.pc_strategy,
-                )
-                fc_delta = abs(fc_lambdas[n_pcs_fc] - 1.0)
-                if fc_delta > 0.5:
-                    log.warning("  FarmCPU lambda scan: best lambda=%.3f (delta=%.3f); results may be unreliable",
-                                fc_lambdas[n_pcs_fc], fc_delta)
-            else:
-                log.warning("  FarmCPU lambda scan failed entirely; falling back to MLM PC count (%d)", n_pcs_mlm)
-                n_pcs_fc = n_pcs_mlm  # fallback to MLM
-            n_pcs_fc = min(n_pcs_fc, _max_avail)
-            log.info("  FarmCPU auto-selected: %d PCs", n_pcs_fc)
-            # Add FarmCPU lambdas to PC selection table
-            if len(fc_lambdas) == len(pc_df):
-                pc_df["lambda_gc_FarmCPU"] = fc_lambdas
-
-        # PC selection lambda curve plot
-        if not args.no_plots:
-            try:
-                import matplotlib.pyplot as plt
-                _fig_pc, _ax_pc = plt.subplots(figsize=(6, 3.5))
-                _ax_pc.plot(pc_df["n_pcs"], pc_df["lambda_gc"],
-                            "o-", color="#0072B2", label="MLM")
-                if "lambda_gc_FarmCPU" in pc_df.columns:
-                    _ax_pc.plot(pc_df["n_pcs"], pc_df["lambda_gc_FarmCPU"],
-                                "s-", color="#D55E00", label="FarmCPU")
-                _ax_pc.axhline(1.0, ls="--", color="#999", alpha=0.7)
-                _ax_pc.axvline(n_pcs_mlm, ls=":", color="#0072B2", alpha=0.6, lw=1.5,
-                               label=f"MLM best: {n_pcs_mlm}")
-                if "farmcpu" in args.model and n_pcs_fc != n_pcs_mlm:
-                    _ax_pc.axvline(n_pcs_fc, ls=":", color="#D55E00", alpha=0.6, lw=1.5,
-                                   label=f"FarmCPU best: {n_pcs_fc}")
-                _ax_pc.legend(fontsize=8)
-                _ax_pc.set_xlabel("Number of PCs")
-                _ax_pc.set_ylabel("lambda_GC")
-                _ax_pc.set_title("PC Selection: lambda_GC by PC Count")
-                _fig_pc.tight_layout()
-                figures["PC_selection_lambda.png"] = _fig_pc
-                log.info("  PC selection lambda curve saved")
-            except Exception as e:
-                log.warning("  PC selection lambda plot failed: %s", e)
+        extra_csvs["PC_diagnostics_spectrum.csv"] = _pc_diag["spectrum"]
+        extra_csvs["PC_diagnostics_criteria.csv"] = _pc_diag["criteria"]
+        _crit = {r["criterion"].split(" (")[0]: r["k_implied"]
+                 for _, r in _pc_diag["criteria"].iterrows() if r["k_implied"] is not None}
+        log.info("  PC diagnostics: %d eigenvalues, trace/m=%.3f; conventional criteria imply "
+                 "k=%s (informational only -- TRACE uses the fixed --n-pcs, no auto-selection)",
+                 _pc_diag["meta"]["n_eigenvalues"], _pc_diag["meta"]["trace_over_m"], _crit)
+    except Exception as _pcd_err:  # pragma: no cover
+        log.warning("  PC diagnostics skipped: %s", _pcd_err)
 
     log.info("  PCs: MLM=%d, MLMM=%d, FarmCPU=%d", n_pcs_mlm, n_pcs_mlmm, n_pcs_fc)
 
@@ -1594,7 +1506,10 @@ def run_pipeline(args):
         "Hap_n_perm": args.hap_perms,
         "LD blocks (MLM)": len(ld_blocks_mlm) if ld_blocks_mlm is not None else "N/A",
         "Subsampling reps": args.boot_reps if args.subsampling else "N/A",
-        "Auto PCs": "Yes" if args.auto_pcs else "No",
+        "PCs (fixed)": int(n_pcs),
+        "PC diagnostics": (
+            f"trace/m={_pc_diag['meta']['trace_over_m']}; see PC_diagnostics_*.csv"
+            if _pc_diag is not None else "n/a"),
     }
 
     report_html = None
@@ -1620,6 +1535,7 @@ def run_pipeline(args):
             sig_label=_sig_rule_obj.label,
             n_significant_override=(
                 len(_report_sig_table) if _report_sig_table is not None else None),
+            pc_selection_df=(_pc_diag["criteria"] if _pc_diag is not None else None),
             lambda_gc=lambda_gc,
             n_samples=int(geno_df.shape[0]),
             n_snps=int(geno_df.shape[1]),

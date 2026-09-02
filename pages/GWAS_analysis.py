@@ -31,7 +31,7 @@ from gwas.kinship import (
 )
 from gwas.models import (
     run_gwas_cached, run_mlmm_core_cached, run_farmcpu, run_farmcpu_cached,
-    add_ols_effects_to_gwas, auto_select_pcs,
+    add_ols_effects_to_gwas,
     bic_proxy_from_design,
     build_mlmm_snpdata, standardize_genotypes_for_mlmm_cached,
     subset_snps_for_mlmm, _ols_fit, _nested_f_test, _one_hot_drop_first,
@@ -1295,38 +1295,27 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     "sidebar LOCO setting for this pipeline run only."
                 ),
             )
-            _pipe_pc_mode = st.radio(
-                "PC selection mode",
-                ["Auto (per-model λ scan)", "Manual (set per model)"],
-                key="pipe_pc_mode",
-                horizontal=True,
-                help="Auto: scan λGC for each model independently and pick best k. "
-                     "Manual: set PC count per model yourself.",
+            # PC count is a documented fixed default per model (no auto-selection -- R1.4);
+            # the run report includes eigenvalue-spectrum + conventional-criteria diagnostics.
+            st.caption(
+                "TRACE uses a fixed number of PCs per model (no λGC auto-selection). "
+                "Set the count(s) below; the run report includes the PC-selection diagnostics."
             )
-            if _pipe_pc_mode.startswith("Auto"):
-                _pipe_pc_strategy = st.radio(
-                    "Auto strategy",
-                    ["Band [0.95–1.05]", "Closest to λ=1.0"],
-                    key="pipe_pc_strategy",
-                    help="Band: smallest PC count with λGC in [0.95, 1.05]; "
-                         "falls back to closest-to-1.0 with parsimony tolerance. "
-                         "Closest: pick the PC count with λGC nearest to 1.0.",
-                )
-            else:
-                _pipe_pc_strategy = None
-                _pc_manual_models = ["MLM"]
-                if "MLMM (iterative cofactors)" in _pipe_models:
-                    _pc_manual_models.append("MLMM")
-                if "FarmCPU (multi-locus)" in _pipe_models:
-                    _pc_manual_models.append("FarmCPU")
-                _pc_man_cols = st.columns(len(_pc_manual_models))
-                _pipe_manual_pcs = {}
-                for _col, _mname in zip(_pc_man_cols, _pc_manual_models):
-                    with _col:
-                        _pipe_manual_pcs[_mname] = st.number_input(
-                            f"{_mname} PCs", min_value=0, max_value=20,
-                            value=0, step=1, key=f"pipe_pcs_{_mname.lower()}",
-                        )
+            _pipe_pc_mode = "Manual"
+            _pipe_pc_strategy = None
+            _pc_manual_models = ["MLM"]
+            if "MLMM (iterative cofactors)" in _pipe_models:
+                _pc_manual_models.append("MLMM")
+            if "FarmCPU (multi-locus)" in _pipe_models:
+                _pc_manual_models.append("FarmCPU")
+            _pc_man_cols = st.columns(len(_pc_manual_models))
+            _pipe_manual_pcs = {}
+            for _col, _mname in zip(_pc_man_cols, _pc_manual_models):
+                with _col:
+                    _pipe_manual_pcs[_mname] = st.number_input(
+                        f"{_mname} PCs", min_value=0, max_value=20,
+                        value=0, step=1, key=f"pipe_pcs_{_mname.lower()}",
+                    )
             _pipe_sig_rule = st.selectbox(
                 "Significance threshold",
                 ["M_eff — Li & Ji (LD-aware Bonferroni)", "Bonferroni (α = 0.05)", "FDR (q < 0.05)"],
@@ -1650,162 +1639,32 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     pcs_full_arr = st.session_state["pcs_full"]
                     _max_avail = pcs_full_arr.shape[1] if pcs_full_arr is not None else 0
 
-                    if _pipe_pc_mode.startswith("Manual"):
-                        # --- Manual per-model PCs ---
-                        _pipe_k_mlm = min(_pipe_manual_pcs.get("MLM", n_pcs), _max_avail)
-                        _pipe_k_mlmm = min(_pipe_manual_pcs.get("MLMM", _pipe_k_mlm), _max_avail)
-                        _pipe_k_fc = min(_pipe_manual_pcs.get("FarmCPU", _pipe_k_mlm), _max_avail)
-                        _pc_msg = f"Manual PCs — MLM: {_pipe_k_mlm}"
-                        if "MLMM (iterative cofactors)" in _pipe_models:
-                            _pc_msg += f", MLMM: {_pipe_k_mlmm}"
-                        if "FarmCPU (multi-locus)" in _pipe_models:
-                            _pc_msg += f", FarmCPU: {_pipe_k_fc}"
-                        st.write(_pc_msg)
+                    # --- Per-model PC counts (fixed; no auto-selection -- R1.4) ---
+                    _pipe_k_mlm = min(_pipe_manual_pcs.get("MLM", n_pcs), _max_avail)
+                    _pipe_k_mlmm = min(_pipe_manual_pcs.get("MLMM", _pipe_k_mlm), _max_avail)
+                    _pipe_k_fc = min(_pipe_manual_pcs.get("FarmCPU", _pipe_k_mlm), _max_avail)
+                    _pc_msg = f"PCs (fixed) — MLM: {_pipe_k_mlm}"
+                    if "MLMM (iterative cofactors)" in _pipe_models:
+                        _pc_msg += f", MLMM: {_pipe_k_mlmm}"
+                    if "FarmCPU (multi-locus)" in _pipe_models:
+                        _pc_msg += f", FarmCPU: {_pipe_k_fc}"
+                    st.write(_pc_msg)
 
-                    elif pcs_full_arr is not None and _max_avail >= 2:
-                        # --- Auto per-model PC selection ---
-                        if "Band" in _pipe_pc_strategy:
-                            _pc_strat = "band"
-                        else:
-                            _pc_strat = "closest_to_1"
-
-                        # MLM lambda scan
-                        _pipe_pc_df = auto_select_pcs(
-                            geno_imputed=geno_imputed, y=y, sid=sid,
-                            chroms=chroms, chroms_num=chroms_num, positions=positions,
-                            iid=iid, Z_grm=st.session_state["Z_grm"],
-                            chroms_grm=st.session_state["chroms_grm"],
-                            K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
-                            strategy=_pc_strat,
-                            use_loco=_pipe_use_loco,
-                            model="mlm",
+                    # --- PC-selection diagnostics (report-only; never selects -- R1.4) ---
+                    _pipe_pc_df = None
+                    try:
+                        from gwas.pc_diagnostics import compute_pc_diagnostics
+                        _Zpca = st.session_state["Z_grm"]
+                        _pc_diag = compute_pc_diagnostics(
+                            _Zpca, n=int(_Zpca.shape[0]), m=int(_Zpca.shape[1]),
+                            prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
+                            spectrum_depth=20,
                         )
-                        # MLM best k
-                        _best_row_mlm = _pipe_pc_df.loc[_pipe_pc_df["recommended"] == "★"]
-                        if not _best_row_mlm.empty:
-                            _pipe_k_mlm = int(_best_row_mlm.iloc[0]["n_pcs"])
-                        _pipe_pc_df.rename(
-                            columns={"lambda_gc": "lambda_gc_MLM",
-                                     "delta_from_1": "delta_MLM",
-                                     "recommended": "recommended_MLM"},
-                            inplace=True,
-                        )
-
-                        # MLMM independent lambda scan
-                        if "MLMM (iterative cofactors)" in _pipe_models:
-                            st.write("Scanning PCs for MLMM...")
-                            _mlmm_scan_df = auto_select_pcs(
-                                geno_imputed=geno_imputed, y=y, sid=sid,
-                                chroms=chroms, chroms_num=chroms_num, positions=positions,
-                                iid=iid, Z_grm=st.session_state["Z_grm"],
-                                chroms_grm=st.session_state["chroms_grm"],
-                                K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
-                                strategy=_pc_strat,
-                                use_loco=_pipe_use_loco,
-                                model="mlmm",
-                                mlmm_p_enter=_pipe_mlmm_p,
-                                mlmm_max_cof=_pipe_mlmm_max_cof,
-                            )
-                            _pipe_pc_df["lambda_gc_MLMM"] = _mlmm_scan_df["lambda_gc"].values
-                            _pipe_pc_df["delta_MLMM"] = _mlmm_scan_df["delta_from_1"].values
-                            _pipe_pc_df["recommended_MLMM"] = _mlmm_scan_df["recommended"].values
-                            _best_row_mlmm = _mlmm_scan_df.loc[
-                                _mlmm_scan_df["recommended"] == "★"
-                            ]
-                            if not _best_row_mlmm.empty:
-                                _pipe_k_mlmm = int(_best_row_mlmm.iloc[0]["n_pcs"])
-
-                        # FarmCPU independent lambda scan
-                        if "FarmCPU (multi-locus)" in _pipe_models:
-                            st.write("Scanning PCs for FarmCPU...")
-                            _fc_scan_df = auto_select_pcs(
-                                geno_imputed=geno_imputed, y=y, sid=sid,
-                                chroms=chroms, chroms_num=chroms_num, positions=positions,
-                                iid=iid, Z_grm=st.session_state["Z_grm"],
-                                chroms_grm=st.session_state["chroms_grm"],
-                                K_base=K, pcs_full=pcs_full_arr, max_pcs=10,
-                                strategy=_pc_strat,
-                                use_loco=_pipe_use_loco,
-                                model="farmcpu",
-                                farmcpu_p_threshold=_pipe_fc_p,
-                                farmcpu_max_iterations=_pipe_fc_max_iter,
-                                farmcpu_max_pseudo_qtns=_pipe_fc_max_pqtn,
-                                farmcpu_final_scan=_pipe_fc_final_scan,
-                            )
-                            _pipe_pc_df["lambda_gc_FarmCPU"] = _fc_scan_df["lambda_gc"].values
-                            _pipe_pc_df["delta_FarmCPU"] = _fc_scan_df["delta_from_1"].values
-                            _pipe_pc_df["recommended_FarmCPU"] = _fc_scan_df["recommended"].values
-                            _best_row_fc = _fc_scan_df.loc[
-                                _fc_scan_df["recommended"] == "★"
-                            ]
-                            if not _best_row_fc.empty:
-                                _pipe_k_fc = int(_best_row_fc.iloc[0]["n_pcs"])
-
-                        _pipe_extra_tables["PC_selection_lambda.csv"] = _pipe_pc_df
-
-                        # Display per-model PC summary
-                        _pc_msg = f"Auto-selected PCs — MLM: **{_pipe_k_mlm}**"
-                        if "MLMM (iterative cofactors)" in _pipe_models:
-                            _pc_msg += f", MLMM: **{_pipe_k_mlmm}**"
-                        if "FarmCPU (multi-locus)" in _pipe_models:
-                            _pc_msg += f", FarmCPU: **{_pipe_k_fc}**"
-                        st.write(_pc_msg)
-
-                        # PC selection lambda curve figure
-                        if _pipe_pc_df is not None and len(_pipe_pc_df) > 1:
-                            try:
-                                _fig_pc, _ax_pc = plt.subplots(figsize=(6, 3.5))
-                                _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_MLM"],
-                                            "o-", color="#0072B2", label="MLM")
-                                if "lambda_gc_MLMM" in _pipe_pc_df.columns:
-                                    _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_MLMM"],
-                                                "^-", color="#009E73", label="MLMM")
-                                if "lambda_gc_FarmCPU" in _pipe_pc_df.columns:
-                                    _ax_pc.plot(_pipe_pc_df["n_pcs"], _pipe_pc_df["lambda_gc_FarmCPU"],
-                                                "s-", color="#D55E00", label="FarmCPU")
-                                _ax_pc.axhline(1.0, ls="--", color="#999", alpha=0.7)
-                                # Mark per-model best PC counts
-                                _ax_pc.axvline(_pipe_k_mlm, ls=":", color="#0072B2", alpha=0.6, lw=1.5,
-                                               label=f"MLM best: {_pipe_k_mlm}")
-                                _mlm_lam_at_best = _pipe_pc_df.loc[
-                                    _pipe_pc_df["n_pcs"] == _pipe_k_mlm, "lambda_gc_MLM"
-                                ]
-                                if not _mlm_lam_at_best.empty:
-                                    _ax_pc.plot(_pipe_k_mlm, float(_mlm_lam_at_best.iloc[0]),
-                                                "*", color="#0072B2", ms=14, zorder=5)
-                                if ("MLMM (iterative cofactors)" in _pipe_models
-                                        and _pipe_k_mlmm != _pipe_k_mlm):
-                                    _ax_pc.axvline(_pipe_k_mlmm, ls=":", color="#009E73", alpha=0.6, lw=1.5,
-                                                   label=f"MLMM best: {_pipe_k_mlmm}")
-                                if "lambda_gc_MLMM" in _pipe_pc_df.columns:
-                                    _mlmm_lam_at_best = _pipe_pc_df.loc[
-                                        _pipe_pc_df["n_pcs"] == _pipe_k_mlmm, "lambda_gc_MLMM"
-                                    ]
-                                    if (not _mlmm_lam_at_best.empty
-                                            and np.isfinite(float(_mlmm_lam_at_best.iloc[0]))):
-                                        _ax_pc.plot(_pipe_k_mlmm, float(_mlmm_lam_at_best.iloc[0]),
-                                                    "*", color="#009E73", ms=14, zorder=5)
-                                if "FarmCPU (multi-locus)" in _pipe_models and _pipe_k_fc != _pipe_k_mlm:
-                                    _ax_pc.axvline(_pipe_k_fc, ls=":", color="#D55E00", alpha=0.6, lw=1.5,
-                                                   label=f"FarmCPU best: {_pipe_k_fc}")
-                                if "lambda_gc_FarmCPU" in _pipe_pc_df.columns:
-                                    _fc_lam_at_best = _pipe_pc_df.loc[
-                                        _pipe_pc_df["n_pcs"] == _pipe_k_fc, "lambda_gc_FarmCPU"
-                                    ]
-                                    if not _fc_lam_at_best.empty and np.isfinite(float(_fc_lam_at_best.iloc[0])):
-                                        _ax_pc.plot(_pipe_k_fc, float(_fc_lam_at_best.iloc[0]),
-                                                    "*", color="#D55E00", ms=14, zorder=5)
-                                _ax_pc.legend(fontsize=8)
-                                _ax_pc.set_xlabel("Number of PCs")
-                                _ax_pc.set_ylabel("\u03bbGC")
-                                _ax_pc.set_title("PC Selection: \u03bbGC by PC Count (per model)")
-                                _fig_pc.tight_layout()
-                                _pipe_figures["PC_selection_lambda.png"] = _fig_pc
-                                plt.close(_fig_pc)
-                            except Exception:
-                                logging.exception("PC selection lambda figure failed")
-                    else:
-                        st.write("Skipping PC scan (no PCs available).")
+                        _pipe_pc_df = _pc_diag["criteria"]
+                        _pipe_extra_tables["PC_diagnostics_spectrum.csv"] = _pc_diag["spectrum"]
+                        _pipe_extra_tables["PC_diagnostics_criteria.csv"] = _pc_diag["criteria"]
+                    except Exception:
+                        logging.exception("PC diagnostics failed")
 
                     # Build per-model PC matrices
                     def _slice_pcs(k):
@@ -3028,11 +2887,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     n_significant=_td["n_sig"],
                     sig_label=_td["sig_label"],
                     n_ld_blocks=_n_ld_blks,
-                    auto_pc_k=(
-                        _td["k_mlm"]
-                        if _pipe_pc_mode.startswith("Auto")
-                        else None
-                    ),
+                    auto_pc_k=None,  # R1.4: no auto-PC selection
                 )
 
             if len(selected_traits) > 1:
@@ -3084,121 +2939,51 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     st.header("Single-trait GWAS (detailed view)")
 
     # ================================================================
-    #       AUTO PC SELECTION (lambda-based)
+    #       PC-selection diagnostics (report-only; never selects -- R1.4)
     # ================================================================
 
-    with st.expander("Auto-select PCs (lambda-based)", expanded=False):
+    with st.expander("PC-selection diagnostics", expanded=False):
         st.caption(
-            "Scan the selected association model at different PC counts "
-            "and pick the one with λGC closest to 1.0 (well-calibrated "
-            "population structure correction)."
+            "TRACE uses a fixed number of PCs (the --n-pcs default / per-model "
+            "overrides) and does NOT auto-select. These diagnostics report the "
+            "genotype-PCA eigenvalue spectrum and what conventional criteria "
+            "(Kaiser, Marchenko-Pastur edge, cumulative variance, broken-stick) "
+            "would imply -- informational only. No value here changes the PC count."
         )
-        _scan_model = st.selectbox(
-            "Model to scan",
-            ["MLM", "MLMM", "FarmCPU"],
-            key="scan_pcs_model",
-            help=(
-                "Run the λGC-vs-PCs scan for the selected association "
-                "model. MLMM and FarmCPU are slower than MLM."
-            ),
-        )
-        max_pc_scan = st.slider("Max PCs to scan", 2, 15, 10, key="max_pc_scan")
-        if st.button("Scan PCs", key="scan_pcs_btn"):
-            pcs_full_arr = st.session_state["pcs_full"]
-            prog = st.progress(0, text="Scanning PC counts...")
-            def _pc_progress(k, total):
-                prog.progress(
-                    k / total,
-                    text=f"Running {_scan_model} with {k} PCs… ({k+1}/{total})",
+        _Zdiag = st.session_state.get("Z_grm")
+        if _Zdiag is None:
+            st.info("Prepare/run the GWAS first to compute the PC spectrum.")
+        else:
+            try:
+                from gwas.pc_diagnostics import compute_pc_diagnostics
+                _diag = compute_pc_diagnostics(
+                    _Zdiag, n=int(_Zdiag.shape[0]), m=int(_Zdiag.shape[1]),
+                    prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
+                    spectrum_depth=20,
                 )
-            pc_scan_df = auto_select_pcs(
-                geno_imputed=geno_imputed,
-                y=y,
-                sid=sid,
-                chroms=chroms,
-                chroms_num=chroms_num,
-                positions=positions,
-                iid=iid,
-                Z_grm=st.session_state["Z_grm"],
-                chroms_grm=st.session_state["chroms_grm"],
-                K_base=K,
-                pcs_full=pcs_full_arr,
-                max_pcs=max_pc_scan,
-                progress_callback=_pc_progress,
-                use_loco=use_loco,
-                model=_scan_model.lower(),
-            )
-            prog.empty()
-            st.session_state["pc_scan_df"] = pc_scan_df
-            st.session_state["pc_scan_model"] = _scan_model
-
-        if "pc_scan_df" in st.session_state:
-            pc_df = st.session_state["pc_scan_df"]
-            _scan_model_shown = st.session_state.get("pc_scan_model", "MLM")
-            st.caption(f"Last scan: **{_scan_model_shown}**")
-            st.dataframe(
-                pc_df.style.apply(
-                    lambda row: ["background-color: #d4edda" if row["recommended"] == "★" else "" for _ in row],
-                    axis=1,
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-            # Lambda vs PCs chart
-            import plotly.graph_objects as go
-            fig_pc = go.Figure()
-            fig_pc.add_trace(go.Scatter(
-                x=pc_df["n_pcs"], y=pc_df["lambda_gc"],
-                mode="lines+markers", name=f"λGC ({_scan_model_shown})",
-            ))
-            fig_pc.add_hline(y=1.0, line_dash="dash", line_color="red",
-                             annotation_text="λ = 1.0")
-            fig_pc.update_layout(
-                xaxis_title="Number of PCs",
-                yaxis_title="λGC",
-                height=300,
-                margin=dict(t=30, b=30),
-            )
-            st.plotly_chart(fig_pc, use_container_width=True)
-            download_plotly_fig(
-                fig_pc,
-                filename=f"PC_lambda_curve_{_scan_model_shown}_{trait_col}.html",
-                label="Download PC lambda curve",
-            )
-
-            # "Use recommended" button
-            best_row = pc_df.loc[pc_df["recommended"] == "★"]
-            if not best_row.empty:
-                best_k = int(best_row.iloc[0]["n_pcs"])
-                best_lam = best_row.iloc[0]["lambda_gc"]
-                st.write(
-                    f"Recommended ({_scan_model_shown}): **{best_k} PCs** "
-                    f"(λGC = {best_lam})"
+                _mt = _diag["meta"]
+                st.caption(
+                    f"n = {_mt['n_samples']}, pruned markers m = {_mt['m_markers_pruned']}, "
+                    f"trace/m = {_mt['trace_over_m']} (Kaiser and MP use correlation-normalised "
+                    "eigenvalues; cumulative-variance and broken-stick are proportion-based)."
                 )
-                # Propagate the recommended PC count to every widget tied
-                # to the scanned model via an on_click callback. Callbacks
-                # fire BEFORE the next script run, so the target widgets
-                # haven't been instantiated yet — writing to session_state
-                # inside the button branch instead raises
-                # StreamlitAPIException because the PC widgets already
-                # rendered earlier in this run.
-                def _apply_recommended_pcs(model: str, k: int) -> None:
-                    if model == "MLM":
-                        st.session_state["n_pcs_mlm_slider"] = k
-                    elif model == "MLMM":
-                        st.session_state["n_pcs_mlmm_override"] = k
-                    elif model == "FarmCPU":
-                        st.session_state["n_pcs_farmcpu_override"] = k
-                    # One-click pipeline manual widget (same naming
-                    # convention as the factory: pipe_pcs_<model_lower>)
-                    st.session_state[f"pipe_pcs_{model.lower()}"] = k
-
-                st.button(
-                    f"Use {best_k} PCs",
-                    key="use_recommended_pcs",
-                    on_click=_apply_recommended_pcs,
-                    args=(_scan_model_shown, best_k),
+                st.markdown("**Eigenvalue spectrum** (top 20)")
+                st.dataframe(_diag["spectrum"], use_container_width=True, hide_index=True)
+                st.markdown(
+                    "**Conventional criteria** -- the k each rule implies "
+                    "(informational; TRACE uses --n-pcs, never these)"
                 )
+                st.dataframe(_diag["criteria"], use_container_width=True, hide_index=True)
+                import plotly.graph_objects as go
+                _sp = _diag["spectrum"]
+                _figd = go.Figure()
+                _figd.add_trace(go.Scatter(x=_sp["rank"], y=_sp["eigenvalue"],
+                                           mode="lines+markers", name="eigenvalue"))
+                _figd.update_layout(xaxis_title="PC rank", yaxis_title="eigenvalue",
+                                    height=300, margin=dict(t=30, b=30))
+                st.plotly_chart(_figd, use_container_width=True)
+            except Exception as _diag_err:
+                st.warning(f"PC diagnostics unavailable: {_diag_err}")
 
     # --- Run GWAS button (prevents auto-trigger on every sidebar change) ---
     # Reset trigger when trait changes so user must re-click

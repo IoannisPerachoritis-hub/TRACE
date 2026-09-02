@@ -57,9 +57,7 @@ If you have not installed the package (`pip install -e .`), use
 | `--trait` | Trait column name | Required |
 | `--output` | Output directory | Required |
 | `--model` | Model(s) to run, space-separated (`mlm`, `mlmm`, `farmcpu`) | `mlm` |
-| `--n-pcs` | Number of principal components | 4 |
-| `--pc-strategy` | Auto-PC selection strategy (`band`, `closest_to_1`) | `band` |
-| `--auto-pcs` | Enable automatic PC selection | Off |
+| `--n-pcs` | Number of principal components (fixed; the run report includes PC-selection diagnostics) | 0 |
 | `--maf` | Minor-allele-frequency filter | 0.05 |
 | `--miss` | Maximum per-SNP missingness | 0.10 |
 | `--sig-thresh` | Significance rule: `meff`, `bonferroni`, `fdr`, or a numeric p-value (e.g. `5e-8`) | `bonferroni` |
