@@ -36,9 +36,6 @@ def render(ctx: LDContext, get_r2_cached, window):
 
         st.markdown(f"**Window used:** {window.label}")
         _block_ids = getattr(window, "block_snp_ids", "") or None
-        if _block_ids:
-            st.caption("Detected-block mode: members are extracted by SNP ID (not by position), "
-                       "reproducing the Block Heatmaps view for this block.")
 
         # ---- Extract region genotypes ----
         keep_mask = ctx.keep_mask
@@ -74,7 +71,7 @@ def render(ctx: LDContext, get_r2_cached, window):
         region_sids = region_sids[order]
 
         if region_geno.shape[1] < 2:
-            st.info("Region contains <2 polymorphic SNPs — cannot compute LD.")
+            st.info("Region contains <2 polymorphic SNPs; cannot compute LD.")
             return
 
         st.write(

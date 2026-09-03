@@ -2,11 +2,12 @@
 
 Renders ``tab_genome_wide.render`` through a real Streamlit script context with a
 seeded LDContext + a small non-empty block inventory + stubbed haplotype compute,
-and asserts the two new labels render:
+and asserts the block-table sections render:
 
-- Task 2a inventory: the "Block inventory — coordinates and SNP counts" expander
-  and its "Where the blocks are. No statistics yet." caption.
-- Task 2a results: the "Association results per block" subheader + its caption.
+- Block inventory: the "LD blocks" section subheader (the inventory expander sits
+  under it). The descriptive inventory caption was removed in the UI-text pass.
+- Results: the "Association results per block" subheader + its η² popover. Its
+  descriptive caption was removed in the UI-text pass.
 
 The heavy per-block visualization (`_render_block_visualization`, MLG boxplots) is
 monkeypatched to a no-op so the render reaches the labels without needing real
@@ -100,9 +101,11 @@ def test_block_tables_render_with_new_labels():
     at.run()
     assert not at.exception or _only_harness_error(at)
 
-    # Task 2a — block-inventory label (renders whenever haplo_df_auto is non-empty)
-    assert any("Where the blocks are" in c.value for c in at.caption), \
-        "block-inventory caption missing"
+    # block-inventory section renders (whenever haplo_df_auto is non-empty). The
+    # descriptive captions were removed in the UI-text pass, so assert on the surviving
+    # "LD blocks" section subheader rather than the deleted caption.
+    assert any("LD blocks" in s.value for s in at.subheader), \
+        "LD blocks subheader missing"
 
     # the results table is behind an unkeyed 'Run haplotype…' checkbox -> check + rerun
     hap_cb = [c for c in at.checkbox if "Run haplotype" in c.label]
@@ -110,13 +113,11 @@ def test_block_tables_render_with_new_labels():
     hap_cb[0].check().run()
     assert not at.exception or _only_harness_error(at)
 
-    # Task 2a — results-table label + caption
+    # results-table subheader (its caption was removed in the UI-text pass)
     assert any("Association results per block" in s.value for s in at.subheader), \
         "results-table subheader missing"
-    assert any("differ for your trait" in c.value for c in at.caption), \
-        "results-table caption missing"
 
-    # Task 4b — the effect-size (η²) interpretation popover renders next to the table
+    # the effect-size (η²) interpretation popover renders next to the table
     assert any("Variance explained" in m.value for m in at.markdown), \
         "effect-size (η²) popover missing"
 

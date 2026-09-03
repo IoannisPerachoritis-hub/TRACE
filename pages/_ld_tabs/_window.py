@@ -45,7 +45,7 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
     """
     gwas_df = ctx.gwas_df
     if gwas_df is None or getattr(gwas_df, "empty", True):
-        st.info("Run a GWAS first — the regional / local views read the GWAS results in session.")
+        st.info("Run a GWAS first. The regional / local views read the GWAS results in session.")
         return None
 
     top_snps = gwas_df.sort_values("PValue").head(200)

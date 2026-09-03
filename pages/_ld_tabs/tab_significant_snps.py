@@ -20,16 +20,16 @@ _SIG_LABELS = [
 ]
 
 _GLOSSARY = """
-**Block_Status** — how each significant SNP relates to the LD-block detector's output:
-- `in_block` — a member of a detected LD block.
-- `unblocked_not_seeded` — significant, but below the block **seeding** threshold, so the
+**Block_Status**: how each significant SNP relates to the LD-block detector's output:
+- `in_block`: a member of a detected LD block.
+- `unblocked_not_seeded`: significant, but below the block **seeding** threshold, so the
   detector never considered it. *These are the SNPs a block-only view silently drops.*
-- `unblocked_isolated` / `unblocked_monomorphic_window` — seeded but no neighbours / no variation nearby.
-- `unblocked_low_ld` — seeded with neighbours, but they did not reach the LD threshold to form a block
+- `unblocked_isolated` / `unblocked_monomorphic_window`: seeded but no neighbours / no variation nearby.
+- `unblocked_low_ld`: seeded with neighbours, but they did not reach the LD threshold to form a block
   (an inference from the block table; the detector is never re-run).
 
-**Candidate interval** — for unblocked SNPs, the flanking typed-marker interval; its width reflects
-marker density, not association strength. **Effect_Source** — whether a structure-adjusted β_MLM was
+**Candidate interval**: for unblocked SNPs, the flanking typed-marker interval; its width reflects
+marker density, not association strength. **Effect_Source**: whether a structure-adjusted β_MLM was
 available (`both` / `MLM_only` / `OLS_only` / `unavailable`). The table is **complete**: no significant
 SNP is omitted, regardless of block membership.
 """
@@ -37,14 +37,10 @@ SNP is omitted, regardless of block membership.
 
 def render(ctx: LDContext):
     st.subheader("Significant SNPs")
-    st.caption(
-        "Every SNP passing the significance threshold — each marked in-block or **unblocked**, "
-        "with its candidate interval. Complete: no significant SNP is omitted."
-    )
 
     gwas_df = ctx.gwas_df
     if gwas_df is None or getattr(gwas_df, "empty", True):
-        st.info("Run a GWAS first — this tab reads the GWAS results in session.")
+        st.info("Run a GWAS first. This tab reads the GWAS results in session.")
         return
 
     from gwas.sigtable import build_significant_snp_table, project_unblocked
@@ -86,7 +82,7 @@ def render(ctx: LDContext):
     c1.metric("Significant SNPs", len(sig))
     c2.metric("In an LD block", len(sig) - n_unblocked)
     c3.metric("Unblocked", n_unblocked,
-              help="Significant SNPs that formed no LD block — hidden by a block-only view.")
+              help="Significant SNPs that formed no LD block, hidden by a block-only view.")
     st.markdown(f"**Threshold applied:** {rule.label}")
 
     # Complete table — never .head(); wide table scrolls inside the widget.
@@ -95,7 +91,7 @@ def render(ctx: LDContext):
                        file_name="Significant_SNPs.csv", mime="text/csv")
 
     if n_unblocked:
-        with st.expander(f"Unblocked SNPs ({n_unblocked}) — the SNPs a block-only view would hide",
+        with st.expander(f"Unblocked SNPs ({n_unblocked}): the SNPs a block-only view would hide",
                          expanded=True):
             unb = project_unblocked(sig)
             st.dataframe(unb, use_container_width=True)

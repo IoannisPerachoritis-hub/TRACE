@@ -99,7 +99,7 @@ def _render_haplotype_pca(
         from gwas.kinship import _standardize_geno_for_grm
         geno = st.session_state.get("geno_imputed")
         if geno is None:
-            st.info("PCA panel unavailable — no cached PCs and no imputed genotype.")
+            st.info("PCA panel unavailable: no cached PCs and no imputed genotype.")
             return
         Z = _standardize_geno_for_grm(geno)
         U, S, _ = np.linalg.svd(Z, full_matrices=False)
@@ -122,7 +122,7 @@ def _render_haplotype_pca(
     if pcs_2.shape[0] != len(geno_iids):
         st.warning(
             f"PCA panel: cached PC matrix has {pcs_2.shape[0]} rows but "
-            f"`geno_row_ids` has {len(geno_iids)} entries — alignment mismatch. "
+            f"`geno_row_ids` has {len(geno_iids)} entries; alignment mismatch. "
             "Skipping PCA panel."
         )
         return
@@ -137,7 +137,7 @@ def _render_haplotype_pca(
         st.warning(
             "PCA panel: 0 accessions matched between haplotype assignments "
             f"and `geno_row_ids` ({len(mlg_df)} haplotyped samples vs "
-            f"{len(geno_iids)} genotype rows). Sample-ID format mismatch — "
+            f"{len(geno_iids)} genotype rows). Sample-ID format mismatch; "
             "cannot colour by haplotype. Skipping PCA panel."
         )
         return
@@ -284,7 +284,7 @@ def _render_haplotype_pca(
                 key=pca_widget_key,
                 help=(
                     "Interactive (Plotly) lets you hover over each dot to see "
-                    "the accession ID — useful for identifying which carriers "
+                    "the accession ID, useful for identifying which carriers "
                     "of the rare haplotype lie at which PC coordinates. "
                     "Static (matplotlib) is publication-grade and downloadable "
                     "as PNG / SVG / PDF."
@@ -353,13 +353,6 @@ def render(
     try:
         st.subheader("LD blocks")
 
-        st.caption(
-            "TRACE builds an LD block around each significant SNP, then tests whether the "
-            "haplotypes in that block differ for your trait. These are local blocks around "
-            "association peaks, not a genome-wide LD-block map — their number and spans are "
-            "not comparable to a Haploview or PLINK partition of the whole genome."
-        )
-
         # Haplotype permutation control (tab-local: only this tab consumes n_perm_hap).
         st.number_input(
             "Haplotype permutations",
@@ -417,7 +410,7 @@ def render(
                 help=(
                     "SNPs with pairwise r² above this threshold are grouped into the same LD block. "
                     "0.6 is a common default for self-pollinating crops where LD "
-                    "decays slowly. Use 0.3–0.5 for outcrossing species."
+                    "decays slowly. Use 0.3-0.5 for outcrossing species."
                 ),
             )
 
@@ -515,12 +508,7 @@ def render(
             )
         else:
             st.success(f"Found {haplo_df_auto.shape[0]} LD blocks.")
-            with st.expander("Block inventory — coordinates, SNP counts, coherence"):
-                st.caption(
-                    "Where the blocks are, plus **Mean r2** (within-block coherence: "
-                    "the mean member-pair r²). Trait statistics are in the results "
-                    "table below."
-                )
+            with st.expander("Block inventory: coordinates, SNP counts, coherence"):
                 st.dataframe(haplo_df_auto, use_container_width=True)
                 st.download_button(
                     "Download LD blocks (CSV)",
@@ -614,7 +602,7 @@ def _render_haplotype_gwas(
     haplo_blocks_to_use = haplo_df_auto
 
     if haplo_blocks_to_use is None or haplo_blocks_to_use.empty:
-        st.warning("No LD blocks yet — run block detection above first.")
+        st.warning("No LD blocks yet; run block detection above first.")
         return
 
     # ------------------------------------------------------------
@@ -703,11 +691,6 @@ def _render_haplotype_gwas(
     pvals = hap_gwas_df["PValue"].astype(float).values
     _, qvals, _, _ = multipletests(pvals, method="fdr_bh")
     hap_gwas_df["FDR_qvalue"] = qvals
-    st.caption(
-        "Interpretation note: LD blocks are correlated due to linkage disequilibrium, "
-        "so block-level multiple testing (e.g., BH-FDR) is conservative. "
-        "Permutation-calibrated p-values (optional, below) provide an empirical robustness check."
-    )
 
     if hap_gwas_df is None or hap_gwas_df.empty:
         st.info(
@@ -780,22 +763,21 @@ def _render_haplotype_gwas(
         f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
     )
     st.subheader("Association results per block")
-    st.caption("Whether each block's haplotypes differ for your trait.")
     with st.popover("How to read effect sizes (η²)"):
         st.markdown(
-            "- **Effect (β)** — trait change per minor-allele copy (sign = direction).\n"
-            "- **Variance explained (η²)** per LD block — the most interpretable measure "
+            "- **Effect (β)**: trait change per minor-allele copy (sign = direction).\n"
+            "- **Variance explained (η²)** per LD block: the most interpretable measure "
             "of QTL importance for breeding:\n"
-            "  - **> 10%** major QTL — strong marker-assisted-selection candidate\n"
-            "  - **5–10%** moderate QTL — useful combined with other loci\n"
-            "  - **< 5%** minor QTL — polygenic background\n\n"
+            "  - **> 10%** major QTL, strong marker-assisted-selection candidate\n"
+            "  - **5-10%** moderate QTL, useful combined with other loci\n"
+            "  - **< 5%** minor QTL, polygenic background\n\n"
             "Full guidance: **Help → Interpreting Results**."
         )
     with st.popover("How to read LD-block coherence (r²)"):
         st.markdown(
-            "- **Mean r2 / Min r2** — mean / weakest member-pair r² in the block "
+            "- **Mean r2 / Min r2**: mean / weakest member-pair r² in the block "
             "(how internally correlated it is).\n"
-            "- **Frac r2>=.6 to lead** — fraction of members with r² ≥ 0.6 to the lead "
+            "- **Frac r2>=.6 to lead**: fraction of members with r² ≥ 0.6 to the lead "
             "SNP. A low value on a lead's own block means the interval is a loose merge "
             "of sub-clusters, not one tight haplotype.\n\n"
             "Full guidance: **Help → Interpreting Results**."
@@ -805,11 +787,7 @@ def _render_haplotype_gwas(
         use_container_width=True
     )
     if _ldq_full is not None and not _ldq_full.empty:
-        with st.expander("LD-block coherence — full per-block quality metrics"):
-            st.caption(
-                "The full ldq_* set for every block, including the r²-to-lead estimator "
-                "(`ldq_r2_lead_estimator`: raw dosage when available, else imputed)."
-            )
+        with st.expander("LD-block coherence: full per-block quality metrics"):
             st.dataframe(_ldq_full, use_container_width=True)
             st.download_button(
                 "Download LD-block coherence (CSV)",
@@ -865,8 +843,8 @@ def _render_block_visualization(
         logp = -np.log10(max(pval, 1e-300))
 
         label = (
-            f"Block {block_id} — Chr{chr_}: "
-            f"{start / 1e6:.2f}–{end / 1e6:.2f} Mb | "
+            f"Block {block_id}, Chr{chr_}: "
+            f"{start / 1e6:.2f}-{end / 1e6:.2f} Mb | "
             f"{snps} SNPs | -log10(p)={logp:.2f}"
         )
 
@@ -895,7 +873,7 @@ def _render_block_visualization(
     block_start = int(block_row["Start"])
     block_end = int(block_row["End"])
 
-    st.info(f"Selected block: Chr{block_chr}:{block_start:,}–{block_end:,}")
+    st.info(f"Selected block: Chr{block_chr}:{block_start:,}-{block_end:,}")
 
     # --------------------------------------------------------
     # Prepare phenotype
@@ -1127,8 +1105,8 @@ def _render_block_visualization(
         if _n_block is not None and pd.notna(_n_block) and int(_n_block) > 0:
             _bits.append(f"of {int(_n_block)} in the block ({int(_n_tested) / int(_n_block):.0%} retained)")
         if _n_other is not None and pd.notna(_n_other) and int(_n_other) > 0:
-            _bits.append(f"— {int(_n_other)} sample(s) fell into rare genotypes ('Other') and were excluded")
-        st.caption(" ".join(_bits) + ". A lead-SNP view of this locus uses a different sample set.")
+            _bits.append(f"with {int(_n_other)} sample(s) in rare genotypes ('Other') excluded")
+        st.caption(" ".join(_bits) + ".")
     # per-sample MLG ledger: which accession -> which MLG -> in the haplotype test?
     _valid_groups = set(
         hap_counts.loc[lambda s: (s.index != "Other") & (s >= int(min_group_size))].index)
@@ -1712,7 +1690,7 @@ def _render_tukey_and_boxplot(
                     "Raincloud (half-violin + narrow box + jittered points) is "
                     "recommended for unbalanced-n comparisons. "
                     "Interactive raincloud (Plotly) adds hover-over per point "
-                    "showing the accession ID — useful for identifying which "
+                    "showing the accession ID, useful for identifying which "
                     "samples drive the H2 distribution. Boxplot is the legacy "
                     "view kept for compatibility with prior figures."
                 ),

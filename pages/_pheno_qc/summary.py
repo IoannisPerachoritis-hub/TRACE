@@ -27,11 +27,6 @@ def _highlight_verdict(row):
 
 def render(ctx: PhenoQCContext):
     st.header("2 · Normality summary")
-    st.caption(
-        f"Verdict uses Shapiro-Wilk (or D'Agostino K² when n>5000) at α = {NORMALITY_ALPHA}. "
-        "Shapiro-Wilk is skipped for n>5000, D'Agostino K² for n<8. "
-        "Skew and excess kurtosis quantify departure from normality."
-    )
 
     table = normality_summary_table(ctx.pheno_df, ctx.numeric_cols)
 
@@ -68,17 +63,17 @@ def render(ctx: PhenoQCContext):
     st.markdown(
         "Apply **one** transform to **every** trait and download the result as a "
         "GWAS-ready phenotype CSV. For a metabolite panel this is the correct "
-        "approach — a single uniform method keeps effect sizes and mQTL signals "
+        "approach: a single uniform method keeps effect sizes and mQTL signals "
         "comparable across metabolites and gives a clean, defensible Methods "
         "statement. **rank-INT** (the default) is the metabolomics-GWAS standard: "
         "it maps each trait onto normal scores and is robust to outliers. Note "
         "that traits with heavy ties (many zeros / below-detection-limit values) "
-        "can retain mild residual non-normality even after rank-INT — those may "
+        "can retain mild residual non-normality even after rank-INT; those may "
         "need presence/absence or two-part handling instead."
     )
     st.info(
         "Feed the downloaded file to the GWAS page with normalization set to "
-        "**None** — otherwise the trait would be transformed twice.",
+        "**None**; otherwise the trait would be transformed twice.",
         icon="⚠️",
     )
 
@@ -109,11 +104,4 @@ def render(ctx: PhenoQCContext):
         n = len(ctx.numeric_cols)
         st.write(
             {m: f"{c}/{n} traits Normal" for m, c in counts.items()}
-        )
-        st.caption(
-            "rank-INT maps ranks onto normal scores, so it **usually** normalizes "
-            "the most traits — but heavy ties (e.g. many zeros below detection "
-            "limit) can leave a few non-normal. The trade-off: rank-INT discards "
-            "the original scale, while log10 / Yeo-Johnson normalize fewer traits "
-            "but preserve an interpretable, monotonic scale (fold-changes, units)."
         )

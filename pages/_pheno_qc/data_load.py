@@ -11,7 +11,7 @@ def _build_context(pheno, id_col, source):
     numeric_cols = pheno.select_dtypes(include=[np.number]).columns.tolist()
     n_total = pheno.shape[1]
 
-    st.caption(f"ID column: **{id_col}** — first 10 IDs: {pheno.index[:10].tolist()}")
+    st.caption(f"ID column: **{id_col}**. First 10 IDs: {pheno.index[:10].tolist()}")
 
     if not numeric_cols:
         st.error(
