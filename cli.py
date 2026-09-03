@@ -113,16 +113,6 @@ def _build_parser():
              "fdr (q<0.05), or a numeric p-value such as 5e-8.",
     )
 
-    # PC-selection diagnostics (report-only; TRACE uses the fixed --n-pcs default and never auto-selects)
-    pc_grp = parser.add_argument_group("PC-selection diagnostics")
-    pc_grp.add_argument("--pc-diagnostics-parallel", action="store_true",
-                        help="Also run Horn's parallel analysis in the PC diagnostics (permutation cost; "
-                             "informational only -- never sets the PC count)")
-    pc_grp.add_argument("--pc-diagnostics-pa-reps", type=int, default=200,
-                        help="Permutations for --pc-diagnostics-parallel (default: 200)")
-    pc_grp.add_argument("--pc-diagnostics-pa-seed", type=int, default=0,
-                        help="Seed for --pc-diagnostics-parallel (default: 0)")
-
     # Subsampling GWAS
     boot_grp = parser.add_argument_group("Subsampling stability")
     boot_grp.add_argument("--subsampling", action="store_true",
@@ -282,8 +272,6 @@ def _build_equivalent_command(args):
         parts.append(f"--model {' '.join(args.model)}")
     if args.n_pcs != 0:
         parts.append(f"--n-pcs {args.n_pcs}")
-    if getattr(args, "pc_diagnostics_parallel", False):
-        parts.append("--pc-diagnostics-parallel")
     if args.subsampling:
         parts.append(f"--subsampling --boot-reps {args.boot_reps}")
         if args.boot_jobs != 1:
@@ -691,8 +679,8 @@ def run_pipeline(args):
 
     # ── PC-selection diagnostics (report-only; R1.4 -- REPORTS, never selects) ──
     # The lambda-GC auto-PC selector was removed (D-R1.4-FINAL): TRACE uses the fixed
-    # --n-pcs default and reports the eigenvalue spectrum + conventional criteria so
-    # the user can judge the choice.  No criterion sets n_pcs; zero model fits.
+    # --n-pcs default and reports the genotype-PCA eigenvalue spectrum so the user can
+    # judge the choice.  No criterion, no recommended k; one eigendecomposition, no model fits.
     _pc_diag = None
     try:
         from gwas.pc_diagnostics import compute_pc_diagnostics
@@ -700,17 +688,11 @@ def run_pipeline(args):
             Z_for_pca, n=int(Z_for_pca.shape[0]), m=int(Z_for_pca.shape[1]),
             prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
             spectrum_depth=20,
-            run_parallel_analysis=getattr(args, "pc_diagnostics_parallel", False),
-            pa_B=getattr(args, "pc_diagnostics_pa_reps", 200),
-            pa_seed=getattr(args, "pc_diagnostics_pa_seed", 0),
         )
         extra_csvs["PC_diagnostics_spectrum.csv"] = _pc_diag["spectrum"]
-        extra_csvs["PC_diagnostics_criteria.csv"] = _pc_diag["criteria"]
-        _crit = {r["criterion"].split(" (")[0]: r["k_implied"]
-                 for _, r in _pc_diag["criteria"].iterrows() if r["k_implied"] is not None}
-        log.info("  PC diagnostics: %d eigenvalues, trace/m=%.3f; conventional criteria imply "
-                 "k=%s (informational only -- TRACE uses the fixed --n-pcs, no auto-selection)",
-                 _pc_diag["meta"]["n_eigenvalues"], _pc_diag["meta"]["trace_over_m"], _crit)
+        log.info("  PC diagnostics: %d eigenvalues, trace/m=%.3f "
+                 "(eigenvalue spectrum -> PC_diagnostics_spectrum.csv; TRACE uses the fixed --n-pcs)",
+                 _pc_diag["meta"]["n_eigenvalues"], _pc_diag["meta"]["trace_over_m"])
     except Exception as _pcd_err:  # pragma: no cover
         log.warning("  PC diagnostics skipped: %s", _pcd_err)
 
@@ -1508,7 +1490,7 @@ def run_pipeline(args):
         "Subsampling reps": args.boot_reps if args.subsampling else "N/A",
         "PCs (fixed)": int(n_pcs),
         "PC diagnostics": (
-            f"trace/m={_pc_diag['meta']['trace_over_m']}; see PC_diagnostics_*.csv"
+            f"trace/m={_pc_diag['meta']['trace_over_m']}; see PC_diagnostics_spectrum.csv"
             if _pc_diag is not None else "n/a"),
     }
 
@@ -1535,7 +1517,7 @@ def run_pipeline(args):
             sig_label=_sig_rule_obj.label,
             n_significant_override=(
                 len(_report_sig_table) if _report_sig_table is not None else None),
-            pc_selection_df=(_pc_diag["criteria"] if _pc_diag is not None else None),
+            pc_selection_df=(_pc_diag["spectrum"] if _pc_diag is not None else None),
             lambda_gc=lambda_gc,
             n_samples=int(geno_df.shape[0]),
             n_snps=int(geno_df.shape[1]),

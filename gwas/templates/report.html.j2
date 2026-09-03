@@ -159,10 +159,10 @@
 <p>No significant hits at FDR &lt; 0.05.</p>
 {% endif %}
 
-<!-- ── PC Selection ──────────────────────────────── -->
+<!-- ── PC-selection diagnostics ──────────────────── -->
 {% if pc_selection_html %}
-<h2>Principal Component Selection (&lambda;-based)</h2>
-<p>MLM GWAS was run at each PC count; the PC count with &lambda;<sub>GC</sub> closest to 1.0 was selected.</p>
+<h2>PC-selection diagnostics &mdash; eigenvalue spectrum</h2>
+<p>Genotype-PCA eigenvalue spectrum (variance explained per PC and cumulative). Informational only &mdash; TRACE uses the fixed <code>--n-pcs</code> count and does not auto-select.</p>
 {{ pc_selection_html | safe }}
 {% endif %}
 
