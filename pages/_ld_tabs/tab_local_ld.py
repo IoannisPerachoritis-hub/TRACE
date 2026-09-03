@@ -85,25 +85,14 @@ def render(ctx: LDContext, get_r2_cached, window):
             cache_key=f"r2::local::{chr_sel}:{start_bp}-{end_bp}::{lead_snp}::{region_geno.shape[1]}snps",
         )
 
-        # ================================================================
-        # OPTIONAL: Show raw correlation (r) instead of r²
-        # ================================================================
-        show_raw_r = st.checkbox("Show raw correlation (r) instead of r²", value=False)
         show_star = st.checkbox(
             "Show lead-SNP star", value=True, key="local_ld_show_star",
             help="Mark the lead SNP with a gold star on the heatmap.",
         )
 
-        if show_raw_r:
-            from gwas.ld import pairwise_r
-            ld_matrix_to_plot = pairwise_r(region_geno)
-
-            vmin_plot, vmax_plot = -1, 1
-            colorbar_label = "Correlation (r)"
-        else:
-            ld_matrix_to_plot = r2
-            vmin_plot, vmax_plot = 0, 1
-            colorbar_label = "Linkage disequilibrium (r²)"
+        ld_matrix_to_plot = r2
+        vmin_plot, vmax_plot = 0, 1
+        colorbar_label = "Linkage disequilibrium (r²)"
 
         # ---- Heatmap (lower triangle, publication-grade) ----
         fig_ld, ax = plt.subplots(figsize=FIGSIZE["heatmap"])
@@ -175,7 +164,6 @@ def render(ctx: LDContext, get_r2_cached, window):
             chr_sel, int(start_bp), int(end_bp),
             str(lead_snp),
             int(ld_matrix_to_plot.shape[0]),
-            bool(show_raw_r),
             bool(show_star),
         )
         local_cache = st.session_state.setdefault("_local_ld_cache", {})
