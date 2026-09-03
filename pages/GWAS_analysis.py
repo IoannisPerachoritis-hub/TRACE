@@ -2954,7 +2954,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
                     spectrum_depth=20,
                 )
-                _mt = _diag["meta"]
                 _sp = _diag["spectrum"]
                 # Plot first: variance explained per PC (%) + cumulative on a secondary axis --
                 # what a user reads to choose a count (raw eigenvalues are scale-dependent; hidden below).
@@ -2978,31 +2977,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 _disp["Variance explained"] = _disp["Variance explained"].map(lambda v: f"{v:.1f}%")
                 _disp["Cumulative"] = _disp["Cumulative"].map(lambda v: f"{v:.1f}%")
                 st.dataframe(_disp, use_container_width=True, hide_index=True)
-                # Technical metadata (collapsed; a nested st.expander is disallowed, so use a popover).
-                with st.popover("Method details"):
-                    _pp = _mt.get("ld_prune_params", {})
-                    st.caption(
-                        f"n samples = {_mt['n_samples']}, pruned markers m = "
-                        f"{_mt['m_markers_pruned']}, trace/m = {_mt['trace_over_m']}."
-                    )
-                    if _pp:
-                        st.caption(
-                            f"LD pruning: r2 = {_pp.get('r2')}, window = {_pp.get('window_bp')} bp, "
-                            f"step = {_pp.get('step_bp')} bp."
-                        )
-                    if _mt.get("normalisation"):
-                        st.caption(_mt["normalisation"])
-                    try:
-                        _tw = _diag["criteria"].set_index("criterion").loc["Tracy-Widom", "note"]
-                        st.caption(f"Tracy-Widom: {_tw}")
-                    except Exception:
-                        pass
-                    _pa = _mt.get("parallel_analysis")
-                    if _pa:
-                        st.caption(
-                            f"Parallel analysis: B = {_pa.get('B')}, seed = {_pa.get('seed')}, "
-                            f"quantile = {_pa.get('quantile')}."
-                        )
             except Exception as _diag_err:
                 st.warning(f"PC diagnostics unavailable: {_diag_err}")
 
