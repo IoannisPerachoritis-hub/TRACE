@@ -89,6 +89,10 @@ def render(ctx: LDContext, get_r2_cached, window):
         # OPTIONAL: Show raw correlation (r) instead of r²
         # ================================================================
         show_raw_r = st.checkbox("Show raw correlation (r) instead of r²", value=False)
+        show_star = st.checkbox(
+            "Show lead-SNP star", value=True, key="local_ld_show_star",
+            help="Mark the lead SNP with a gold star on the heatmap.",
+        )
 
         if show_raw_r:
             from gwas.ld import pairwise_r
@@ -151,14 +155,18 @@ def render(ctx: LDContext, get_r2_cached, window):
         # Tolerate the lead being absent from the plotted set (seed-not-member, or
         # dropped by the MAF / monomorphic filters) -- never index [0] unguarded.
         _lead_hit = np.where(np.asarray(region_sids).astype(str) == str(lead_snp))[0]
-        if _lead_hit.size:
+        if _lead_hit.size and show_star:
             _li = int(_lead_hit[0])
             ax.scatter(_li + 0.5, _li + 0.5, marker="*", s=220, color="#F0E442",
                        edgecolor="#333333", linewidth=0.6, zorder=6, clip_on=False)
 
         plt.tight_layout()
-        _star_note = (f" The gold star marks the lead SNP ({lead_snp})." if _lead_hit.size
-                      else f" (Lead SNP {lead_snp} is not shown -- outside the window or filtered by QC.)")
+        if not show_star:
+            _star_note = ""
+        elif _lead_hit.size:
+            _star_note = f" The gold star marks the lead SNP ({lead_snp})."
+        else:
+            _star_note = f" (Lead SNP {lead_snp} is not shown -- outside the window or filtered by QC.)"
         st.caption("LD computed from imputed dosages; haplotype labels use hard-called genotypes." + _star_note)
 
         # Byte-cache the savefig output keyed on what affects the rendered image.
@@ -168,6 +176,7 @@ def render(ctx: LDContext, get_r2_cached, window):
             str(lead_snp),
             int(ld_matrix_to_plot.shape[0]),
             bool(show_raw_r),
+            bool(show_star),
         )
         local_cache = st.session_state.setdefault("_local_ld_cache", {})
         local_cached = local_cache.get(local_cache_key)
