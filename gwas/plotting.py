@@ -827,7 +827,7 @@ def plot_regional_association_static(
         _bs, _be, _mode = _clamp_block_span(block_interval[0] / 1e6, block_interval[1] / 1e6,
                                             float(pos_mb.min()), float(pos_mb.max()))
         if _mode == "fill":
-            ax.axvspan(_bs, _be, color=PALETTE["cyan"], alpha=0.12, zorder=0)
+            ax.axvspan(_bs, _be, color=PALETTE["cyan"], alpha=0.25, zorder=0)
             marker_handles.append(Patch(facecolor=PALETTE["cyan"], alpha=0.25, label="LD block"))
         elif _mode == "edges":
             for _x in (_bs, _be):
@@ -921,7 +921,7 @@ def plot_regional_association_interactive(
         _bs, _be, _mode = _clamp_block_span(block_interval[0] / 1e6, block_interval[1] / 1e6,
                                             float(pos_mb.min()), float(pos_mb.max()))
         if _mode == "fill":
-            fig.add_vrect(x0=_bs, x1=_be, fillcolor=PALETTE["cyan"], opacity=0.12,
+            fig.add_vrect(x0=_bs, x1=_be, fillcolor=PALETTE["cyan"], opacity=0.25,
                           line_width=0, layer="below")
         elif _mode == "edges":
             fig.add_vline(x=_bs, line_color=PALETTE["cyan"], line_dash="dot")

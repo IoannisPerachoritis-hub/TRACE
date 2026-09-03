@@ -24,6 +24,7 @@ from gwas.plotting import (
     compute_r2_to_lead,
     plot_regional_association_static,
     plot_regional_association_interactive,
+    _clamp_block_span,
     MAX_REGIONAL_SNPS,
 )
 from gwas.significance import rule_from_streamlit
@@ -179,15 +180,31 @@ def render(ctx: LDContext, window):
     if window.lead_snp not in set(wdf["SNP"]):
         st.info(f"Lead SNP **{window.lead_snp}** is not inside the plotted window "
                 "(a block's seed SNP can lie outside the block it labels).")
+    # block-span shading mode: matches the plotter's clamp on the same x-range
+    # (window_df["Pos"] min/max in Mb), so the caption states what actually renders.
+    _mode = None
+    if block_interval is not None:
+        _xlo = float(wdf["Pos"].min()) / 1e6
+        _xhi = float(wdf["Pos"].max()) / 1e6
+        _bs, _be, _mode = _clamp_block_span(block_interval[0] / 1e6, block_interval[1] / 1e6,
+                                            _xlo, _xhi)
     if is_flank:
         st.caption("No LD block here; the shaded span is the **flanking-marker interval** "
                    "around the SNP, not an LD block.")
     elif block_interval is not None:
         _b0, _b1 = block_interval
-        if _b0 < int(wdf["Pos"].min()) or _b1 > int(wdf["Pos"].max()):
+        if _mode == "edges":
+            st.caption("The LD block spans essentially the whole window, so its edges are "
+                       "marked instead of a shaded fill; widen the buffer to restore the shaded span.")
+        elif _mode == "none":
+            st.caption("The LD block clamps to an empty span within the view; nothing is shaded.")
+        elif _b0 < int(wdf["Pos"].min()) or _b1 > int(wdf["Pos"].max()):
             st.caption(f"LD block Chr{window.chr}:{_b0:,}-{_b1:,} "
                        f"({(_b1 - _b0) / 1000:,.0f} kb) extends beyond the plotted window; "
                        "the shaded span is clipped to the view.")
+    else:
+        st.caption("No LD block or flanking interval to shade here "
+                   "(the lead is the only typed marker in the window).")
     if n_typed_r2 == 0:
         st.caption("r² to the lead is not computable for these markers (e.g. a single typed "
                    "marker); points are shown in grey.")
