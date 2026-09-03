@@ -14,14 +14,10 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
                   [--n-pcs N_PCS] [--no-loco] [--n-pcs-mlm N_PCS_MLM]
                   [--n-pcs-mlmm N_PCS_MLMM] [--n-pcs-farmcpu N_PCS_FARMCPU]
                   [--covar COVAR] [--covar-cols COVAR_COLS]
-                  [--sig-thresh {meff,bonferroni,fdr,PVALUE}]
-                  [--pc-diagnostics-parallel]
-                  [--pc-diagnostics-pa-reps PC_DIAGNOSTICS_PA_REPS]
-                  [--pc-diagnostics-pa-seed PC_DIAGNOSTICS_PA_SEED]
-                  [--subsampling] [--boot-reps BOOT_REPS]
-                  [--boot-frac BOOT_FRAC] [--boot-thresh BOOT_THRESH]
-                  [--boot-jobs BOOT_JOBS] [--seed SEED] [--ld-r2 LD_R2]
-                  [--ld-flank-kb LD_FLANK_KB]
+                  [--sig-thresh {meff,bonferroni,fdr,PVALUE}] [--subsampling]
+                  [--boot-reps BOOT_REPS] [--boot-frac BOOT_FRAC]
+                  [--boot-thresh BOOT_THRESH] [--boot-jobs BOOT_JOBS]
+                  [--seed SEED] [--ld-r2 LD_R2] [--ld-flank-kb LD_FLANK_KB]
                   [--ld-seed-mode {suggestive,significant}]
                   [--ld-seed-p LD_SEED_P] [--ld-top-n LD_TOP_N]
                   [--ld-merge-mode {occupancy,iou,correlation}]
@@ -109,17 +105,6 @@ QC thresholds:
                         Heterozygosity screen: remove variants failing a one-
                         sided heterozygote-excess test at this p-value
                         (default: off).
-
-PC-selection diagnostics:
-  --pc-diagnostics-parallel
-                        Also run Horn's parallel analysis in the PC
-                        diagnostics (permutation cost; informational only --
-                        never sets the PC count)
-  --pc-diagnostics-pa-reps PC_DIAGNOSTICS_PA_REPS
-                        Permutations for --pc-diagnostics-parallel (default:
-                        200)
-  --pc-diagnostics-pa-seed PC_DIAGNOSTICS_PA_SEED
-                        Seed for --pc-diagnostics-parallel (default: 0)
 
 Subsampling stability:
   --subsampling         Run subsampling GWAS stability screening (MLM only)

@@ -148,7 +148,12 @@ def plot_manhattan_static(
     plt.title(title)
 
     if has_threshold or has_secondary:
-        plt.legend(loc="upper right", fontsize=9)
+        _leg = plt.legend(loc="upper right", fontsize=9)
+        # R1.4: dashed frame so the legend's marker glyphs read as a key, not data points
+        _leg.get_frame().set_linestyle("--")
+        _leg.get_frame().set_edgecolor("0.35")
+        _leg.get_frame().set_linewidth(0.8)
+        _leg.get_frame().set_alpha(0.9)
 
     plt.tight_layout()
     return fig

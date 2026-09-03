@@ -101,11 +101,11 @@ Open **GWAS Analysis** ("TRACE GWAS") in the sidebar.
 1. **Upload data.** Upload the VCF (`examples/example.vcf.gz`) and the phenotype
    CSV (`examples/example_pheno.csv`).
 2. **Review quality control.** Accept the default QC thresholds (MAF, per-SNP
-   missingness, INFO) and imputation, or adjust them. Choose how principal
-   components are handled (fixed count, or automatic band selection).
+   missingness, INFO) and imputation, or adjust them. Set the number of principal
+   components used as covariates (a fixed count; TRACE does not auto-select).
 3. **Select the trait.** Pick `Trait1`.
 4. **Run.** For the standard screen, open the **One-Click Full Analysis**
-   expander and click **Run Full Analysis** — this runs PC selection → MLM GWAS →
+   expander and click **Run Full Analysis** — this runs MLM GWAS →
    multi-model → LD blocks → haplotype testing → gene annotation → report. To run
    a single model on the selected trait instead, use **Run GWAS**.
 

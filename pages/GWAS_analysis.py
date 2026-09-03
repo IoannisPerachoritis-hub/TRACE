@@ -595,7 +595,7 @@ if "FarmCPU (multi-locus)" in model_choices:
         st.sidebar.subheader("FarmCPU configuration")
         farmcpu_max_iter = st.sidebar.slider(
             "Max FarmCPU iterations", 5, 50, 10,
-            help="Stop after this many fixed/random cycles.",
+            help="Stop after this many scan / pseudo-QTN-selection cycles.",
         )
         farmcpu_p_threshold = st.sidebar.number_input(
             "P-threshold for pseudo-QTN selection",
@@ -1165,6 +1165,49 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     st.pyplot(_qc_fig)
                     plt.close(_qc_fig)
 
+        # ================================================================
+        #       PC-selection diagnostics (report-only; never selects -- R1.4)
+        # ================================================================
+
+        with st.expander("PC-selection diagnostics", expanded=False):
+            _Zdiag = st.session_state.get("Z_grm")
+            if _Zdiag is None:
+                st.info("Prepare/run the GWAS first to compute the PC spectrum.")
+            else:
+                try:
+                    from gwas.pc_diagnostics import compute_pc_diagnostics
+                    _diag = compute_pc_diagnostics(
+                        _Zdiag, n=int(_Zdiag.shape[0]), m=int(_Zdiag.shape[1]),
+                        prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
+                        spectrum_depth=20,
+                    )
+                    _sp = _diag["spectrum"]
+                    # Plot first: variance explained per PC (%) + cumulative on a secondary axis --
+                    # what a user reads to choose a count (raw eigenvalues are scale-dependent; hidden below).
+                    import plotly.graph_objects as go
+                    _figd = go.Figure()
+                    _figd.add_trace(go.Bar(x=_sp["rank"], y=_sp["pct_of_trace"],
+                                           name="variance explained"))
+                    _figd.add_trace(go.Scatter(x=_sp["rank"], y=_sp["cumulative_pct"],
+                                               mode="lines+markers", name="cumulative", yaxis="y2"))
+                    _figd.update_layout(
+                        xaxis=dict(title="PC"),
+                        yaxis=dict(title="variance explained (%)"),
+                        yaxis2=dict(title="cumulative (%)", overlaying="y", side="right"),
+                        height=280, margin=dict(t=30, b=30),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                    )
+                    st.plotly_chart(_figd, use_container_width=True)
+                    # Spectrum table: 10 rows, plain names, % variance + cumulative share.
+                    _disp = _sp.head(10)[["rank", "pct_of_trace", "cumulative_pct"]].copy()
+                    _disp.columns = ["PC", "Variance explained", "Cumulative"]
+                    _disp["Variance explained"] = _disp["Variance explained"].map(lambda v: f"{v:.1f}%")
+                    _disp["Cumulative"] = _disp["Cumulative"].map(lambda v: f"{v:.1f}%")
+                    st.dataframe(_disp, use_container_width=True, hide_index=True)
+                except Exception as _diag_err:
+                    st.warning(f"PC diagnostics unavailable: {_diag_err}")
+
+
     # --- REQUIRED: Save everything to session_state for cached GWAS ---
     # ------------------------------------------------------------
     # Store SERIALIZABLE GWAS results in session_state
@@ -1660,9 +1703,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
                             spectrum_depth=20,
                         )
-                        _pipe_pc_df = _pc_diag["criteria"]
+                        _pipe_pc_df = _pc_diag["spectrum"]
                         _pipe_extra_tables["PC_diagnostics_spectrum.csv"] = _pc_diag["spectrum"]
-                        _pipe_extra_tables["PC_diagnostics_criteria.csv"] = _pc_diag["criteria"]
                     except Exception:
                         logging.exception("PC diagnostics failed")
 
@@ -2938,48 +2980,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     st.header("Single-trait GWAS (detailed view)")
 
-    # ================================================================
-    #       PC-selection diagnostics (report-only; never selects -- R1.4)
-    # ================================================================
-
-    with st.expander("PC-selection diagnostics", expanded=False):
-        _Zdiag = st.session_state.get("Z_grm")
-        if _Zdiag is None:
-            st.info("Prepare/run the GWAS first to compute the PC spectrum.")
-        else:
-            try:
-                from gwas.pc_diagnostics import compute_pc_diagnostics
-                _diag = compute_pc_diagnostics(
-                    _Zdiag, n=int(_Zdiag.shape[0]), m=int(_Zdiag.shape[1]),
-                    prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
-                    spectrum_depth=20,
-                )
-                _sp = _diag["spectrum"]
-                # Plot first: variance explained per PC (%) + cumulative on a secondary axis --
-                # what a user reads to choose a count (raw eigenvalues are scale-dependent; hidden below).
-                import plotly.graph_objects as go
-                _figd = go.Figure()
-                _figd.add_trace(go.Bar(x=_sp["rank"], y=_sp["pct_of_trace"],
-                                       name="variance explained"))
-                _figd.add_trace(go.Scatter(x=_sp["rank"], y=_sp["cumulative_pct"],
-                                           mode="lines+markers", name="cumulative", yaxis="y2"))
-                _figd.update_layout(
-                    xaxis=dict(title="PC"),
-                    yaxis=dict(title="variance explained (%)"),
-                    yaxis2=dict(title="cumulative (%)", overlaying="y", side="right"),
-                    height=280, margin=dict(t=30, b=30),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                )
-                st.plotly_chart(_figd, use_container_width=True)
-                # Spectrum table: 10 rows, plain names, % variance + cumulative share.
-                _disp = _sp.head(10)[["rank", "pct_of_trace", "cumulative_pct"]].copy()
-                _disp.columns = ["PC", "Variance explained", "Cumulative"]
-                _disp["Variance explained"] = _disp["Variance explained"].map(lambda v: f"{v:.1f}%")
-                _disp["Cumulative"] = _disp["Cumulative"].map(lambda v: f"{v:.1f}%")
-                st.dataframe(_disp, use_container_width=True, hide_index=True)
-            except Exception as _diag_err:
-                st.warning(f"PC diagnostics unavailable: {_diag_err}")
-
     # --- Run GWAS button (prevents auto-trigger on every sidebar change) ---
     # Reset trigger when trait changes so user must re-click
     if st.session_state.get("_last_gwas_trait") != trait_col:
@@ -3738,7 +3738,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             _gc_cols[3].metric("Bonferroni threshold", f"{bonf_thresh:.2e}")
 
         fig_qq = plot_qq(gwas_df["PValue"].values, lambda_gc_used=lambda_gc)
-        st.pyplot(fig_qq)
+        _qq_cols = st.columns([1, 2, 1])
+        with _qq_cols[1]:
+            st.pyplot(fig_qq)
         st.session_state["gwas_figures"][f"QQ_{trait_col}.png"] = fig_qq
 
         download_matplotlib_fig(
@@ -3938,7 +3940,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             lambda_gc_mlmm = compute_lambda_gc(gwas_mlmm["PValue"].values)
             fig_qq_mlmm = plot_qq(gwas_mlmm["PValue"].values, lambda_gc_used=lambda_gc_mlmm)
             st.write(f"**MLMM λGC (bulk 5–95%):** {lambda_gc_mlmm:.3f}")
-            st.pyplot(fig_qq_mlmm)
+            _qq_cols = st.columns([1, 2, 1])
+            with _qq_cols[1]:
+                st.pyplot(fig_qq_mlmm)
             st.session_state["gwas_figures"][f"QQ_MLMM_{trait_col}.png"] = fig_qq_mlmm
 
     # ============================================================
@@ -4047,7 +4051,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             lambda_gc_fc = compute_lambda_gc(gwas_farmcpu["PValue"].values)
             fig_qq_fc = plot_qq(gwas_farmcpu["PValue"].values, lambda_gc_used=lambda_gc_fc)
             st.write(f"**FarmCPU λGC (bulk 5–95%):** {lambda_gc_fc:.3f}")
-            st.pyplot(fig_qq_fc)
+            _qq_cols = st.columns([1, 2, 1])
+            with _qq_cols[1]:
+                st.pyplot(fig_qq_fc)
             st.session_state["gwas_figures"][f"QQ_FarmCPU_{trait_col}.png"] = fig_qq_fc
 
     # ============================================================
