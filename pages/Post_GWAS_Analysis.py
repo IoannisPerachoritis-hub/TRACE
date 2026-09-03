@@ -46,7 +46,7 @@ def _sync_variant_axes(G, chroms, positions, sid):
 
     if not (nG == nC == nP == nS):
         st.error(
-            f"CRITICAL: Variant axis mismatch — "
+            f"CRITICAL: Variant axis mismatch: "
             f"geno columns={nG}, chroms={nC}, positions={nP}, sid={nS}.\n\n"
             f"This indicates stale session state from a previous run. "
             f"Please rerun GWAS to rebuild all arrays from the same SNP set."
@@ -350,10 +350,10 @@ def _mega_filter_label():
         return "Block table filter"
     n_total, count, n_shown, mode = s["n_total"], s["count"], s["n_shown"], s["mode"]
     if count == 0:
-        return f"Block table filter — {n_total} blocks, no mega-blocks removed"
+        return f"Block table filter: {n_total} blocks, no mega-blocks removed"
     if mode == "Remove":
-        return f"Block table filter — {count} mega-blocks removed ({n_shown} of {n_total} blocks shown)"
-    return f"Block table filter — {count} mega-blocks flagged, none removed"
+        return f"Block table filter: {count} mega-blocks removed ({n_shown} of {n_total} blocks shown)"
+    return f"Block table filter: {count} mega-blocks flagged, none removed"
 
 
 def ld_analysis_page():
@@ -559,7 +559,7 @@ def ld_analysis_page():
         if _sm is not None and "censored_r2_0.2" in getattr(_sm, "columns", []):
             _ncc = int(_sm["censored_r2_0.2"].sum())
             if _ncc:
-                _cn = f" ({_ncc} chr grid-limited — upper bound)"
+                _cn = f" ({_ncc} chr grid-limited, upper bound)"
         st.markdown(
             f"**Trait:** `{trait_col}`  \n"
             f"LD decay (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb (from Decay tab){_cn}"
@@ -568,7 +568,7 @@ def ld_analysis_page():
         st.markdown(
             f"**Trait:** `{trait_col}`  \n"
             f"LD decay estimate (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb "
-            f"*(quick estimate — use Decay tab for full computation)*"
+            f"*(quick estimate; use Decay tab for full computation)*"
         )
     # --------------------------------------------------------
     # AUTO-BUILD peak-centric LD blocks once per trait
@@ -668,12 +668,12 @@ def ld_analysis_page():
                 key="mega_size_ratio",
             )
             st.caption(
-                "Removing mega-blocks changes the block set **every tab uses** — the Regional Plot's "
+                "Removing mega-blocks changes the block set **every tab uses**: the Regional Plot's "
                 "shaded span, the annotated gene set, and significant-SNP block membership all follow this filter."
             )
     else:
         st.caption(
-            "Block table filter: no mega-blocks (nested-block artefacts) detected — "
+            "Block table filter: no mega-blocks (nested-block artefacts) detected; "
             "nothing removed from the block set."
         )
         mega_mode = st.session_state.get("mega_block_mode", "Remove")

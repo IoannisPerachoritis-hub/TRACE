@@ -18,13 +18,8 @@ def render(ctx: LDContext):
 
     st.markdown(
         "Computes LD decay curves per chromosome from your genotype data. "
-        "Reports the distance at which r² drops below 0.2 and 0.1 — "
+        "Reports the distance at which r² drops below 0.2 and 0.1; "
         "these values justify your LD block detection window sizes."
-    )
-    st.caption(
-        "The genome-wide median decay computed here also sets the **default window "
-        "buffer (≈ decay × 2)** for the Regional Plot and Local LD tabs — so this "
-        "estimate justifies the window sizes used across the page, not only block detection."
     )
 
     col_d1, col_d2, col_d3 = st.columns(3)
@@ -69,7 +64,7 @@ def render(ctx: LDContext):
             st.caption(
                 f"`censored_r2_0.2` = grid-limited: for {_n_cens} chromosome(s) the r²≤0.2 "
                 "crossing falls in the first distance bin, so the decay is **below the grid "
-                "resolution** — read that value as **≤ X kb**, an upper bound, not an estimate."
+                "resolution**; read that value as **≤ X kb**, an upper bound, not an estimate."
             )
 
         # Highlight genome-wide median
@@ -81,7 +76,7 @@ def render(ctx: LDContext):
                     _nc = int(summary_df["censored_r2_0.2"].sum())
                     _nt = int(summary_df["decay_kb_r2_0.2"].notna().sum())
                     if _nc:
-                        _cens_note = f"  ({_nc} of {_nt} chromosomes grid-limited — upper bound)"
+                        _cens_note = f"  ({_nc} of {_nt} chromosomes grid-limited, upper bound)"
                 st.info(f"Genome-wide median LD decay (r² ≤ 0.2): **{median_decay:.0f} kb**{_cens_note}")
 
                 if st.button("Use this as the LD decay estimate for block detection", key="btn_update_decay"):

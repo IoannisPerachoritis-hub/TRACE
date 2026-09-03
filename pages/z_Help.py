@@ -12,11 +12,11 @@ st.title("Help & Reference")
 # ============================================================
 st.header("Quick Start")
 st.markdown("""
-The full step-by-step walkthrough — VCF/phenotype/gene-model formats with examples,
-QC presets, and downloading results — lives in the project
+The full step-by-step walkthrough (VCF/phenotype/gene-model formats with examples,
+QC presets, and downloading results) lives in the project
 [README](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md). It is kept
 there as the single source so it can't drift out of sync with the code. For command-line
-use, run `trace-gwas --help` — it prints the full parameter list on every install route.
+use, run `trace-gwas --help`; it prints the full parameter list on every install route.
 
 **In 30 seconds:** on **GWAS Analysis**, upload a VCF + a phenotype CSV (sample IDs in
 the first column, matching the VCF), pick a trait, and click **Run GWAS** or **One-Click
@@ -118,23 +118,23 @@ st.markdown("""
 st.subheader("Post-GWAS CSVs (added after v1.0.1)")
 st.markdown("""
 The **Significant SNPs**, **Local LD**, and **Regional Plot** tabs export CSVs
-documented in full — every column, type, and when it's emitted — in
+documented in full (every column, type, and when it's emitted) in
 [docs/outputs.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/outputs.md):
 
-- **`Significant_SNPs.csv`** / **`Unblocked_SNPs.csv`** — every reporting-significant SNP,
+- **`Significant_SNPs.csv`** / **`Unblocked_SNPs.csv`**: every reporting-significant SNP,
   marked in-block or *unblocked*. A SNP can be significant by the reporting rule yet fall
   **below the block-seeding threshold `--ld-seed-p`**, so it never seeds a block
-  (`Block_Status = unblocked_not_seeded`) — which is why it shows up here.
+  (`Block_Status = unblocked_not_seeded`), which is why it shows up here.
   (CLI runs emit these as `Significant_SNPs_<model>.csv` / `Unblocked_SNPs_<model>.csv`.)
-- **`LD_r2_long_*.csv`** / **`LD_r2_matrix_*.csv`** — the r² numbers behind the Local LD
+- **`LD_r2_long_*.csv`** / **`LD_r2_matrix_*.csv`**: the r² numbers behind the Local LD
   heatmap (long-format pairs, and the square matrix).
-- **`Regional_data_*.csv`** — per-SNP p-value, r²-to-lead, and block membership behind the
+- **`Regional_data_*.csv`**: per-SNP p-value, r²-to-lead, and block membership behind the
   regional plot. A block's `lead_snp` is its **most significant seeding SNP** (the smallest
   GWAS p-value among the significant SNPs that formed the block); it may not be a member, so
   `block_member = False` for the lead is expected, not a bug.
 
 Run `trace-gwas --help` for the `--covar` covariate flag and the numeric
-`--sig-thresh` p-value (e.g. `5e-8`) — it prints the full CLI parameter list.
+`--sig-thresh` p-value (e.g. `5e-8`); it prints the full CLI parameter list.
 """)
 
 # ============================================================
@@ -147,18 +147,18 @@ st.markdown("""
 TRACE reports significance under one of four rules. **The default is Bonferroni.**
 
 - **Bonferroni**: divides α by the number of SNPs, assuming they are independent.
-  The most stringent option — when many SNPs are correlated it is conservative, and
+  The most stringent option: when many SNPs are correlated it is conservative, and
   real signals in extended LD can fall short of it.
 - **M_eff (Li & Ji)**: divides α by the *effective* number of independent tests
-  rather than the raw SNP count, so it is **less stringent than Bonferroni** — by how
+  rather than the raw SNP count, so it is **less stringent than Bonferroni**, by how
   much depends on how much LD is present. It does not assume the SNPs are independent.
-- **FDR (Benjamini–Hochberg)**: controls the expected proportion of false positives
+- **FDR (Benjamini-Hochberg)**: controls the expected proportion of false positives
   among the SNPs called significant, instead of the family-wise error rate. The least
   stringent of the three; suited to exploratory screening.
 - **Custom p-value**: a fixed threshold you set (e.g. 5e-8).
 
 Which rule fits depends on whether you are prioritising **discovery** (more permissive)
-or **control of false positives** (more stringent) — a study-design choice, not a
+or **control of false positives** (more stringent), a study-design choice, not a
 property of the data.
 """)
 
@@ -181,9 +181,9 @@ st.markdown("""
 - **Variance Explained (eta-squared)**: The percentage of total phenotypic variance
   accounted for by haplotype differences at an LD block. This is the most interpretable
   measure of QTL importance for breeding decisions.
-  - **> 10%**: Major QTL — strong candidate for marker-assisted selection
-  - **5-10%**: Moderate QTL — useful in combination with other loci
-  - **< 5%**: Minor QTL — contributes to polygenic background
+  - **> 10%**: Major QTL, strong candidate for marker-assisted selection
+  - **5-10%**: Moderate QTL, useful in combination with other loci
+  - **< 5%**: Minor QTL, contributes to polygenic background
 """)
 
 st.subheader("Cross-Model Consensus")
@@ -199,9 +199,9 @@ Subsampling tests whether a GWAS signal is robust to sample composition.
 Each iteration subsamples your panel, recomputes the kinship matrix, and reruns
 the full MLM GWAS.
 
-- **Discovery frequency > 80%**: Robust signal — detected in most resamples
-- **Discovery frequency 50-80%**: Moderately stable — consider sample-size limitations
-- **Discovery frequency < 50%**: Unstable — may be driven by a few influential samples
+- **Discovery frequency > 80%**: Robust signal, detected in most resamples
+- **Discovery frequency 50-80%**: Moderately stable, consider sample-size limitations
+- **Discovery frequency < 50%**: Unstable, may be driven by a few influential samples
 """)
 
 # ============================================================
@@ -212,11 +212,11 @@ st.markdown("""
 If you use TRACE in your research, please cite:
 
 > Perachoritis I., Vatov E., Alseekh S., Gechev T., Rai A. (2026).
-> TRACE: *[full title pending — under R1.8 revision]*.
+> TRACE: *[full title pending, under R1.8 revision]*.
 > *Bioinformatics Advances* (Application Note). [In preparation]
 
 **Software:**
-> TRACE v1.0 — https://github.com/IoannisPerachoritis-hub/TRACE
+> TRACE v1.0. https://github.com/IoannisPerachoritis-hub/TRACE
 """)
 
 # ============================================================
@@ -226,5 +226,5 @@ st.header("Getting Help")
 st.markdown("""
 - **Bug reports & feature requests**: [GitHub Issues](https://github.com/IoannisPerachoritis-hub/TRACE/issues)
 - **Documentation**: [README.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md)
-- **Example data**: run `bash examples/run_example.sh` — it generates a small synthetic dataset (~50 samples, ~510 SNPs) and runs the pipeline end-to-end in under 30 s. (The example VCF is also shipped as `examples/example.vcf.gz`.)
+- **Example data**: run `bash examples/run_example.sh`; it generates a small synthetic dataset (~50 samples, ~510 SNPs) and runs the pipeline end-to-end in under 30 s. (The example VCF is also shipped as `examples/example.vcf.gz`.)
 """)

@@ -63,7 +63,7 @@ def _qq_fig(vals, title):
 def _metrics_block(vals, label):
     """Render a compact normality-metrics block for a vector."""
     r = run_normality_tests(vals)
-    st.markdown(f"**{label}** — verdict: `{r['verdict']}`")
+    st.markdown(f"**{label}**, verdict: `{r['verdict']}`")
     m1, m2, m3 = st.columns(3)
     sp = r["shapiro_p"]
     m1.metric("Shapiro p", "n/a" if not np.isfinite(sp) else f"{sp:.2e}")
@@ -78,7 +78,7 @@ def _panel(vals, trait, tag):
     """One before/after column: histogram + Q-Q + metrics for a vector."""
     finite = _finite(vals)
     if finite.size < 3:
-        st.warning(f"{tag}: fewer than 3 finite values — cannot plot.")
+        st.warning(f"{tag}: fewer than 3 finite values; cannot plot.")
         return
     hist = _hist_fig(finite, f"{trait} — {tag}")
     st.plotly_chart(hist, use_container_width=True)
@@ -117,7 +117,7 @@ def render(ctx: PhenoQCContext, *, embedded=False, key_prefix="pheno_qc"):
         transformed = apply_transform(raw, method)
         transform_ok = True
     except ValueError as err:
-        st.warning(f"Transform not applicable: {err} — showing raw values instead.")
+        st.warning(f"Transform not applicable: {err}; showing raw values instead.")
         transformed = raw
         transform_ok = False
 
@@ -149,10 +149,5 @@ def render(ctx: PhenoQCContext, *, embedded=False, key_prefix="pheno_qc"):
         file_name=f"phenotype_{trait}_transformed.csv".replace(" ", "_"),
         mime="text/csv",
         key=f"dl_{key_prefix}_trait",
-    )
-    st.caption(
-        "Preview only — does not change any GWAS session data. To apply one method "
-        "to **every** trait and download the full GWAS-ready table, use *Transform "
-        "all traits* in the Normality summary section above."
     )
     return trait, method, transformed, transform_ok

@@ -106,19 +106,15 @@ def _filter_genes(genes_df, chr_sel, start_bp, end_bp):
 
 def render(ctx: LDContext, window):
     st.subheader("Regional association plot")
-    st.caption(
-        "Association (−log₁₀ p) against position around the lead SNP, coloured by r² "
-        "to the lead. A **display of the existing scan** — not fine-mapping."
-    )
 
     gwas_df = ctx.gwas_df
     if gwas_df is None or getattr(gwas_df, "empty", True):
-        st.info("Run a GWAS first — this tab reads the GWAS results in session.")
+        st.info("Run a GWAS first. This tab reads the GWAS results in session.")
         return
     if window is None:
         return  # the shared selector already explained why
     if ctx.geno_dosage_raw is None:
-        st.info("Raw genotype dosages are not in session — re-run the GWAS to enable r² colouring.")
+        st.info("Raw genotype dosages are not in session; re-run the GWAS to enable r² colouring.")
         return
 
     chroms = np.asarray(ctx.chroms).astype(str)
@@ -184,12 +180,12 @@ def render(ctx: LDContext, window):
         st.info(f"Lead SNP **{window.lead_snp}** is not inside the plotted window "
                 "(a block's seed SNP can lie outside the block it labels).")
     if is_flank:
-        st.caption("No LD block here — the shaded span is the **flanking-marker interval** "
+        st.caption("No LD block here; the shaded span is the **flanking-marker interval** "
                    "around the SNP, not an LD block.")
     elif block_interval is not None:
         _b0, _b1 = block_interval
         if _b0 < int(wdf["Pos"].min()) or _b1 > int(wdf["Pos"].max()):
-            st.caption(f"LD block Chr{window.chr}:{_b0:,}–{_b1:,} "
+            st.caption(f"LD block Chr{window.chr}:{_b0:,}-{_b1:,} "
                        f"({(_b1 - _b0) / 1000:,.0f} kb) extends beyond the plotted window; "
                        "the shaded span is clipped to the view.")
     if n_typed_r2 == 0:
@@ -210,8 +206,7 @@ def render(ctx: LDContext, window):
 
     st.caption(
         f"r² is computed from your own genotypes (not a reference panel). Threshold: "
-        f"{rule.label}. **Display of the existing scan** — no fine-mapping, credible sets, "
-        f"or candidate ranking; no p-value is changed."
+        f"{rule.label}. A display of the existing scan; no p-value is changed."
     )
 
     # --- numeric export: the numbers behind the plot (put them in a table, not a figure) ---
@@ -236,7 +231,7 @@ def render(ctx: LDContext, window):
                 key="regional_gene_labels",
                 help="Gene names on the track. Off by default in dense windows to avoid overprinting.")
             if not gene_labels:
-                st.caption(f"{n_genes} genes in window; labels hidden — see the Gene Annotation tab "
+                st.caption(f"{n_genes} genes in window; labels hidden. See the Gene Annotation tab "
                            "for the full list. Bars show position, extent and strand.")
         else:
             gene_labels = True

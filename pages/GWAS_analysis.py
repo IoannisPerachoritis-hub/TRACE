@@ -59,12 +59,6 @@ from annotation import (
 # -----------------
 # Helper functions for user-friendly display
 # -----------------
-_MANHATTAN_CAPTION = (
-    "Each point is a SNP. Points above the red dashed line are genome-wide "
-    "significant. Clusters of significant SNPs on the same chromosome suggest "
-    "a quantitative trait locus (QTL)."
-)
-
 # Column rename mapping: internal name → user-friendly display name
 _COLUMN_RENAME = {
     "Beta_MLM": "Effect (MLM)",
@@ -119,7 +113,7 @@ def _render_results_summary_card(
     elif lambda_gc < 0.9:
         lgc_badge = "Deflated"
         lgc_note = (
-            "Deflated genomic control — common for oligogenic traits "
+            "Deflated genomic control: common for oligogenic traits "
             "with large-effect loci or when LOCO kinship removes most signal."
         )
     elif lambda_gc <= 1.3:
@@ -131,8 +125,8 @@ def _render_results_summary_card(
     else:
         lgc_badge = "Notably inflated"
         lgc_note = (
-            "Substantial inflation detected. Interpret results with caution "
-            "— consider adding more PCs or checking for batch effects."
+            "Substantial inflation detected. Interpret results with caution; "
+            "consider adding more PCs or checking for batch effects."
         )
 
     if auto_pc_k is not None:
@@ -169,7 +163,7 @@ def _render_interpretation_panel():
 
 **What to do next:**
 
-1. **Check LD blocks**: Significant SNPs often cluster into LD blocks on the same chromosome — these represent the same underlying QTL.
+1. **Check LD blocks**: Significant SNPs often cluster into LD blocks on the same chromosome; these represent the same underlying QTL.
 2. **Look at candidate genes**: The gene annotation identifies genes overlapping or flanking significant LD blocks.
 3. **Cross-model consensus**: SNPs detected by multiple models (MLM + FarmCPU) are higher confidence.
 4. **Subsampling stability**: If available, SNPs with a higher discovery frequency across subsampling resamples are more robust.
@@ -254,8 +248,8 @@ def _render_last_run_results():
     if _summ.get("timestamp"):
         _bits.append(_summ["timestamp"])
     st.info(
-        "\U0001F4CB **Showing your last completed run** (restored from this session "
-        "— not recomputed): " + " · ".join(_bits) +
+        "\U0001F4CB **Showing your last completed run** (restored from this session, "
+        "not recomputed): " + " · ".join(_bits) +
         ".  Upload files and click **Run GWAS** below to run a new analysis."
     )
     for _name, _obj in _figs.items():
@@ -297,7 +291,7 @@ def _rehydrate_or_stop(msg=None, level="error"):
     """Show the persisted last-run results (if any) instead of blanking, then stop."""
     if _has_persisted_gwas():
         if msg:
-            st.warning(f"{msg}  — showing your last completed run below instead.")
+            st.warning(f"{msg}; showing your last completed run below instead.")
         _render_last_run_results()
     elif msg:
         getattr(st, level, st.error)(msg)
@@ -335,7 +329,7 @@ with st.container():
                     f"VCF file is {_vcf_size_mb:.0f} MB. Large files may cause slow "
                     "processing or memory issues. Consider pre-filtering to keep only "
                     "target chromosomes and MAF > 0.01 variants. Note: the genotype is "
-                    "kept in session memory so runs can repeat without re-uploading — "
+                    "kept in session memory so runs can repeat without re-uploading; "
                     "use **Clear session data** (right) to release it."
                 )
         phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"], key="pheno_upload")
@@ -608,11 +602,11 @@ sig_rule = st.sidebar.selectbox(
     key="sig_rule_select",
     help=(
         "**M_eff (Li & Ji)**: divides α by the *effective* number of independent "
-        "tests, so it is less stringent than Bonferroni — the reduction scales with "
+        "tests, so it is less stringent than Bonferroni; the reduction scales with "
         "how much LD is present.\n\n"
-        "**Bonferroni**: Assumes all SNPs are independent — most conservative. "
+        "**Bonferroni**: Assumes all SNPs are independent; most conservative. "
         "May miss real signals in panels with extended LD.\n\n"
-        "**FDR**: Controls the false discovery rate at 5% — least conservative. "
+        "**FDR**: Controls the false discovery rate at 5%; least conservative. "
         "Good for exploratory screening when you expect many true associations.\n\n"
         "**Custom p-value**: flag SNPs below a fixed p-value you set (e.g. 5e-8).\n\n"
         "Full guidance: **Help → Interpreting Results**."
@@ -635,7 +629,7 @@ show_secondary_threshold = st.sidebar.checkbox(
     help=(
         "When on, draws a second dotted grey line at whichever of "
         "Bonferroni or M_eff is NOT the primary rule above. Useful "
-        "for figures where a peak lies between the two thresholds — "
+        "for figures where a peak lies between the two thresholds; "
         "common for LD-aware loci that clear M_eff but not naive "
         "Bonferroni. Has no effect when the primary rule is FDR "
         "(FDR is observation-dependent and is not drawn as a single "
@@ -844,7 +838,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     )
     if len(selected_traits) > 10:
         st.warning(
-            "More than 10 traits — consider the CLI batch workflow "
+            "More than 10 traits; consider the CLI batch workflow "
             "(`cli.py`) for production runs."
         )
     if not selected_traits:
@@ -945,7 +939,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         if not _cov_ok.all():
             st.warning(
                 f"{int((~_cov_ok).sum())} of {len(_cov_ok)} analysis samples are missing "
-                "covariate values — covariates NOT applied. Provide covariates for all "
+                "covariate values; covariates NOT applied. Provide covariates for all "
                 "samples, or use the CLI --covar (which drops incomplete samples)."
             )
         else:
@@ -1282,12 +1276,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # ================================================================
 
     with st.expander("One-Click Full Analysis", expanded=False):
-        st.caption(
-            "Automatically chains: PC selection → MLM GWAS → multi-model → "
-            "LD blocks → haplotype testing → gene annotation → "
-            "LD heatmaps → (optional subsampling) → report → ZIP download."
-        )
-
         # --- Configuration panel ---
         _cfg_col1, _cfg_col2 = st.columns(2)
         with _cfg_col1:
@@ -1318,17 +1306,13 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 help=(
                     "Leave-One-Chromosome-Out kinship for the MLM scan. Uncheck "
                     "to use the whole-genome "
-                    "GRM instead — useful when LOCO over-corrects on traits "
+                    "GRM instead, useful when LOCO over-corrects on traits "
                     "with strong single-chromosome QTL. Overrides the "
                     "sidebar LOCO setting for this pipeline run only."
                 ),
             )
             # PC count is a documented fixed default per model (no auto-selection -- R1.4);
             # the run report includes eigenvalue-spectrum + conventional-criteria diagnostics.
-            st.caption(
-                "TRACE uses a fixed number of PCs per model (no λGC auto-selection). "
-                "Set the count(s) below; the run report includes the PC-selection diagnostics."
-            )
             _pipe_pc_mode = "Manual"
             _pipe_pc_strategy = None
             _pc_manual_models = ["MLM"]
@@ -1352,8 +1336,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 help=(
                     "**M_eff (Li & Ji)**: divides α by the *effective* number of "
                     "independent tests, so it is less stringent than Bonferroni.\n\n"
-                    "**Bonferroni**: Assumes all SNPs are independent — most conservative.\n\n"
-                    "**FDR**: Controls false discovery rate at 5% — least conservative, "
+                    "**Bonferroni**: Assumes all SNPs are independent; most conservative.\n\n"
+                    "**FDR**: Controls false discovery rate at 5%; least conservative, "
                     "good for exploratory screening."
                 ),
             )
@@ -1479,8 +1463,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     "Render an r² heatmap PNG for each significant LD block "
                     "and include them in the ZIP. Useful for visualising "
                     "haplotype structure but adds one PNG per block per "
-                    "trait — turn off for batch runs over many traits "
-                    "(e.g. metabolomics with hundreds–thousands of "
+                    "trait; turn off for batch runs over many traits "
+                    "(e.g. metabolomics with hundreds-thousands of "
                     "phenotypes) to keep the ZIP small."
                 ),
             )
@@ -1574,7 +1558,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         _eta_text = "estimating runtime…"
                     _trait_progress.info(
                         f"**Trait {_ft_i + 1}/{_n_total}** "
-                        f"(`{trait_col}`) — {_eta_text}"
+                        f"(`{trait_col}`), {_eta_text}"
                     )
 
                     # Reset per-trait accumulators (these live in the
@@ -1789,7 +1773,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             )
                         except Exception:
                             logging.exception("M_eff computation failed in pipeline")
-                            st.warning("M_eff computation failed — falling back to Bonferroni.")
+                            st.warning("M_eff computation failed; falling back to Bonferroni.")
                             # leave _pipe_meff = None, _pipe_meff_thresh = None
 
                     # Derive threshold variables from user's significance rule
@@ -2201,7 +2185,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             st.write(f"Gene model loading failed: {e}")
                     elif _pipe_species == "Other (upload files)":
                         st.info(
-                            "No custom gene model uploaded — gene annotation will be skipped. "
+                            "No custom gene model uploaded; gene annotation will be skipped. "
                             "Upload a gene coordinates CSV under 'Override gene files' "
                             "in the pipeline config to enable annotation."
                         )
@@ -3068,7 +3052,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     if "Beta_MLM" not in gwas_df.columns:
         st.warning(
             "FastLMM did not return SNP effect sizes (Beta_MLM). "
-            "Only OLS marginal effects (Beta_OLS) are shown — these estimate "
+            "Only OLS marginal effects (Beta_OLS) are shown; these estimate "
             "per-allele effects but do **not** account for population structure (kinship). "
             "This can happen with very small sample sizes or singular kinship matrices."
         )
@@ -3264,16 +3248,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     with st.expander("Advanced: Stability Screening", expanded=False):
 
         st.markdown("### Subsampling GWAS resampling (full MLM with GRM recomputation)")
-        st.caption(
-            "This is the gold-standard stability assessment: each iteration subsamples "
-            "individuals, recomputes the GRM, and runs a full mixed-model scan. "
-            "Per-SNP and per-LD-block discovery frequencies quantify which signals "
-            "are robust to sample perturbation.\n\n"
-            "**Note:** This is computationally expensive (~2-5 min per iteration "
-            "depending on panel size). Start with 20-30 reps for exploration.\n\n"
-            "Subsampling uses MLM (gold standard for stability). If FarmCPU is enabled, "
-            "its stability is assessed via cross-model consensus instead."
-        )
 
         run_subsampling = st.checkbox(
             "Run subsampling GWAS resampling (MLM + GRM recomputation)",
@@ -3363,7 +3337,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 if Z_grm_boot is None:
                     st.error(
                         "LD-pruned Z matrix (Z_grm) not found in session state. "
-                        "This is computed during GWAS preprocessing — "
+                        "This is computed during GWAS preprocessing; "
                         "please rerun the GWAS pipeline."
                     )
                     st.stop()
@@ -3460,9 +3434,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             with st.popover("How to read discovery frequency"):
                 st.markdown(
                     "Fraction of resamples in which a SNP stayed significant:\n"
-                    "- **> 80%** robust — detected in most resamples\n"
-                    "- **50–80%** moderately stable — mind sample-size limits\n"
-                    "- **< 50%** unstable — may be driven by a few influential samples\n\n"
+                    "- **> 80%** robust, detected in most resamples\n"
+                    "- **50-80%** moderately stable, mind sample-size limits\n"
+                    "- **< 50%** unstable, may be driven by a few influential samples\n\n"
                     "Full guidance: **Help → Interpreting Results**."
                 )
             st.dataframe(
@@ -3660,7 +3634,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             height=500,
         )
         st.plotly_chart(fig_int, use_container_width=True)
-        st.caption(_MANHATTAN_CAPTION)
         st.session_state["gwas_figures"][f"Interactive_Manhattan_MLM_{trait_col}.html"] = (
             fig_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
         )
@@ -3684,14 +3657,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
         _gc_cols = st.columns(4)
         _gc_cols[0].metric(
-            "λGC (bulk 5–95%)", f"{lambda_gc:.3f}",
+            "λGC (bulk 5-95%)", f"{lambda_gc:.3f}",
             help=(
-                "Genomic-control λ — how well population structure is accounted for. "
-                "**0.9–1.1** well-calibrated (p-values reliable); **<0.9** deflated "
-                "(common for oligogenic traits or when LOCO kinship removes confounding — "
-                "usually benign, but check known loci are still detected); **1.1–1.3** "
+                "Genomic-control λ: how well population structure is accounted for. "
+                "**0.9-1.1** well-calibrated (p-values reliable); **<0.9** deflated "
+                "(common for oligogenic traits or when LOCO kinship removes confounding, "
+                "usually benign, but check known loci are still detected); **1.1-1.3** "
                 "mildly inflated (usable); **>1.3** "
-                "notably inflated — add PCs or check batch effects. "
+                "notably inflated; add PCs or check batch effects. "
                 "Full guidance: **Help → Interpreting Results**."
             ),
         )
@@ -3738,9 +3711,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             )
             st.caption(
                 "Correlation of the phenotype with the leading genotype-PCA axes. A low value "
-                "indicates no detectable trait-structure association on the leading axes; a high "
-                "value is ambiguous (structure or genuine signal on differentiated markers) and is "
-                "not evidence that PCs are required. Report-only -- it does not set the PC count."
+                "shows no detectable trait-structure association; a high value is ambiguous and is "
+                "not evidence that PCs are required. Report-only; it does not set the PC count."
             )
 
         # --- P-value distribution (calibration diagnostic, beside the QQ plot) ---
@@ -3933,7 +3905,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 height=500,
             )
             st.plotly_chart(fig_plotly_mlmm, use_container_width=True)
-            st.caption(_MANHATTAN_CAPTION)
             st.session_state["gwas_figures"][f"Interactive_Manhattan_MLMM_{trait_col}.html"] = (
                 fig_plotly_mlmm.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
             )
@@ -4042,7 +4013,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 height=500,
             )
             st.plotly_chart(fig_plotly_fc, use_container_width=True)
-            st.caption(_MANHATTAN_CAPTION)
             st.session_state["gwas_figures"][f"Interactive_Manhattan_FarmCPU_{trait_col}.html"] = (
                 fig_plotly_fc.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
             )
@@ -4157,7 +4127,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 height=520,
             )
             st.plotly_chart(fig_overlay, use_container_width=True)
-            st.caption(_MANHATTAN_CAPTION)
             download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html", label="Download overlay Manhattan")
 
             # --- Cross-model consensus: which SNPs detected by which models? ---
