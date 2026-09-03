@@ -1263,17 +1263,19 @@ def run_farmcpu(
         ``max_pseudo_qtns``.  None (default) preserves current behaviour
         (``max_pseudo_qtns * 2``).
     step5_reml_bins : bool
-        When True, replace TRACE's fixed 3-bin candidate selection with the
-        published FarmCPU Step 5: REML-optimised ``(bin_size x top_N)`` grid
-        selection (``_step5_reml_bin_select``).  Default False = current
-        behaviour.  Opt-in pilot arm (default off).
+        When True (the shipped default), replace TRACE's fixed 3-bin candidate
+        selection with the published FarmCPU Step 5: REML-optimised
+        ``(bin_size x top_N)`` grid selection (``_step5_reml_bin_select``).
+        Because this is on by default, ``p_threshold`` and ``max_pseudo_qtns``
+        are NOT consulted unless it is disabled: the acceptance bound comes from
+        ``_step5_accept_bound(n)`` and Step 5 selection is gate-free.
     step5_bin_sizes, step5_topn_grid : tuples
         The Step 5 grid (bin sizes in bp; top_N = number of bin representatives
         kept as pseudo-QTNs).  Only used when ``step5_reml_bins``.
     pqtn_bound : int or None
         Per-iteration acceptance bound on the validated pseudo-QTN set.  None =
         current ``max_pseudo_qtns``; under ``step5_reml_bins`` None defaults to
-        the published ``round(n / log10(n))``.
+        the published ``round(sqrt(n / log10(n)))`` (``_step5_accept_bound``).
     candidate_p_gate : float or None
         Overrides ``p_threshold`` for the (non-step5) bin candidate gate.  None =
         current behaviour.  Step 5 selection is gate-free by construction.
