@@ -150,8 +150,19 @@ def render(ctx: LDContext, get_r2_cached, window):
         for spine in ax.spines.values():
             spine.set_visible(False)
 
+        # Mark the lead SNP: a star at its row/column apex on the (masked) diagonal.
+        # Tolerate the lead being absent from the plotted set (seed-not-member, or
+        # dropped by the MAF / monomorphic filters) -- never index [0] unguarded.
+        _lead_hit = np.where(np.asarray(region_sids).astype(str) == str(lead_snp))[0]
+        if _lead_hit.size:
+            _li = int(_lead_hit[0])
+            ax.scatter(_li + 0.5, _li + 0.5, marker="*", s=220, color="#F0E442",
+                       edgecolor="#333333", linewidth=0.6, zorder=6, clip_on=False)
+
         plt.tight_layout()
-        st.caption("LD computed from imputed dosages; haplotype labels use hard-called genotypes.")
+        _star_note = (f" The gold star marks the lead SNP ({lead_snp})." if _lead_hit.size
+                      else f" (Lead SNP {lead_snp} is not shown -- outside the window or filtered by QC.)")
+        st.caption("LD computed from imputed dosages; haplotype labels use hard-called genotypes." + _star_note)
 
         # Byte-cache the savefig output keyed on what affects the rendered image.
         local_cache_key = (

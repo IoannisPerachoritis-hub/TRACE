@@ -14,7 +14,6 @@ from gwas.ld import (
 from gwas.utils import canonicalize_chr, align_pheno_to_geno, resolve_trait_column, check_data_version
 from gwas.haplotype import mlg_labels_for_block
 from pages._ld_tabs import LDContext
-from pages._ld_tabs import tab_block_heatmaps
 from pages._ld_tabs import tab_local_ld
 from pages._ld_tabs import tab_gene_annotation
 from pages._ld_tabs import tab_decay
@@ -635,24 +634,51 @@ def ld_analysis_page():
     # tab bar and BEFORE filter_contained_blocks (mega_* feed it).
     # --------------------------------------------------------
     _n_total_raw = len(haplo_df_auto) if isinstance(haplo_df_auto, pd.DataFrame) else 0
-    with st.expander(_mega_filter_label(), expanded=False):
-        _mc1, _mc2, _mc3 = st.columns([1.3, 1, 1])
-        mega_mode = _mc1.radio(
-            "Mega-block handling", ["Remove", "Flag only"], index=0,
-            key="mega_block_mode", horizontal=True,
+    # Show the mega-block filter control ONLY when there is something to filter.
+    # Detection is by NESTING (min_contained + size_ratio), not size, so it is rare
+    # (0 on a disjoint block set) but not structurally impossible -- so the control
+    # stays available when nesting occurs. A non-destructive "flag" pass on a copy
+    # decides visibility at the current thresholds; the real filter call below is
+    # unchanged. (If a user tunes the thresholds up until 0 are detected, the control
+    # hides -- an accepted expert-only corner; the filter is then a no-op anyway.)
+    _mega_min_pre = int(st.session_state.get("mega_min_contained", 2))
+    _mega_ratio_pre = float(st.session_state.get("mega_size_ratio", 3.0))
+    _n_mega_detected = 0
+    if isinstance(haplo_df_auto, pd.DataFrame) and not haplo_df_auto.empty:
+        _flagged_pre, _ = filter_contained_blocks(
+            haplo_df_auto.copy(), min_contained=_mega_min_pre,
+            size_ratio_threshold=_mega_ratio_pre, mode="flag",
         )
-        mega_min = _mc2.number_input(
-            "Min contained blocks", min_value=1, max_value=10, value=2,
-            key="mega_min_contained",
-        )
-        mega_ratio = _mc3.number_input(
-            "Size ratio threshold", min_value=1.5, max_value=20.0, value=3.0, step=0.5,
-            key="mega_size_ratio",
-        )
+        _n_mega_detected = (int(_flagged_pre["is_mega_block"].sum())
+                            if "is_mega_block" in _flagged_pre.columns else 0)
+
+    if _n_mega_detected > 0:
+        with st.expander(_mega_filter_label(), expanded=False):
+            _mc1, _mc2, _mc3 = st.columns([1.3, 1, 1])
+            mega_mode = _mc1.radio(
+                "Mega-block handling", ["Remove", "Flag only"], index=0,
+                key="mega_block_mode", horizontal=True,
+            )
+            mega_min = _mc2.number_input(
+                "Min contained blocks", min_value=1, max_value=10, value=2,
+                key="mega_min_contained",
+            )
+            mega_ratio = _mc3.number_input(
+                "Size ratio threshold", min_value=1.5, max_value=20.0, value=3.0, step=0.5,
+                key="mega_size_ratio",
+            )
+            st.caption(
+                "Removing mega-blocks changes the block set **every tab uses** — the Regional Plot's "
+                "shaded span, the annotated gene set, and significant-SNP block membership all follow this filter."
+            )
+    else:
         st.caption(
-            "Removing mega-blocks changes the block set **every tab uses** — the Regional Plot's "
-            "shaded span, the annotated gene set, and significant-SNP block membership all follow this filter."
+            "Block table filter: no mega-blocks (nested-block artefacts) detected — "
+            "nothing removed from the block set."
         )
+        mega_mode = st.session_state.get("mega_block_mode", "Remove")
+        mega_min = _mega_min_pre
+        mega_ratio = _mega_ratio_pre
 
     if isinstance(haplo_df_auto, pd.DataFrame) and not haplo_df_auto.empty:
         haplo_df_auto, n_removed = filter_contained_blocks(
@@ -744,11 +770,6 @@ def ld_analysis_page():
 
     with tab1:
         tab_local_ld.render(_ld_ctx, get_r2_cached, _ld_window)
-        # Block Heatmaps is superseded by the region selector's "Detected block"
-        # mode (rendered in this Local LD tab). Kept behind a legacy expander here
-        # for continuity; to be retired in a later release (D-36).
-        with st.expander("Legacy views — per-block LD heatmap", expanded=False):
-            tab_block_heatmaps.render(_ld_ctx, get_r2_cached)
 
     with tab_genes:
         tab_gene_annotation.render(_ld_ctx)
