@@ -594,20 +594,8 @@ if "FarmCPU (multi-locus)" in model_choices:
             "Max FarmCPU iterations", 5, 50, 10,
             help="Stop after this many scan / pseudo-QTN-selection cycles.",
         )
-        farmcpu_p_threshold = st.sidebar.number_input(
-            "P-threshold for pseudo-QTN selection",
-            min_value=1e-12, max_value=0.05, value=1e-2,
-            step=1e-1, format="%.1e",
-            help="SNPs with p < threshold are candidates for pseudo-QTNs.",
-        )
-        farmcpu_max_pqtn = st.sidebar.number_input(
-            "Max pseudo-QTNs", min_value=5, max_value=50, value=15, step=5,
-            help="Cap on pseudo-QTN count.",
-        )
     else:
         farmcpu_max_iter = 10
-        farmcpu_p_threshold = 1e-2
-        farmcpu_max_pqtn = 15
     farmcpu_final_scan = "ols"  # D-103: FarmCPU MLM final scan frozen out (published OLS end-to-end)
 
 # --- Significance rule ---
@@ -1511,17 +1499,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 )
             with _adv2:
                 st.caption("FarmCPU")
-                _pipe_fc_p = st.number_input(
-                    "P-threshold", min_value=1e-12, max_value=0.05,
-                    value=1e-2, format="%.1e", key="pipe_fc_p",
-                )
                 _pipe_fc_max_iter = st.number_input(
                     "Max iterations", min_value=5, max_value=50,
                     value=10, step=5, key="pipe_fc_max_iter",
-                )
-                _pipe_fc_max_pqtn = st.number_input(
-                    "Max pseudo-QTNs", min_value=5, max_value=50,
-                    value=15, step=5, key="pipe_fc_max_pqtn",
                 )
                 _pipe_fc_final_scan = "ols"  # D-103: FarmCPU MLM final scan frozen out (published OLS end-to-end)
             if _pipe_run_subsampling:
@@ -2027,8 +2007,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                 pheno_reader=PhenoData(iid=iid, val=y),
                                 K0=K0,
                                 covar_reader=CovarData(iid=iid, val=_fc_pcs) if _fc_pcs is not None else None,
-                                p_threshold=_pipe_fc_p, max_iterations=_pipe_fc_max_iter,
-                                max_pseudo_qtns=_pipe_fc_max_pqtn,
+                                max_iterations=_pipe_fc_max_iter,
                                 final_scan=_pipe_fc_final_scan,
                                 use_loco=_pipe_use_loco,
                             )
@@ -3993,9 +3972,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             K0_key=K0_key,
             pheno_reader_key=pheno_reader_key,
             covar_reader_key=covar_reader_farmcpu_key,
-            p_threshold=farmcpu_p_threshold,
             max_iterations=farmcpu_max_iter,
-            max_pseudo_qtns=farmcpu_max_pqtn,
             final_scan=farmcpu_final_scan,
             use_loco=use_loco,
         )
