@@ -2943,13 +2943,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # ================================================================
 
     with st.expander("PC-selection diagnostics", expanded=False):
-        st.caption(
-            "TRACE uses a fixed number of PCs (the --n-pcs default / per-model "
-            "overrides) and does NOT auto-select. These diagnostics report the "
-            "genotype-PCA eigenvalue spectrum and what conventional criteria "
-            "(Kaiser, Marchenko-Pastur edge, cumulative variance, broken-stick) "
-            "would imply -- informational only. No value here changes the PC count."
-        )
         _Zdiag = st.session_state.get("Z_grm")
         if _Zdiag is None:
             st.info("Prepare/run the GWAS first to compute the PC spectrum.")
@@ -2962,26 +2955,54 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     spectrum_depth=20,
                 )
                 _mt = _diag["meta"]
-                st.caption(
-                    f"n = {_mt['n_samples']}, pruned markers m = {_mt['m_markers_pruned']}, "
-                    f"trace/m = {_mt['trace_over_m']} (Kaiser and MP use correlation-normalised "
-                    "eigenvalues; cumulative-variance and broken-stick are proportion-based)."
-                )
-                st.markdown("**Eigenvalue spectrum** (top 20)")
-                st.dataframe(_diag["spectrum"], use_container_width=True, hide_index=True)
-                st.markdown(
-                    "**Conventional criteria** -- the k each rule implies "
-                    "(informational; TRACE uses --n-pcs, never these)"
-                )
-                st.dataframe(_diag["criteria"], use_container_width=True, hide_index=True)
-                import plotly.graph_objects as go
                 _sp = _diag["spectrum"]
+                # Plot first: variance explained per PC (%) + cumulative on a secondary axis --
+                # what a user reads to choose a count (raw eigenvalues are scale-dependent; hidden below).
+                import plotly.graph_objects as go
                 _figd = go.Figure()
-                _figd.add_trace(go.Scatter(x=_sp["rank"], y=_sp["eigenvalue"],
-                                           mode="lines+markers", name="eigenvalue"))
-                _figd.update_layout(xaxis_title="PC rank", yaxis_title="eigenvalue",
-                                    height=300, margin=dict(t=30, b=30))
+                _figd.add_trace(go.Bar(x=_sp["rank"], y=_sp["pct_of_trace"],
+                                       name="variance explained"))
+                _figd.add_trace(go.Scatter(x=_sp["rank"], y=_sp["cumulative_pct"],
+                                           mode="lines+markers", name="cumulative", yaxis="y2"))
+                _figd.update_layout(
+                    xaxis=dict(title="PC"),
+                    yaxis=dict(title="variance explained (%)"),
+                    yaxis2=dict(title="cumulative (%)", overlaying="y", side="right"),
+                    height=280, margin=dict(t=30, b=30),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                )
                 st.plotly_chart(_figd, use_container_width=True)
+                # Spectrum table: 10 rows, plain names, % variance + cumulative share.
+                _disp = _sp.head(10)[["rank", "pct_of_trace", "cumulative_pct"]].copy()
+                _disp.columns = ["PC", "Variance explained", "Cumulative"]
+                _disp["Variance explained"] = _disp["Variance explained"].map(lambda v: f"{v:.1f}%")
+                _disp["Cumulative"] = _disp["Cumulative"].map(lambda v: f"{v:.1f}%")
+                st.dataframe(_disp, use_container_width=True, hide_index=True)
+                # Technical metadata (collapsed; a nested st.expander is disallowed, so use a popover).
+                with st.popover("Method details"):
+                    _pp = _mt.get("ld_prune_params", {})
+                    st.caption(
+                        f"n samples = {_mt['n_samples']}, pruned markers m = "
+                        f"{_mt['m_markers_pruned']}, trace/m = {_mt['trace_over_m']}."
+                    )
+                    if _pp:
+                        st.caption(
+                            f"LD pruning: r2 = {_pp.get('r2')}, window = {_pp.get('window_bp')} bp, "
+                            f"step = {_pp.get('step_bp')} bp."
+                        )
+                    if _mt.get("normalisation"):
+                        st.caption(_mt["normalisation"])
+                    try:
+                        _tw = _diag["criteria"].set_index("criterion").loc["Tracy-Widom", "note"]
+                        st.caption(f"Tracy-Widom: {_tw}")
+                    except Exception:
+                        pass
+                    _pa = _mt.get("parallel_analysis")
+                    if _pa:
+                        st.caption(
+                            f"Parallel analysis: B = {_pa.get('B')}, seed = {_pa.get('seed')}, "
+                            f"quantile = {_pa.get('quantile')}."
+                        )
             except Exception as _diag_err:
                 st.warning(f"PC diagnostics unavailable: {_diag_err}")
 
