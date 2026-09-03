@@ -558,6 +558,7 @@ def find_ld_blocks_graph(
     region_sids: np.ndarray | None = None,
     ld_merge_mode: str = "iou",
     ld_merge_r2: float = 0.5,
+    seed_sid: str | None = None,
     _discard_out=None,
 ):
     """
@@ -604,6 +605,92 @@ def find_ld_blocks_graph(
                 # allow edge; coherence enforced later during refinement
                 adj[i].append(j)
                 adj[j].append(i)
+
+    # ------------------------------------------------------------------ #
+    # Seed-following path (production; seed_sid given): emit EXACTLY the
+    # one block containing the seed. Every emitted block therefore contains
+    # a significant/top-N marker and its lead is always a member.
+    #   Stage 1 (contiguity) and Stage 2 (coherence, Gate A) both follow the
+    #   seed: descend only into the seed's side of a split, and when the
+    #   seed's side would fall below min_snps, STOP and keep the current
+    #   (seed-containing, >= min_snps) segment WHOLE -- never annihilated
+    #   (P3b). The coherence split is unconditional (governed by ld_merge_r2,
+    #   P3a). A seed whose connected component is < min_snps has no LD block
+    #   (an isolated significant SNP -> handled by the isolated-rescue layer).
+    # ------------------------------------------------------------------ #
+    if seed_sid is not None:
+        if region_sids is None:
+            return []
+        _hit = np.where(region_sids == str(seed_sid))[0]
+        if not _hit.size:
+            return []                     # seed absent from its own window
+        seed_i = int(_hit[0])
+
+        seen = np.zeros(n, dtype=bool)
+        stack = [seed_i]
+        comp = []
+        while stack:
+            k = stack.pop()
+            if seen[k]:
+                continue
+            seen[k] = True
+            comp.append(k)
+            for nb in adj[k]:
+                if not seen[nb]:
+                    stack.append(nb)
+        comp = np.array(sorted(comp), dtype=int)    # position-sorted
+        if comp.size < min_snps:
+            return []                     # isolated seed -> no LD block
+
+        def _seed_following_refine(comp_idx):
+            comp_idx = np.asarray(comp_idx, dtype=int)   # position-sorted, contains seed_i, >= min_snps
+            # Stage 1: contiguity, seed-following (min_len=1 -> no run dropped here).
+            sub_r2 = r2[np.ix_(comp_idx, comp_idx)]
+            adj_thr = _adaptive_adj_threshold(sub_r2, base=float(adj_r2_min), frac=0.5)
+            segs, seg_order = contiguous_segments_by_adjacent(
+                region_pos=region_pos[comp_idx], r2=sub_r2,
+                adj_r2_min=adj_thr, gap_factor=float(gap_factor), min_len=1)
+            seed_run = None
+            for seg_local in segs:
+                g = comp_idx[seg_order[seg_local]]
+                if seed_i in set(int(x) for x in g):
+                    seed_run = g
+                    break
+            if seed_run is not None and seed_run.size >= min_snps:
+                start_seg = seed_run
+            else:
+                # the seed's contiguous run is < min_snps: keep the whole component
+                # (spanning the break) rather than annihilate the seed's block.
+                start_seg = comp_idx
+
+            # Stage 2: coherence (Gate A), seed-following.
+            def _coh(seg):
+                if seg.size < min_snps:
+                    return seg
+                s = r2[np.ix_(seg, seg)]
+                v = s[np.triu_indices_from(s, k=1)]
+                m = float(np.nanmean(v)) if (v.size and np.any(np.isfinite(v))) else np.nan
+                if (not np.isfinite(m)) or m >= ld_merge_r2:
+                    return seg                            # coherent (or unmeasurable)
+                _adj = np.array([r2[seg[j], seg[j + 1]] for j in range(seg.size - 1)])
+                _k = int(np.argmin(np.where(np.isfinite(_adj), _adj, -np.inf)))
+                left, right = seg[:_k + 1], seg[_k + 1:]
+                seed_half = left if seed_i in set(int(x) for x in left) else right
+                if seed_half.size >= min_snps:
+                    return _coh(seed_half)
+                return seg                                # splitting drops seed below min_snps -> keep whole
+
+            return _coh(start_seg)
+
+        final_seg = _seed_following_refine(comp)
+        _dropped = int(comp.size - final_seg.size)
+        if _dropped > 0 and _discard_out is not None:
+            _discard_out.append(_dropped)
+        _sub = r2[np.ix_(final_seg, final_seg)]
+        _vals = _sub[np.triu_indices_from(_sub, k=1)]
+        _mean_r2 = float(np.nanmean(_vals)) if (_vals.size and np.any(np.isfinite(_vals))) else np.nan
+        return [(int(region_pos[final_seg].min()), int(region_pos[final_seg].max()),
+                 int(final_seg.size), _mean_r2, region_sids[final_seg].tolist())]
 
     visited = np.zeros(n, dtype=bool)
     blocks = []
@@ -843,13 +930,16 @@ def _occupancy_select(df, chroms, positions, pval_by_snp, pos_by_snp):
                 n_discarded += 1
                 continue
             claimed[span_idx] = True
-            accepted.append({k: r[k] for k in
-                             ("Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs")})
+            # P5: carry merge_r2 from the correlation-merge pass through occupancy
+            # (occupancy resolves residual overlap; it must not erase the seam value).
+            accepted.append({k: r.get(k, np.nan) for k in
+                             ("Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs", "merge_r2")})
     out = pd.DataFrame(accepted,
-                       columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs"])
+                       columns=["Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs", "merge_r2"])
     if not out.empty:
         out = out.sort_values(["Chr", "Start (bp)"]).reset_index(drop=True)
-    out["merge_r2"] = np.nan
+    if "merge_r2" not in out.columns:      # write NaN only where absent
+        out["merge_r2"] = np.nan
     return out, n_discarded
 
 
@@ -870,7 +960,6 @@ def find_ld_clusters_genomewide(
     min_pair_n: int = 20,
     merge_iou=0.3,
     gap_factor: float = 10.0,
-    ld_merge_mode: str = "occupancy",
     ld_merge_r2: float = 0.5
 ):
 
@@ -955,9 +1044,13 @@ def find_ld_clusters_genomewide(
         if region_geno.shape[1] < 2:
             continue
 
-        # Remove monomorphic
+        # Remove monomorphic (P1: never drop the seed itself; if the seed IS
+        # monomorphic in its own window, skip the window and log -- do not fail).
         snp_var = np.nanvar(region_geno, axis=0)
         keep = snp_var > 0
+        if not (region_sids[keep].astype(str) == snp_id).any():
+            log.info("LD-block: seed %s is monomorphic in its own window; skipping.", snp_id)
+            continue
         region_geno = region_geno[:, keep]
         region_pos  = region_pos[keep]
         region_sids = region_sids[keep]
@@ -987,6 +1080,12 @@ def find_ld_clusters_genomewide(
                 MAX_REGION_SNPS,
                 dtype=int
             )
+
+            # P1: guarantee the seed survives the decimation (its index need not
+            # land on the linspace grid).
+            _sh = np.where(region_sids.astype(str) == snp_id)[0]
+            if _sh.size:
+                idx = np.union1d(idx, _sh)
 
             # Always re-sort after subsetting
             region_geno = region_geno[:, idx]
@@ -1043,8 +1142,8 @@ def find_ld_clusters_genomewide(
             adj_r2_min=float(adj_r2_min),
             gap_factor=float(gap_factor),
             region_sids=region_sids,
-            ld_merge_mode=ld_merge_mode,
             ld_merge_r2=ld_merge_r2,
+            seed_sid=snp_id,            # P2: emit only the seed's component
             _discard_out=_discards,
         )
 
@@ -1052,11 +1151,11 @@ def find_ld_clusters_genomewide(
             all_blocks.append([chr_sel, start_bp, end_bp, snp_id,
                                ",".join(member_ids) if member_ids else ""])
 
-    if ld_merge_mode == "correlation" and _discards:
+    if _discards:
         log.info(
-            "LD-merge correlation dropped %d fragment(s) below min_snps=%d -- "
-            "regions below the r2=%.2f coherence threshold are not reported.",
-            len(_discards), min_snps, ld_merge_r2)
+            "LD-block seed-following refinement trimmed non-seed markers in %d "
+            "window(s) (below the r2=%.2f coherence threshold or across a physical gap).",
+            len(_discards), ld_merge_r2)
     if not all_blocks:
         _empty = pd.DataFrame(columns=["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs", "Mean r2", "merge_r2"])
         _empty.attrs["n_fragments_discarded"] = int(len(_discards))
@@ -1074,19 +1173,22 @@ def find_ld_clusters_genomewide(
     _pos_by_snp = dict(zip(gwas_df["SNP"].astype(str),
                            pd.to_numeric(gwas_df["Pos"], errors="coerce")))
 
-    if ld_merge_mode == "occupancy":
-        # Greedy occupancy selection -> disjoint blocks (D-109, the default).
-        out, _n_occ_discarded = _occupancy_select(
-            df, chroms, positions, _pval_by_snp, _pos_by_snp)
-        if _n_occ_discarded:
-            log.info("LD-block occupancy discarded %d overlapping candidate(s) "
-                     "(a marker was already claimed by a stronger block).",
-                     _n_occ_discarded)
-    else:
-        # Overlapping-window IoU merge (reachable via --ld-merge-mode iou/correlation).
-        out = _iou_merge_blocks(df, chroms, positions, sid, geno_imputed,
-                                min_pair_n, merge_iou, ld_merge_mode, ld_merge_r2)
-        _n_occ_discarded = 0
+    # Correlation-only merge, then occupancy as the final disjointness pass (redesign).
+    #   (1) fuse two overlapping candidates ONLY if BOTH the cross-block seam AND the
+    #       prospective-union mean r2 reach ld_merge_r2 (Gate B, always applied);
+    #   (2) occupancy resolves any residual overlap -> keep the block whose best
+    #       member is most significant, discard the weaker (disjoint output).
+    # ld_merge_mode is no longer a selectable production mode; iou (overlap-only,
+    # no r2 test) survives only as _iou_merge_blocks for the before/after comparison.
+    merged = _iou_merge_blocks(df, chroms, positions, sid, geno_imputed,
+                               min_pair_n, merge_iou=merge_iou,
+                               ld_merge_mode="correlation", ld_merge_r2=ld_merge_r2)
+    out, _n_occ_discarded = _occupancy_select(
+        merged, chroms, positions, _pval_by_snp, _pos_by_snp)
+    if _n_occ_discarded:
+        log.info("LD-block occupancy discarded %d overlapping candidate(s) after the "
+                 "correlation merge (a marker was already claimed by a stronger block).",
+                 _n_occ_discarded)
     # Surface each block's within-block coherence over its FINAL (post-merge)
     # members. Byte-identical to compute_block_ld_quality's ldq_r2_mean (pinned by
     # test); the per-segment mean_r2 the merge discards is NOT reused, because a

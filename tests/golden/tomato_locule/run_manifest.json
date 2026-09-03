@@ -1,7 +1,7 @@
 {
   "n_samples": 164,
   "n_snps": 43749,
-  "flank_kb": 144.0,
+  "flank_kb": 144,
   "ld_decay_kb": 72.17,
   "ld_threshold": 0.6,
   "adj_r2_min": 0.2,
@@ -10,7 +10,6 @@
   "sig_thresh": 1e-05,
   "gap_factor": 10.0,
   "merge_iou": 0.3,
-  "ld_merge_mode": "occupancy",
   "min_contained": 2,
   "n_perm": 1000,
   "min_hap_count": 5,
@@ -18,12 +17,12 @@
   "n_significant_meff": 43,
   "n_significant_bonf": 11,
   "meff_value": 249.0,
-  "gwas_csv": "benchmarks\\qc_data\\tomato_locule_number\\platform_GWAS_locule_number.csv",
+  "gwas_csv": "C:\\Users\\User\\Antigravity\\Projects\\Solanaceae-gwas\\benchmarks\\qc_data\\tomato_locule_number\\platform_GWAS_locule_number.csv",
   "gwas_csv_sha256": "30ebef290bb667771938b55dee6d2cbd1918d6e65695e29b09e632f8f096065b",
-  "genes_csv": "data\\Sol_genes_SL3.csv",
+  "genes_csv": "C:\\Users\\User\\Antigravity\\Projects\\Solanaceae-gwas\\data\\Sol_genes_SL3.csv",
   "descriptions_csv": null,
   "trait_col": "locule_number",
-  "n_blocks": 4,
+  "n_blocks": 3,
   "haplotype_missing_columns": [],
   "annotated_missing_columns": []
 }

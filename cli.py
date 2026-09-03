@@ -148,17 +148,13 @@ def _build_parser():
                          help="Suggestive-mode FLOOR: always also seed the top-N "
                               "SNPs by p-value, even when fewer than N pass "
                               "--ld-seed-p (default: 10; 0 disables the floor).")
-    ld_grp.add_argument("--ld-merge-mode", default="occupancy",
-                         choices=["occupancy", "iou", "correlation"],
-                         help="LD-block merge criterion. 'occupancy' (default) makes "
-                              "blocks disjoint by greedy occupancy selection -- accept "
-                              "the strongest-seeded candidate, claim its whole span, "
-                              "discard overlapping candidates -- so no marker is tested "
-                              "in more than one block; 'iou' fuses overlapping blocks by "
-                              "interval overlap; 'correlation' adds a cross-block seam + "
-                              "merged-block mean-r^2 requirement (--ld-merge-r2) to iou.")
     ld_grp.add_argument("--ld-merge-r2", type=float, default=0.5,
-                         help="Mean-r^2 threshold for --ld-merge-mode correlation "
+                         help="Within-block coherence threshold (mean off-diagonal "
+                              "r^2). Governs BOTH the seed-following within-block "
+                              "coherence split and the cross-block merge test: a block "
+                              "is split (following its seed) until its members reach "
+                              "this mean r^2, and two overlapping blocks fuse only when "
+                              "their cross-seam AND union mean r^2 both reach it "
                               "(default: 0.5).")
     ld_grp.add_argument("--hap-perms", type=int, default=1000,
                          help="Haplotype permutations (default: 1000)")
@@ -1003,7 +999,7 @@ def run_pipeline(args):
                 ld_threshold=args.ld_r2, flank_kb=ld_flank_kb,
                 ld_decay_kb=ld_decay_kb, min_snps=3,
                 top_n=_ld_seed_top_n, sig_thresh=_ld_seed_thresh,
-                ld_merge_mode=args.ld_merge_mode, ld_merge_r2=args.ld_merge_r2,
+                ld_merge_r2=args.ld_merge_r2,
             )
             m_ld_blocks, _ = ld.filter_contained_blocks(m_ld_blocks, min_contained=2)
         except Exception as e:
@@ -1478,7 +1474,6 @@ def run_pipeline(args):
         "LD_r2 (--ld-r2)": args.ld_r2,
         "LD_seed_p (effective)": _ld_seed_thresh,
         "LD_top_n (effective)": _ld_seed_top_n,
-        "LD_merge_mode (--ld-merge-mode)": args.ld_merge_mode,
         "LD_merge_r2 (--ld-merge-r2)": args.ld_merge_r2,
         "LD_merge_iou": _md_lddef.get("merge_iou"),
         "LD_adj_r2_min": _md_lddef.get("adj_r2_min"),

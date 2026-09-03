@@ -2247,10 +2247,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     min_snps=3,
                                     top_n=_pipe_ld_top_n if _ld_suggestive else 0,
                                     sig_thresh=_pipe_ld_sig_p if _ld_suggestive else _pipe_sig_thresh,
-                                    # Name the merge mode explicitly: find_ld_clusters_genomewide
-                                    # defaults to "occupancy" but the sibling find_ld_blocks_graph
-                                    # defaults to "iou" -- passing it guards against a silent flip.
-                                    ld_merge_mode="occupancy",
                                 )
                                 _n_before_filter = len(_m_ld_blocks)
                                 _m_ld_blocks, _ = ld.filter_contained_blocks(
@@ -2763,7 +2759,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         "LD_r2 (--ld-r2)": _pipe_ld_r2,
                         "LD_seed_p (effective)": (_pipe_ld_sig_p if _pp_sugg_meta else _pipe_sig_thresh),
                         "LD_top_n (effective)": (_pipe_ld_top_n if _pp_sugg_meta else 0),
-                        "LD_merge_mode (--ld-merge-mode)": "occupancy",
                         "LD_merge_r2 (--ld-merge-r2)": _pp_lddef.get("ld_merge_r2"),
                         "LD_merge_iou": _pp_lddef.get("merge_iou"),
                         "LD_adj_r2_min": _pp_lddef.get("adj_r2_min"),

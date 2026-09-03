@@ -3,9 +3,9 @@
   "tier": "A",
   "generator_seed": 20260423,
   "input_sha256": "60a3647e880cf9e7350b73b7c111761ddd019897785ad896802eea2d8f5fc7a3",
-  "trace_commit": "375d80b2c5286a131b9b43c0267921b990782346",
-  "generated_utc": "2026-08-10T09:45:49Z",
-  "reason": "One connected component split into two segments by a physical gap exceeding gap_factor x median gap (contiguous_segments_by_adjacent).",
+  "trace_commit": "e9a3fffcf8e61a5e41b25c92061085835de75fe9",
+  "generated_utc": "2026-09-03T14:09:29Z",
+  "reason": "LD-block detection redesign: emit only the seed's connected component (every block contains its lead), mandatory seed-following within-block coherence split, correlation-only merge then occupancy. TYPE (c).",
   "params": {
     "ld_threshold": 0.6,
     "flank_kb": 300,
