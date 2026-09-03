@@ -117,7 +117,6 @@ def capture_golden(
     sig_thresh: float = 1e-5,
     gap_factor: float = 10.0,
     merge_iou: float = 0.3,
-    ld_merge_mode: str = "occupancy",
     min_contained: int = 2,
     n_perm: int = 1000,
     min_hap_count: int = 5,
@@ -140,7 +139,6 @@ def capture_golden(
         ld_threshold=ld_threshold, flank_kb=flank_kb, ld_decay_kb=ld_decay_kb,
         min_snps=min_snps, top_n=top_n, sig_thresh=sig_thresh,
         adj_r2_min=adj_r2_min, merge_iou=merge_iou, gap_factor=gap_factor,
-        ld_merge_mode=ld_merge_mode,
     )
     ld_blocks, _ = ld.filter_contained_blocks(ld_blocks, min_contained=min_contained)
     written = {}
@@ -196,7 +194,6 @@ def capture_golden(
         "flank_kb": flank_kb, "ld_decay_kb": ld_decay_kb, "ld_threshold": ld_threshold,
         "adj_r2_min": adj_r2_min, "min_snps": min_snps, "top_n": top_n,
         "sig_thresh": sig_thresh, "gap_factor": gap_factor, "merge_iou": merge_iou,
-        "ld_merge_mode": ld_merge_mode,
         "min_contained": min_contained, "n_perm": n_perm,
         "min_hap_count": min_hap_count, "min_group_size": min_group_size,
         "n_significant_meff": n_sig_meff, "n_significant_bonf": n_sig_bonf,

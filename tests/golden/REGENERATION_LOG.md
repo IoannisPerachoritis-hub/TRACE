@@ -50,3 +50,23 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   (platform_GWAS sha256 30ebef29... == the manifest), reproduces these fixtures EXACTLY (ld_blocks 4x6, haplotype 4x17,
   annotated 4x14, rebuilt manifest 164/43749/11/4/meff249). test_golden_lock recomputes the digest to f2733277...
 
+
+## 2026-09-03 -- LD-block detection redesign (seed-component scope + mandatory coherence + correlation-only merge). TYPE (c)
+- reason: three defects in `gwas/ld.py` block detection were fixed together (work order v2). (1) Blocks emitted every
+  connected component in a seed's window stamped with the seed as "Lead SNP" even when the seed was not a member;
+  (2) within-block coherence was not required by default; (3) the merge fused overlapping candidates on interval
+  overlap with no r2 test. Redesign: emit ONLY the seed's connected component (every block now contains its lead),
+  split each block toward within-block coherence FOLLOWING the seed and never annihilating it, then merge overlapping
+  candidates by correlation (cross-seam AND union mean r2 both >= --ld-merge-r2) and resolve residual overlap by
+  occupancy. `--ld-merge-mode` removed; `--ld-merge-r2` now governs both the within-block split and the merge test.
+- before/after (tomato_locule): 4 blocks -> 3. Blocks 1 and 2 byte-identical; block 3 extends to absorb the marker
+  47,616,243 (eta2 0.3626 -> 0.3729, stays significant); the pre-redesign block 4 (non-member lead 47,616,243,
+  eta2 0.0098, P_perm 0.2198 = non-significant) is removed. All acceptance STOP conditions PASS (no P_perm crossing,
+  no block loses its lead from members, zero overlaps after the merge); meff/n_significant unchanged.
+- files regenerated: tomato_locule/{ld_blocks,haplotype_blocks,annotated_blocks}.csv + run_manifest.json;
+  varitome_locule/{expected_blocks.csv,meta.json}; blocks_two_separated (2->1) and blocks_gap_split (2->1); the other
+  four Tier-A cases are byte-identical. GOLDEN_LOCK f2733277... -> c768db78...
+- provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (Solanaceae-gwas) from the corrected
+  164x43749 QC and copied byte-identical here. TRACE-release cannot regenerate them locally (its on-disk QC is the
+  stale pre-R2.2 165-sample checkpoint), so the real-data @golden/@manuscript tests skip on a clean clone and fail
+  locally only when the stale QC is present -- the same situation recorded for the R2.2 sync. No push (freeze).

@@ -1,8 +1,14 @@
-"""Correlation-based LD-block merge criterion (--ld-merge-mode correlation).
+"""LD-block detection redesign — the single production path.
 
-The default (iou) path is byte-identical (covered by the golden suite); these
-tests cover the opt-in correlation path: the `merge_coherence` numerics, the new
-`merge_r2` column, and the emitted-block invariant `Mean r2 >= ld_merge_r2`.
+There is no longer a selectable ``--ld-merge-mode``: detection always emits ONLY
+the seed's connected component (so every block contains its lead), splits each
+block toward within-block coherence following the seed (never annihilating it),
+then merges overlapping candidates by correlation (cross-seam AND union mean r²
+both >= ``ld_merge_r2``) and resolves any residual overlap by occupancy (disjoint
+output). These tests cover the ``merge_coherence`` numerics that back the merge,
+the ``merge_r2`` column, and the redesign invariants (lead-in-member, coherence,
+disjointness). ``_iou_merge_blocks`` remains callable in-tree for the before/after
+comparison but is no longer a selectable production mode.
 """
 import numpy as np
 import pandas as pd
@@ -12,7 +18,7 @@ from gwas import ld
 
 
 # --------------------------------------------------------------------------- #
-# merge_coherence: cross seam vs union coherence
+# merge_coherence: cross seam vs union coherence (unchanged by the redesign)
 # --------------------------------------------------------------------------- #
 def _two_cluster_panel(seed=0):
     """Two internally-correlated clusters (A, B) that are ~independent of each other."""
@@ -35,8 +41,6 @@ def test_merge_coherence_cross_below_union():
     B = {"Chr": "1", "Start (bp)": 4000, "End (bp)": 6000, "SNP_IDs": "b0,b1,b2"}
     cross, union = ld.merge_coherence(A, B, chroms, positions, sid, geno)
     assert np.isfinite(cross) and np.isfinite(union)
-    # cross pairs are the weak A-B links; the union average is pulled up by the
-    # strong within-cluster pairs, so cross < union.
     assert cross < union
     assert cross < 0.2 and union > 0.4
 
@@ -72,7 +76,7 @@ def test_merge_coherence_monomorphic_dropped():
 
 
 # --------------------------------------------------------------------------- #
-# find_ld_clusters_genomewide: merge_r2 column + invariant on a single coherent block
+# production path: merge_r2 column + invariants on a single coherent block
 # --------------------------------------------------------------------------- #
 def _one_block_inputs(seed=1):
     rng = np.random.default_rng(seed)
@@ -89,46 +93,45 @@ def _one_block_inputs(seed=1):
     return gwas_df, chroms, positions, geno, sid
 
 
-def _detect(mode="iou", r2=0.5):
+def _detect(r2=0.5):
     gwas_df, chroms, positions, geno, sid = _one_block_inputs()
     return ld.find_ld_clusters_genomewide(
         gwas_df=gwas_df, chroms=chroms, positions=positions,
         geno_imputed=geno.astype(float), sid=sid,
         ld_threshold=0.6, flank_kb=50, min_snps=3, top_n=0, sig_thresh=1e-5,
-        adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0,
-        ld_merge_mode=mode, ld_merge_r2=r2)
+        adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0, ld_merge_r2=r2)
 
 
 def test_merge_r2_column_present_and_nan_when_no_merge():
-    """B1: the merge_r2 column exists even when no merge fires (else KeyError)."""
-    out = _detect(mode="iou")
+    """The merge_r2 column exists (and is preserved through occupancy, P5) even
+    when no merge fires; a single seed block is never merged -> NaN."""
+    out = _detect()
     assert "merge_r2" in out.columns and "Mean r2" in out.columns
     assert len(out) == 1
     assert np.isnan(float(out["merge_r2"].iloc[0]))   # single block, never merged
 
 
-def test_default_mode_is_occupancy():
-    gwas_df, chroms, positions, geno, sid = _one_block_inputs()
-    default = ld.find_ld_clusters_genomewide(
-        gwas_df=gwas_df, chroms=chroms, positions=positions,
-        geno_imputed=geno.astype(float), sid=sid,
-        ld_threshold=0.6, flank_kb=50, min_snps=3, top_n=0, sig_thresh=1e-5)
-    explicit = _detect(mode="occupancy")
-    pd.testing.assert_frame_equal(default.reset_index(drop=True),
-                                  explicit.reset_index(drop=True))
-    assert int(default.attrs.get("n_occupancy_discarded", -1)) == 0
-
-
-def test_correlation_mode_runs_and_invariant_synth():
-    """Correlation mode does not crash and every emitted block is coherent."""
+def test_single_path_lead_is_member_and_coherent():
+    """Redesign invariants on synthetic data: the lead is a member and the block
+    reaches the coherence threshold."""
     for r2 in (0.5, 0.6, 0.7):
-        out = _detect(mode="correlation", r2=r2)
-        mr = out["Mean r2"].astype(float)
-        assert (mr[mr.notna()] >= r2 - 1e-9).all()
+        out = _detect(r2)
+        assert len(out) == 1
+        row = out.iloc[0]
+        assert str(row["lead_snp"]) in set(str(row["SNP_IDs"]).split(","))
+        assert float(row["Mean r2"]) >= r2 - 1e-9
+
+
+def test_discard_counter_present_and_zero_when_no_trim():
+    """A single coherent seed block sheds nothing -> the counter is 0."""
+    out = _detect()
+    assert int(out.attrs.get("n_fragments_discarded", 0)) == 0
+    assert int(out.attrs.get("n_occupancy_discarded", 0)) == 0
 
 
 # --------------------------------------------------------------------------- #
-# Real-data invariant + split (opt-in; skips without the committed tomato QC)
+# Real-data redesign invariants (opt-in; skips without the committed tomato QC).
+# Invariant-based so they hold regardless of the exact QC checkpoint version.
 # --------------------------------------------------------------------------- #
 def _load_tomato_qc():
     from pathlib import Path
@@ -150,82 +153,37 @@ def _load_tomato_qc():
 
 
 @pytest.mark.golden
-def test_correlation_invariant_and_splits_bridged_block_tomato():
-    gwas_df, chroms, positions, geno, sid = _load_tomato_qc()
-
-    def detect(mode, r2=0.5):
-        b = ld.find_ld_clusters_genomewide(
-            gwas_df=gwas_df, chroms=chroms, positions=positions,
-            geno_imputed=geno.astype(float), sid=sid,
-            ld_threshold=0.6, flank_kb=144, ld_decay_kb=72.17, min_snps=3,
-            top_n=10, sig_thresh=1e-5, adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0,
-            ld_merge_mode=mode, ld_merge_r2=r2)
-        b, _ = ld.filter_contained_blocks(b, min_contained=2)
-        return b
-
-    iou = detect("iou")
-    # The published Table S8 lead block (mean r2 = 0.427, an LD-bridged union).
-    lead = (iou["Start (bp)"].astype(int) == 47301921) & (iou["End (bp)"].astype(int) == 47657766)
-    assert lead.any(), "iou mode must reproduce the published bridged lead block"
-
-    for r2 in (0.5, 0.6, 0.7):
-        corr = detect("correlation", r2)
-        mr = corr["Mean r2"].astype(float)
-        assert (mr[mr.notna()] >= r2 - 1e-9).all(), f"invariant violated at r2={r2}"
-        # the 0.427 bridged block must be gone (split) once coherence is required
-        still = (corr["Start (bp)"].astype(int) == 47301921) & (corr["End (bp)"].astype(int) == 47657766)
-        assert not still.any(), f"bridged lead block survived at r2={r2}"
-
-
-# --------------------------------------------------------------------------- #
-# occupancy default (D-109): disjoint blocks
-# --------------------------------------------------------------------------- #
-@pytest.mark.golden
-def test_occupancy_disjoint_tomato():
+def test_redesign_invariants_tomato():
     gwas_df, chroms, positions, geno, sid = _load_tomato_qc()
     out = ld.find_ld_clusters_genomewide(
         gwas_df=gwas_df, chroms=chroms, positions=positions,
         geno_imputed=geno.astype(float), sid=sid, ld_threshold=0.6,
         flank_kb=144, ld_decay_kb=72.17, min_snps=3, top_n=10, sig_thresh=1e-5,
-        adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0)   # default = occupancy
-    # 6 overlapping iou blocks -> 3 disjoint occupancy blocks; 18 candidates discarded.
-    assert len(out) == 3
-    assert int(out.attrs["n_occupancy_discarded"]) == 18
-    assert bool(out["merge_r2"].isna().all())   # no merges under occupancy
-    iv = sorted((int(r["Start (bp)"]), int(r["End (bp)"])) for _, r in out.iterrows())
-    for (s1, e1), (s2, e2) in zip(iv, iv[1:]):
-        assert e1 < s2, "blocks overlap in coordinates"
-    mem = [set(str(r["SNP_IDs"]).split(",")) for _, r in out.iterrows()]
-    for i in range(len(mem)):
-        for j in range(i + 1, len(mem)):
-            assert not (mem[i] & mem[j]), "blocks share members"
-    # the published lead region resolves to ONE block ending at 47,515,290
-    lead = out[out["Start (bp)"].astype(int) == 47301921]
-    assert len(lead) == 1 and int(lead["End (bp)"].iloc[0]) == 47515290
+        adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0, ld_merge_r2=0.5)
+    out, _ = ld.filter_contained_blocks(out, min_contained=2)
+    assert len(out) >= 1
 
+    # (1) every block contains its lead (P2 -- the whole point of the redesign)
+    for _, r in out.iterrows():
+        mem = set(str(r["SNP_IDs"]).split(","))
+        assert str(r["lead_snp"]) in mem, "a block's lead is not one of its members"
 
-# --------------------------------------------------------------------------- #
-# discard counter (segments dropped below min_snps under correlation merging)
-# --------------------------------------------------------------------------- #
-def test_discard_counter_zero_when_no_drop():
-    """The counter is 0 in iou mode and when correlation splits nothing."""
-    iou = _detect(mode="iou")
-    assert int(iou.attrs.get("n_fragments_discarded", 0)) == 0
-    corr = _detect(mode="correlation", r2=0.5)   # single coherent block, no split
-    assert int(corr.attrs.get("n_fragments_discarded", 0)) == 0
+    # (2) blocks are disjoint in coordinates AND members (occupancy)
+    for ch, g in out.groupby(out["Chr"].astype(str)):
+        iv = sorted((int(x["Start (bp)"]), int(x["End (bp)"])) for _, x in g.iterrows())
+        for (s1, e1), (s2, e2) in zip(iv, iv[1:]):
+            assert e1 < s2, "blocks overlap in coordinates"
+        mems = [set(str(x["SNP_IDs"]).split(",")) for _, x in g.iterrows()]
+        for i in range(len(mems)):
+            for j in range(i + 1, len(mems)):
+                assert not (mems[i] & mems[j]), "blocks share members"
 
+    # (3) the pre-redesign LD-bridged lead block (47,301,921-47,657,766, mean r2
+    #     0.427) never survives -- coherence is required
+    bridged = (out["Start (bp)"].astype(int) == 47301921) & (out["End (bp)"].astype(int) == 47657766)
+    assert not bridged.any(), "the incoherent bridged block must not survive"
 
-@pytest.mark.golden
-def test_discard_counter_and_log_tomato_r07(caplog):
-    import logging
-    gwas_df, chroms, positions, geno, sid = _load_tomato_qc()
-    with caplog.at_level(logging.INFO, logger="gwas.ld"):
-        out = ld.find_ld_clusters_genomewide(
-            gwas_df=gwas_df, chroms=chroms, positions=positions,
-            geno_imputed=geno.astype(float), sid=sid, ld_threshold=0.6,
-            flank_kb=144, ld_decay_kb=72.17, min_snps=3, top_n=10, sig_thresh=1e-5,
-            adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0,
-            ld_merge_mode="correlation", ld_merge_r2=0.7)
-    # 40 sub-min_snps fragments dropped at r2=0.7 (measured; the usable-range warning)
-    assert int(out.attrs["n_fragments_discarded"]) == 40
-    assert any("dropped 40 fragment" in r.message for r in caplog.records)
+    # (4) every emitted block's coherence reaches the threshold (all tomato blocks
+    #     are coherent; the whole-emit incoherent path does not fire here)
+    mr = out["Mean r2"].astype(float)
+    assert (mr[mr.notna()] >= 0.5 - 1e-9).all(), "an emitted block is below the coherence threshold"
