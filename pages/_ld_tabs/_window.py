@@ -72,10 +72,15 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         region_source = "Lead SNP"
 
     def _buffer_slider():
-        buffer_kb_default = int((ctx.ld_decay_kb or 150) * 2)
+        # Seed the default ONCE; never pass value= to a keyed widget here. A
+        # data-dependent value= (2x ld_decay_kb) would overwrite the user's manual
+        # buffer whenever ld_decay_kb changes (e.g. after the LD Decay tab computes
+        # decay) -- the "buffer change doesn't stick" lag. With no value=, the slider
+        # reads/writes session_state directly and the seed applies only on first render.
+        if "ld_window_buffer_kb" not in st.session_state:
+            st.session_state["ld_window_buffer_kb"] = min(5000, max(10, int((ctx.ld_decay_kb or 150) * 2)))
         return st.slider(
-            "Buffer (kb)", min_value=10, max_value=5000,
-            value=min(5000, max(10, buffer_kb_default)), step=10,
+            "Buffer (kb)", min_value=10, max_value=5000, step=10,
             key="ld_window_buffer_kb",
             help="Extends the window this many kb on each side of the block (or SNP if no block).",
         )

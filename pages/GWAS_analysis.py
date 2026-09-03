@@ -167,21 +167,12 @@ def _render_interpretation_panel():
 | **FDR** | False discovery rate-adjusted p-value. Controls the expected proportion of false positives. |
 | **Var Explained** | Percentage of phenotypic variance explained by haplotype differences in an LD block. |
 
-**How many significant SNPs is normal?**
-
-This depends on genetic architecture, panel size, and trait heritability. For a typical
-crop breeding panel (100-500 accessions):
-- **0-5 significant SNPs**: Common for complex polygenic traits (e.g., yield).
-- **5-50 significant SNPs**: Expected for moderately heritable traits with a few major loci.
-- **50+ significant SNPs**: Typical for highly heritable traits or those controlled by a few large-effect genes with extensive LD.
-
 **What to do next:**
 
 1. **Check LD blocks**: Significant SNPs often cluster into LD blocks on the same chromosome — these represent the same underlying QTL.
 2. **Look at candidate genes**: The gene annotation identifies genes overlapping or flanking significant LD blocks.
 3. **Cross-model consensus**: SNPs detected by multiple models (MLM + FarmCPU) are higher confidence.
-4. **Subsampling stability**: If available, SNPs with high discovery frequency (>80%) across subsampling resamples are robust.
-5. **For breeding**: Focus on LD blocks with large effect sizes (Var Explained) and genes with known biological function relevant to your trait.
+4. **Subsampling stability**: If available, SNPs with a higher discovery frequency across subsampling resamples are more robust.
 """)
 
 
@@ -270,7 +261,13 @@ def _render_last_run_results():
     for _name, _obj in _figs.items():
         try:
             if _name.endswith(".png"):
-                st.pyplot(_obj)
+                if "QQ" in _name:
+                    # QQ reads best constrained; wrap only QQ (Manhattan/scree stay full width).
+                    _qq_c = st.columns([1, 2, 1])
+                    with _qq_c[1]:
+                        st.pyplot(_obj)
+                else:
+                    st.pyplot(_obj)
             elif _name.endswith(".html"):
                 import streamlit.components.v1 as _components
                 _html = _obj.decode("utf-8") if isinstance(_obj, (bytes, bytearray)) else str(_obj)
@@ -3749,6 +3746,39 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             label="Download QQ plot (PNG)"
         )
 
+        # --- Structure screen: does the trait track the leading genotype-PCA axes? ---
+        # Uses the full PCA-spectrum scores (pcs_full), so it renders even at the
+        # k=0 default (report-only; it does NOT set the PC count).
+        if pcs_full is not None and getattr(pcs_full, "shape", (0, 0))[1] >= 1:
+            _k_scr = min(5, int(pcs_full.shape[1]))
+            _pc_corrs = np.corrcoef(np.c_[y, pcs_full[:, :_k_scr]], rowvar=False)[0, 1:]
+            _max_abs = float(np.nanmax(np.abs(_pc_corrs)))
+            st.markdown(
+                f"**Trait-structure association (leading {_k_scr} PCs):** "
+                f"max |r| = {_max_abs:.2f}  |  per-PC r = {[round(float(c), 2) for c in _pc_corrs]}"
+            )
+            st.caption(
+                "Correlation of the phenotype with the leading genotype-PCA axes. A low value "
+                "indicates no detectable trait-structure association on the leading axes; a high "
+                "value is ambiguous (structure or genuine signal on differentiated markers) and is "
+                "not evidence that PCs are required. Report-only -- it does not set the PC count."
+            )
+
+        # --- P-value distribution (calibration diagnostic, beside the QQ plot) ---
+        from utils.pub_theme import FIGSIZE as _FIG
+        fig_hist, ax_hist = plt.subplots(figsize=_FIG["histogram"])
+        ax_hist.hist(gwas_df["PValue"].astype(float), bins=50,
+                     color=PALETTE["blue"], edgecolor="white", linewidth=0.5)
+        ax_hist.set_xlabel("P-value")
+        ax_hist.set_ylabel("Count")
+        ax_hist.set_title("Distribution of GWAS P-values")
+        _hist_cols = st.columns([1, 2, 1])
+        with _hist_cols[1]:
+            st.pyplot(fig_hist)
+        export_matplotlib(fig_hist, f"pvalue_hist_{trait_col}",
+                          label_prefix="Download p-value histogram")
+        plt.close(fig_hist)
+
         # --- Results summary card (single-trait) ---
         _st_n_sig = int(gwas_df[_active_sig_col].sum()) if _active_sig_col in gwas_df.columns else 0
         _render_results_summary_card(
@@ -4204,35 +4234,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # Understanding Your Results (interpretation panel)
     # ============================================================
     _render_interpretation_panel()
-
-    # ============================================================
-    # 9. Diagnostics
-    # ============================================================
-    with st.expander("Diagnostics", expanded=False):
-        st.write("Phenotype mean±SD:", float(np.nanmean(y)), float(np.nanstd(y)))
-        st.write("Kinship mean±SD:", float(np.nanmean(K)), float(np.nanstd(K)))
-        st.write(
-            "Genotype variance range:",
-            float(np.nanmin(geno_imputed.var(axis=0))), "to",
-            float(np.nanmax(geno_imputed.var(axis=0)))
-        )
-        if pcs is not None:
-            corrs = np.corrcoef(np.c_[y, pcs], rowvar=False)[0, 1:]
-            st.write("Corr(trait, PCs):", np.round(corrs, 3).tolist())
-        st.write("P-value summary:")
-        st.write(gwas_df[["PValue"]].describe())
-
-        from utils.pub_theme import FIGSIZE as _FIG
-        fig_hist, ax_hist = plt.subplots(figsize=_FIG["histogram"])
-        ax_hist.hist(gwas_df["PValue"].astype(float), bins=50,
-                     color=PALETTE["blue"], edgecolor="white", linewidth=0.5)
-        ax_hist.set_xlabel("P-value")
-        ax_hist.set_ylabel("Count")
-        ax_hist.set_title("Distribution of GWAS P-values")
-        st.pyplot(fig_hist)
-        export_matplotlib(fig_hist, f"pvalue_hist_{trait_col}",
-                          label_prefix="Download p-value histogram")
-        plt.close(fig_hist)
 
     # ============================================================
     # Save key objects for the LD / haplotype page (ROBUST)
