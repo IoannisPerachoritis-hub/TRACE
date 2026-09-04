@@ -24,25 +24,6 @@ from gwas.haplotype import (
 from . import LDContext
 
 
-# Methodology text for the two structure-aware per-SNP tests (Test A = LOCO-MLM Wald,
-# Test B = Freedman-Lane permutation). Authored once; rendered by each caller in a
-# popover after the compact "MLM p · FL p" line (the lead-SNP panel + the gallery).
-_TWO_TESTS_POPOVER_MD = (
-    "- **MLM p** (primary): the LOCO-MLM Wald test on the SNP -- "
-    "kinship-adjusted, additive per-allele-dose, read from the GWAS results "
-    "(not recomputed).\n"
-    "- **FL p** (secondary): a Freedman-Lane permutation F-test on the "
-    "genotype classes -- distribution-free, treats genotype as a factor, "
-    "adjusted for the same **k** PC covariates the scan used.\n"
-    "- **k = 0** (the shipped `--n-pcs 0` default) means the permutation test "
-    "is NOT structure-adjusted; use the MLM p above for the kinship-adjusted "
-    "answer.\n"
-    "- A marginal genotype test (Mann-Whitney / t-test) is deliberately not "
-    "shown: it adjusts for neither kinship nor structure.\n\n"
-    "Full guidance: **Help → Interpreting Results**."
-)
-
-
 def _hash_df(df: pd.DataFrame) -> str:
     import hashlib
     h = pd.util.hash_pandas_object(df, index=True).values
@@ -851,13 +832,16 @@ def _render_haplotype_gwas(
 
 
 def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, geno_df, n_perm):
-    """Render one SNP's genotype-class boxplot + the compact two-test disclosure line.
+    """Render one SNP's genotype-class boxplot + a 3-row disclosure table.
 
     ``geno_col`` / ``y`` are already masked to the SNP's non-missing, phenotyped samples;
     ``samp`` is the matching sample ``Index``; ``chrom`` / ``pos`` are the SNP's own
     coordinates -- used for the Freedman-Lane seed AND the ``SNPPERM::`` cache key, so the
-    same SNP reached via the per-block lead panel and via the gallery shares one cached
-    permutation result. The caller renders the ``_TWO_TESTS_POPOVER_MD`` popover once.
+    same SNP reached again (via the gallery) shares one cached result. The table carries
+    three tests with an ``adjusts for`` column as the whole disclosure: the LOCO-MLM Wald p
+    (read from the GWAS results, kinship + k PCs), the Freedman-Lane permutation F-test
+    (k PCs, or nothing at k = 0), and a marginal rank test (Mann-Whitney U for two genotype
+    classes, Kruskal-Wallis for three) that adjusts for nothing.
     """
     from gwas.snpplots import render_snp_boxplot
     from gwas.haplotype import freedman_lane_perm_pvalue
@@ -900,20 +884,78 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
     st.pyplot(_fig)
     _plt.close(_fig)
 
-    # Test B: Freedman-Lane permutation F-test (cached per SNP/sample-set/params).
+    # Test B (Freedman-Lane permutation F-test) + Test C (marginal genotype-class rank
+    # test, adjusts for NOTHING), cached together in one SNPPERM:: entry. The key string is
+    # unchanged; the cached VALUE grows from (F, p_emp) to a 5-tuple. Guard the unpack length
+    # so a session that cached the pre-marginal 2-tuple recomputes rather than raising.
     _snp_key = f"SNPPERM::{chrom}:{int(pos)}::{snp_id}::n{int(len(y))}::k{_k}::B{int(n_perm)}"
-    if _snp_key in st.session_state:
-        _F, _p_emp = st.session_state[_snp_key]
+    _cached = st.session_state.get(_snp_key)
+    if isinstance(_cached, tuple) and len(_cached) == 5:
+        _F, _p_emp, _marg_test, _marg_stat, _marg_p = _cached
     else:
         _seed = stable_seed(str(chrom), int(pos), trait_col, "FL_SNP")
-        _g_cls = np.rint(np.asarray(geno_col, dtype=float)).astype(int).astype(str)
+        _g_int = np.rint(np.asarray(geno_col, dtype=float)).astype(int)
         _F, _p_emp = freedman_lane_perm_pvalue(
-            y=y, groups=_g_cls, pcs=_pcs, n_perm=int(n_perm), seed=_seed)
-        st.session_state[_snp_key] = (float(_F), float(_p_emp))
+            y=y, groups=_g_int.astype(str), pcs=_pcs, n_perm=int(n_perm), seed=_seed)
+        # Test C: marginal rank test on the measured phenotype split by genotype class.
+        # Mann-Whitney U for two non-empty classes, Kruskal-Wallis for three; no minimum
+        # class size, entering/excluded classes named, scipy failures surfaced not faked.
+        _yv = np.asarray(y, dtype=float)
+        _cls = {c: _yv[_g_int == c] for c in (0, 1, 2)}
+        _present = [c for c in (0, 1, 2) if _cls[c].size > 0]
+        _absent = [c for c in (0, 1, 2) if _cls[c].size == 0]
+        _cls_txt = ",".join(str(c) for c in _present)
+        _marg_p = None
+        if len(_present) >= 3:
+            from scipy.stats import kruskal
+            _marg_test = f"Kruskal-Wallis (classes {_cls_txt})"
+            try:
+                _stat, _marg_p = kruskal(*[_cls[c] for c in _present])
+                _marg_stat = f"H = {float(_stat):.2f}"
+            except Exception:
+                _marg_stat, _marg_p = "test failed", None
+        elif len(_present) == 2:
+            from scipy.stats import mannwhitneyu
+            _excl = f"; {','.join(str(c) for c in _absent)} empty" if _absent else ""
+            _marg_test = f"Mann-Whitney U (classes {_cls_txt}{_excl})"
+            try:
+                _stat, _marg_p = mannwhitneyu(
+                    _cls[_present[0]], _cls[_present[1]], alternative="two-sided")
+                _marg_stat = f"U = {float(_stat):.1f}"
+            except Exception:
+                _marg_stat, _marg_p = "test failed", None
+        else:
+            _marg_test = f"no test ({len(_present)} non-empty class)"
+            _marg_stat = ""
+        st.session_state[_snp_key] = (
+            float(_F), float(_p_emp), _marg_test, _marg_stat,
+            (float(_marg_p) if _marg_p is not None else None))
 
-    _pA = f"{_model_p:.2e}" if _model_p is not None else "n/a"
-    _pB = f"{_p_emp:.3g}" if np.isfinite(_F) else "n/a"
-    st.caption(f"MLM p = {_pA} · FL p = {_pB}  (B = {int(n_perm)}, k = {_k})")
+    # 3-row disclosure table -- the "adjusts for" column IS the disclosure (noun phrases,
+    # no sentences). k is the resolved runtime PC count; at k = 0 the FL row adjusts for
+    # nothing (it must not claim an adjustment it did not make).
+    _z = "n/a"
+    if _bm is not None and _se not in (None, 0):
+        try:
+            _z = f"z = {_bm / _se:.2f}"
+        except (TypeError, ZeroDivisionError):
+            _z = "n/a"
+    _tbl = pd.DataFrame(
+        [
+            {"test": "LOCO-MLM Wald", "statistic": _z,
+             "p": (f"{_model_p:.2e}" if _model_p is not None else "n/a"),
+             "adjusts for": "kinship" + (f", {_k} PCs" if _k > 0 else "")},
+            {"test": f"Freedman-Lane permutation (B={int(n_perm)})",
+             "statistic": (f"F = {_F:.2f}" if np.isfinite(_F) else "n/a"),
+             "p": (f"{_p_emp:.3g}" if np.isfinite(_F) else "n/a"),
+             "adjusts for": (f"{_k} PCs" if _k > 0 else "nothing")},
+            {"test": _marg_test, "statistic": _marg_stat,
+             "p": (f"{_marg_p:.3g}" if _marg_p is not None else ""),
+             "adjusts for": "nothing"},
+        ],
+        columns=["test", "statistic", "p", "adjusts for"],
+    )
+    st.dataframe(_tbl, use_container_width=True, hide_index=True)
 
 
 def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
@@ -1022,8 +1064,6 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
         st.markdown(f"#### {_chosen} genotype effect")
         _render_snp_effect(
             ctx, _chosen, _chr, _pos, ctx.trait_col, _g, _y, _samp, ctx.geno_df, _n_perm)
-        with st.popover("How to read these two tests"):
-            st.markdown(_TWO_TESTS_POPOVER_MD)
 
 
 def _render_block_visualization(
@@ -1087,7 +1127,7 @@ def _render_block_visualization(
     # Selector with informative labels
     # -------------------------------
     selected_label = st.selectbox(
-        "Select LD block for phenotype–haplotype visualization:",
+        "Select LD block for phenotype-haplotype visualization:",
         options=labels,
     )
 
@@ -1145,32 +1185,6 @@ def _render_block_visualization(
     if keep_pheno.sum() < 5:
         st.warning("Too few non-missing phenotype values for haplotype visualization.")
         st.stop()
-
-    # ============================================================
-    # Lead-SNP genotype/phenotype panel (for the selected block) -- rendered via the
-    # shared _render_snp_effect helper so the gallery above reuses the SAME renderer +
-    # test path (and the SAME SNPPERM:: cache). Two structure-aware tests: (A) the
-    # LOCO-MLM Wald p read from the GWAS results, (B) a Freedman-Lane permutation F-test;
-    # no marginal Mann-Whitney/t-test (it adjusts for neither kinship nor structure).
-    _lead = str(block_row.get("lead_snp", "") or "")
-    _sid_arr = np.asarray(st.session_state.get("ld_sid", ctx.sid)).astype(str)
-    _lead_idx = np.where(_sid_arr == _lead)[0] if _lead else np.array([], dtype=int)
-    if _lead and _lead_idx.size and st.session_state.get("ld_geno_hard") is not None:
-        _li = int(_lead_idx[0])
-        _lead_dose = np.asarray(st.session_state["ld_geno_hard"])[:, _li].astype(float)
-        _y_full = pheno_selected.values.astype(float)          # aligned to geno_sample_ids
-        _ok = np.isfinite(_lead_dose) & np.isfinite(_y_full)
-        if int(_ok.sum()) >= 5:
-            _g = _lead_dose[_ok]
-            _y = _y_full[_ok]
-            _samp = pd.Index(np.asarray(geno_sample_ids)[_ok]).astype(str)
-            _pos = int(np.asarray(st.session_state.get("ld_positions", ctx.positions))[_li])
-            _n_perm = int(st.session_state.get("n_perm_hap", 1000))
-            st.markdown("#### Lead-SNP genotype effect")
-            _render_snp_effect(
-                ctx, _lead, block_chr, _pos, trait_col, _g, _y, _samp, geno_df, _n_perm)
-            with st.popover("How to read these two tests"):
-                st.markdown(_TWO_TESTS_POPOVER_MD)
 
     # --------------------------------------------------------
     # Extract SNPs using phenotype mask
