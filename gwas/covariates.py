@@ -50,7 +50,9 @@ def select_covariate_columns(covar_df, cols=None):
 
     ``cols`` (a list of column names) selects a subset; the default is every column.
     Columns are coerced to numeric; a column that is entirely non-numeric raises a
-    clear error asking the user to encode categoricals as numeric indicators.
+    clear error asking the user to encode categoricals as numeric indicators. A
+    constant, duplicate, or exactly-collinear column is also rejected (it would reach
+    FaST-LMM unguarded and silently alter the p-values).
     """
     if cols:
         missing = [c for c in cols if c not in covar_df.columns]
@@ -74,6 +76,31 @@ def select_covariate_columns(covar_df, cols=None):
             f"Covariate column(s) {non_numeric} are non-numeric. Encode categorical "
             f"covariates as numeric indicators (e.g. one-hot 0/1) before using them."
         )
+    # A constant / duplicate / exactly-collinear covariate passes numeric validation but
+    # reaches FaST-LMM's single_snp unguarded, where it silently alters the p-values (a
+    # constant column is collinear with the model intercept). Reject with the offending
+    # names, in the same style as the non-numeric error above.
+    _chk = out.dropna(axis=0, how="any")
+    if _chk.shape[0] >= 2:
+        _std = _chk.std(axis=0, ddof=0)
+        _const = [c for c in out.columns if float(_std.get(c, 0.0)) <= 1e-12]
+        if _const:
+            raise ValueError(
+                f"Covariate column(s) {_const} are constant (zero variance); a constant "
+                f"covariate is collinear with the model intercept. Remove them."
+            )
+        _X = np.column_stack([np.ones(_chk.shape[0]), _chk.to_numpy(dtype=float)])
+        if _chk.shape[0] >= _X.shape[1] and np.linalg.matrix_rank(_X) < _X.shape[1]:
+            _keep = [0]
+            for _j in range(1, _X.shape[1]):
+                if np.linalg.matrix_rank(_X[:, _keep + [_j]]) > len(_keep):
+                    _keep.append(_j)
+            _cols = list(out.columns)
+            _bad = [_cols[_j - 1] for _j in range(1, _X.shape[1]) if _j not in _keep]
+            raise ValueError(
+                f"Covariate column(s) {_bad} are collinear (linearly dependent on the "
+                f"other covariates or the intercept). Remove or combine them."
+            )
     return out
 
 

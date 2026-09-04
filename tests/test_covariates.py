@@ -52,6 +52,36 @@ def test_select_columns_subset_and_nonnumeric():
         select_covariate_columns(df, ["site"])
 
 
+def test_select_columns_rejects_constant():
+    # a constant column is collinear with the intercept; it reaches FaST-LMM unguarded.
+    df = pd.DataFrame({"age": [1.0, 2.0, 3.0], "flat": [5.0, 5.0, 5.0]},
+                      index=["A", "B", "C"])
+    with pytest.raises(ValueError, match="constant"):
+        select_covariate_columns(df)
+
+
+def test_select_columns_rejects_duplicate():
+    df = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0], "b": [1.0, 2.0, 3.0, 4.0]},
+                      index=["A", "B", "C", "D"])
+    with pytest.raises(ValueError, match="collinear"):
+        select_covariate_columns(df)
+
+
+def test_select_columns_rejects_collinear():
+    df = pd.DataFrame({"a": [1.0, 2.0, 0.0, 3.0, 1.0], "b": [0.0, 1.0, 2.0, 1.0, 3.0]},
+                      index=["A", "B", "C", "D", "E"])
+    df["c"] = df["a"] + df["b"]           # exact linear combination
+    with pytest.raises(ValueError, match="collinear"):
+        select_covariate_columns(df)
+
+
+def test_select_columns_accepts_full_rank():
+    df = pd.DataFrame({"a": [1.0, 2.0, 0.0, 3.0, 1.0], "b": [0.0, 1.0, 2.0, 1.0, 3.0]},
+                      index=["A", "B", "C", "D", "E"])
+    out = select_covariate_columns(df)     # independent + varying -> passes
+    assert list(out.columns) == ["a", "b"]
+
+
 def test_align_covariates_order_and_completeness():
     df = pd.DataFrame({"c1": [10.0, 20.0, 30.0]}, index=["A", "B", "C"])
     M, names, complete = align_covariates(df, ["C", "A", "Z"])
