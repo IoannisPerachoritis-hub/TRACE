@@ -832,38 +832,23 @@ def _render_haplotype_gwas(
 
 
 def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, geno_df, n_perm):
-    """Render one SNP's genotype-class boxplot + a 3-row disclosure table.
+    """Render one SNP's genotype-class boxplot + one marginal rank-test caption.
 
-    ``geno_col`` / ``y`` are already masked to the SNP's non-missing, phenotyped samples;
-    ``samp`` is the matching sample ``Index``; ``chrom`` / ``pos`` are the SNP's own
-    coordinates -- used for the Freedman-Lane seed AND the ``SNPPERM::`` cache key, so the
-    same SNP reached again (via the gallery) shares one cached result. The table carries
-    three tests with an ``adjusts for`` column as the whole disclosure: the LOCO-MLM Wald p
-    (read from the GWAS results, kinship + k PCs), the Freedman-Lane permutation F-test
-    (k PCs, or nothing at k = 0), and a marginal rank test (Mann-Whitney U for two genotype
-    classes, Kruskal-Wallis for three) that adjusts for nothing.
+    ``geno_col`` / ``y`` are already masked to the SNP's non-missing, phenotyped samples.
+    The boxplot title (from ``render_snp_boxplot``) already carries the kinship-adjusted MLM
+    effect size and the per-SNP variance explained; the caption below adds a single marginal
+    genotype-class rank test -- Mann-Whitney U for two non-empty classes, Kruskal-Wallis for
+    three -- disclosed as adjusting for neither population structure nor kinship. ``chrom`` /
+    ``pos`` / ``trait_col`` / ``samp`` / ``geno_df`` / ``n_perm`` are retained in the
+    signature but unused now that the per-SNP Freedman-Lane test and its PC covariates are gone.
     """
     from gwas.snpplots import render_snp_boxplot
-    from gwas.haplotype import freedman_lane_perm_pvalue
-    from gwas.utils import stable_seed
     import matplotlib.pyplot as _plt
 
-    # Test B covariates: the SAME PC set the scan used, reindexed to these samples;
-    # None at the shipped --n-pcs 0 default (-> structure-unadjusted, disclosed as k = 0).
-    _pcs, _k = None, 0
-    _pcs_src = st.session_state.get("pcs_for_hap", ctx.pcs)
-    if _pcs_src is not None:
-        try:
-            _pcs_df = pd.DataFrame(np.asarray(_pcs_src), index=geno_df.index.astype(str))
-            _pcs_block = _pcs_df.reindex(samp).dropna(axis=0, how="any")
-            if _pcs_block.shape[0] == len(samp) and _pcs_block.shape[1] > 0:
-                _pcs, _k = _pcs_block.values, int(_pcs_block.shape[1])
-        except Exception:
-            _pcs, _k = None, 0
-
-    # Effect sizes + the model Wald p, READ from the GWAS results (guard each column ->
-    # None where absent; the renderer then prints its own "structure-unadjusted" note).
-    _bm = _se = _bo = _model_p = None
+    # Effect sizes READ from the GWAS results (guard each column -> None where absent); they
+    # annotate the boxplot title (kinship-adjusted MLM effect + eta2). The renderer prints
+    # its own "structure-unadjusted" note when they are missing.
+    _bm = _se = _bo = None
     _gdf = ctx.gwas_df
     if isinstance(_gdf, pd.DataFrame) and "SNP" in _gdf.columns:
         _r = _gdf.loc[_gdf["SNP"].astype(str) == str(snp_id)]
@@ -878,84 +863,52 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
                 except (TypeError, ValueError):
                     return None
             _bm, _se, _bo = _num("Beta_MLM"), _num("SE_MLM"), _num("Beta_OLS")
-            _model_p = _num("PValue")
 
     _fig = render_snp_boxplot(str(snp_id), geno_col, y, beta_mlm=_bm, se_mlm=_se, beta_ols=_bo)
     st.pyplot(_fig)
     _plt.close(_fig)
 
-    # Test B (Freedman-Lane permutation F-test) + Test C (marginal genotype-class rank
-    # test, adjusts for NOTHING), cached together in one SNPPERM:: entry. The key string is
-    # unchanged; the cached VALUE grows from (F, p_emp) to a 5-tuple. Guard the unpack length
-    # so a session that cached the pre-marginal 2-tuple recomputes rather than raising.
-    _snp_key = f"SNPPERM::{chrom}:{int(pos)}::{snp_id}::n{int(len(y))}::k{_k}::B{int(n_perm)}"
-    _cached = st.session_state.get(_snp_key)
-    if isinstance(_cached, tuple) and len(_cached) == 5:
-        _F, _p_emp, _marg_test, _marg_stat, _marg_p = _cached
-    else:
-        _seed = stable_seed(str(chrom), int(pos), trait_col, "FL_SNP")
-        _g_int = np.rint(np.asarray(geno_col, dtype=float)).astype(int)
-        _F, _p_emp = freedman_lane_perm_pvalue(
-            y=y, groups=_g_int.astype(str), pcs=_pcs, n_perm=int(n_perm), seed=_seed)
-        # Test C: marginal rank test on the measured phenotype split by genotype class.
-        # Mann-Whitney U for two non-empty classes, Kruskal-Wallis for three; no minimum
-        # class size, entering/excluded classes named, scipy failures surfaced not faked.
-        _yv = np.asarray(y, dtype=float)
-        _cls = {c: _yv[_g_int == c] for c in (0, 1, 2)}
-        _present = [c for c in (0, 1, 2) if _cls[c].size > 0]
-        _absent = [c for c in (0, 1, 2) if _cls[c].size == 0]
-        _cls_txt = ",".join(str(c) for c in _present)
-        _marg_p = None
-        if len(_present) >= 3:
-            from scipy.stats import kruskal
-            _marg_test = f"Kruskal-Wallis (classes {_cls_txt})"
-            try:
-                _stat, _marg_p = kruskal(*[_cls[c] for c in _present])
-                _marg_stat = f"H = {float(_stat):.2f}"
-            except Exception:
-                _marg_stat, _marg_p = "test failed", None
-        elif len(_present) == 2:
-            from scipy.stats import mannwhitneyu
-            _excl = f"; {','.join(str(c) for c in _absent)} empty" if _absent else ""
-            _marg_test = f"Mann-Whitney U (classes {_cls_txt}{_excl})"
-            try:
-                _stat, _marg_p = mannwhitneyu(
-                    _cls[_present[0]], _cls[_present[1]], alternative="two-sided")
-                _marg_stat = f"U = {float(_stat):.1f}"
-            except Exception:
-                _marg_stat, _marg_p = "test failed", None
-        else:
-            _marg_test = f"no test ({len(_present)} non-empty class)"
-            _marg_stat = ""
-        st.session_state[_snp_key] = (
-            float(_F), float(_p_emp), _marg_test, _marg_stat,
-            (float(_marg_p) if _marg_p is not None else None))
-
-    # 3-row disclosure table -- the "adjusts for" column IS the disclosure (noun phrases,
-    # no sentences). k is the resolved runtime PC count; at k = 0 the FL row adjusts for
-    # nothing (it must not claim an adjustment it did not make).
-    _z = "n/a"
-    if _bm is not None and _se not in (None, 0):
+    # Marginal genotype-class rank test -- adjusts for NEITHER population structure NOR
+    # kinship. Mann-Whitney U for two non-empty classes, Kruskal-Wallis for three; no minimum
+    # class size, entering/excluded classes named, scipy failures surfaced not faked. Cheap
+    # (~0.5 ms), so computed live (no cache).
+    _g_int = np.rint(np.asarray(geno_col, dtype=float)).astype(int)
+    _yv = np.asarray(y, dtype=float)
+    _cls = {c: _yv[_g_int == c] for c in (0, 1, 2)}
+    _present = [c for c in (0, 1, 2) if _cls[c].size > 0]
+    _absent = [c for c in (0, 1, 2) if _cls[c].size == 0]
+    _cls_txt = ",".join(str(c) for c in _present)
+    _marg_stat, _marg_p = "", None
+    if len(_present) >= 3:
+        from scipy.stats import kruskal
+        _marg_test = f"Kruskal-Wallis (classes {_cls_txt})"
         try:
-            _z = f"z = {_bm / _se:.2f}"
-        except (TypeError, ZeroDivisionError):
-            _z = "n/a"
-    _tbl = pd.DataFrame(
-        [
-            {"test": "LOCO-MLM Wald", "statistic": _z,
-             "p": (f"{_model_p:.2e}" if _model_p is not None else "n/a"),
-             "adjusts for": "kinship" + (f", {_k} PCs" if _k > 0 else "")},
-            {"test": f"Freedman-Lane permutation (B={int(n_perm)})",
-             "statistic": (f"F = {_F:.2f}" if np.isfinite(_F) else "n/a"),
-             "p": (f"{_p_emp:.3g}" if np.isfinite(_F) else "n/a"),
-             "adjusts for": (f"{_k} PCs" if _k > 0 else "nothing")},
-            {"test": _marg_test, "statistic": _marg_stat,
-             "p": (f"{_marg_p:.3g}" if _marg_p is not None else ""),
-             "adjusts for": "nothing"},
-        ],
-        columns=["test", "statistic", "p", "adjusts for"],
-    )
-    st.dataframe(_tbl, use_container_width=True, hide_index=True)
+            _stat, _marg_p = kruskal(*[_cls[c] for c in _present])
+            _marg_stat = f"H = {float(_stat):.2f}"
+        except Exception:
+            _marg_stat, _marg_p = "test failed", None
+    elif len(_present) == 2:
+        from scipy.stats import mannwhitneyu
+        _excl = f"; {','.join(str(c) for c in _absent)} empty" if _absent else ""
+        _marg_test = f"Mann-Whitney U (classes {_cls_txt}{_excl})"
+        try:
+            _stat, _marg_p = mannwhitneyu(
+                _cls[_present[0]], _cls[_present[1]], alternative="two-sided")
+            _marg_stat = f"U = {float(_stat):.1f}"
+        except Exception:
+            _marg_stat, _marg_p = "test failed", None
+    else:
+        _marg_test = f"no test ({len(_present)} non-empty class)"
+
+    # One caption -- middle-dot separated, noun phrases, no dashes; the trailing phrase is
+    # the whole disclosure (the test adjusts for neither structure nor kinship).
+    _parts = [_marg_test]
+    if _marg_stat:
+        _parts.append(_marg_stat)
+    if _marg_p is not None:
+        _parts.append(f"p = {_marg_p:.3g}")
+    _parts.append("no population structure or kinship adjustment")
+    st.caption(" · ".join(_parts))
 
 
 def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
