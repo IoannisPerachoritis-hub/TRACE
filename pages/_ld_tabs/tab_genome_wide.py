@@ -372,70 +372,82 @@ def render(
         ld_decay_kb = ctx.ld_decay_kb
         haplo_df_auto = ctx.haplo_df_auto
 
-        auto_ld = st.checkbox(
-            "Run / refresh LD block detection",
-            value=st.session_state.get("auto_ld_run", False),
-            key="auto_ld_run"
+        # LD-block detection auto-reruns on any parameter change (no run/refresh
+        # checkbox): the parameter controls render unconditionally, and detection is
+        # cached by a session-state hash-guard (ld_key, mirroring the hap_key guard
+        # below and the page-level needs_rebuild), so it recomputes only when the data
+        # or a detection parameter changes.
+        sig_thresh = st.number_input(
+            "Significance threshold (P <)",
+            min_value=1e-12,
+            max_value=0.1,
+            value=1e-5,
+            format="%.1e",
+            help=(
+                "Markers below this p-value seed LD blocks. After the disjoint-block "
+                "redesign each seed yields at most one block, so this threshold now "
+                "determines the block count directly."
+            ),
         )
 
-        if auto_ld:
-            sig_thresh = st.number_input(
-                "Significance threshold (P <)",
-                min_value=1e-12,
-                max_value=0.1,
-                value=1e-5,
-                format="%.1e",
-                help=(
-                    "Markers below this p-value seed LD blocks. After the disjoint-block "
-                    "redesign each seed yields at most one block, so this threshold now "
-                    "determines the block count directly."
-                ),
-            )
+        flank_kb_default = float(np.clip(ld_decay_kb * 2, 200, 2000))
+        flank_kb_auto = st.number_input(
+            "LD window around each lead SNP (kb)",
+            min_value=10.0,
+            max_value=2000.0,
+            value=float(flank_kb_default),
+            step=50.0,
+            help=(
+                "Physical distance (in kb) to extend around each seed SNP. After the "
+                "disjoint-block redesign it bounds how far one block can extend from "
+                "its seed; clusters that do not contain the seed are discarded. The "
+                "default is 2× the measured LD decay distance."
+            ),
+        )
 
-            flank_kb_default = float(np.clip(ld_decay_kb * 2, 200, 2000))
-            flank_kb_auto = st.number_input(
-                "LD window around each lead SNP (kb)",
-                min_value=10.0,
-                max_value=2000.0,
-                value=float(flank_kb_default),
-                step=50.0,
-                help=(
-                    "Physical distance (in kb) to extend around each seed SNP. After the "
-                    "disjoint-block redesign it bounds how far one block can extend from "
-                    "its seed; clusters that do not contain the seed are discarded. The "
-                    "default is 2× the measured LD decay distance."
-                ),
-            )
+        ld_threshold_auto = st.number_input(
+            "r² threshold for cluster definition",
+            min_value=0.1,
+            max_value=0.9,
+            value=0.6,
+            step=0.05,
+            help=(
+                "SNPs with pairwise r² above this threshold are grouped into the same LD block. "
+                "0.6 is a common default for self-pollinating crops where LD "
+                "decays slowly. Use 0.3-0.5 for outcrossing species."
+            ),
+        )
 
-            ld_threshold_auto = st.number_input(
-                "r² threshold for cluster definition",
-                min_value=0.1,
-                max_value=0.9,
-                value=0.6,
-                step=0.05,
-                help=(
-                    "SNPs with pairwise r² above this threshold are grouped into the same LD block. "
-                    "0.6 is a common default for self-pollinating crops where LD "
-                    "decays slowly. Use 0.3-0.5 for outcrossing species."
-                ),
-            )
+        # Detection parameters the CLI has no flag for are fixed here so the GUI
+        # exposes exactly what the CLI exposes (one control per flag), and a GUI
+        # run is reproducible from the command line. adj_r2_min (0.2) is measured
+        # inert -- the adaptive floor min(0.5, max(floor, 0.5*median adj r2)) never
+        # binds on real blocks; gap_factor (10.0) has no CLI flag; min_snps (2) is
+        # hardcoded in cli.py's detection call.
+        st.session_state["adj_r2_min"] = 0.2   # consumed by Post_GWAS_Analysis.py
 
-            # Detection parameters the CLI has no flag for are fixed here so the GUI
-            # exposes exactly what the CLI exposes (one control per flag), and a GUI
-            # run is reproducible from the command line. adj_r2_min (0.2) is measured
-            # inert -- the adaptive floor min(0.5, max(floor, 0.5*median adj r2)) never
-            # binds on real blocks; gap_factor (10.0) has no CLI flag; min_snps (2) is
-            # hardcoded in cli.py's detection call.
-            st.session_state["adj_r2_min"] = 0.2   # consumed by Post_GWAS_Analysis.py
+        top_n = st.number_input(
+            "Also include top N SNPs by P-value",
+            min_value=0,
+            max_value=500,
+            value=10,
+            step=1,
+        )
 
-            top_n = st.number_input(
-                "Also include top N SNPs by P-value",
-                min_value=0,
-                max_value=500,
-                value=10,
-                step=1,
-            )
+        # Cache key: the data version (reuse the page's gwas_hash, cheap; fall back to
+        # hashing gwas_df) + every detection parameter, incl. the fixed literals so a
+        # future change to them re-keys. Detection recomputes only on a key change.
+        _gwas_sig = st.session_state.get("haplo_df_auto_hash", {}).get(trait_col)
+        if _gwas_sig is None:
+            _gwas_sig = _hash_df(gwas_df) if isinstance(gwas_df, pd.DataFrame) else "nogwas"
+        ld_key = (
+            f"LDDETECT::{trait_col}"
+            f"::r2{ld_threshold_auto}::flank{flank_kb_auto}::topn{int(top_n)}"
+            f"::sig{sig_thresh}::decay{ld_decay_kb}::ms2::adj0.2::gap10"
+            f"::G{_gwas_sig}"
+        )
 
+        if ld_key not in st.session_state:
             with st.spinner("Finding LD blocks around significant SNPs…"):
                 haplo_df_auto = find_ld_clusters_genomewide(
                     gwas_df=gwas_df,
@@ -481,7 +493,7 @@ def render(
             st.session_state["ld_blocks"] = haplo_df_auto.copy()
 
             # --- LD metadata logging ---
-            ld_metadata_auto = {
+            st.session_state["ld_block_metadata_auto"] = {
                 "method": "peak-centric LD blocks",
                 "ld_threshold_r2": float(ld_threshold_auto),
                 "flank_kb": float(flank_kb_auto),
@@ -491,14 +503,15 @@ def render(
                 "ld_decay_kb": float(ld_decay_kb),
                 "adjacent_r2_split": 0.2,
             }
-
-            st.session_state["ld_block_metadata_auto"] = ld_metadata_auto
+            st.session_state[ld_key] = haplo_df_auto
+        else:
+            haplo_df_auto = st.session_state[ld_key]
 
         # Show clusters if available
         if not isinstance(haplo_df_auto, pd.DataFrame) or haplo_df_auto.empty:
             st.info(
-                "No LD blocks available yet. "
-                "Enable 'Run / refresh LD block detection'."
+                "No LD blocks detected — no markers pass the significance threshold. "
+                "Lower it, or check that the GWAS produced significant hits."
             )
         else:
             st.success(f"Found {haplo_df_auto.shape[0]} LD blocks.")
@@ -528,20 +541,16 @@ def render(
         # --------------------------------------------------------
         st.markdown("### Haplotype / multi-locus genotype analysis")
 
-        run_hap_gwas = st.checkbox(
-            "Run haplotype / multi-locus genotype analysis",
-            value=False,
-            help="For each LD block, define multi-locus genotypes (MLGs) and test trait ~ block MLG.",
+        # Haplotype / MLG analysis runs unconditionally (no checkbox): it is cached by
+        # the hap_key session-state guard in _render_haplotype_gwas, so it computes once
+        # per (dataset, block set, parameters) and is served from session state after.
+        _render_haplotype_gwas(
+            ctx=ctx,
+            haplo_df_auto=haplo_df_auto,
+            cached_extract_block_geno=cached_extract_block_geno,
+            compute_block_qc_effects=compute_block_qc_effects,
+            run_haplotype_block_gwas_cached_fn=run_haplotype_block_gwas_cached_fn,
         )
-
-        if run_hap_gwas:
-            _render_haplotype_gwas(
-                ctx=ctx,
-                haplo_df_auto=haplo_df_auto,
-                cached_extract_block_geno=cached_extract_block_geno,
-                compute_block_qc_effects=compute_block_qc_effects,
-                run_haplotype_block_gwas_cached_fn=run_haplotype_block_gwas_cached_fn,
-            )
 
     except StopException:
         pass
@@ -605,7 +614,7 @@ def _render_haplotype_gwas(
     haplo_blocks_to_use = haplo_df_auto
 
     if haplo_blocks_to_use is None or haplo_blocks_to_use.empty:
-        st.warning("No LD blocks yet; run block detection above first.")
+        st.warning("No LD blocks to test — detection above found none.")
         return
 
     # ------------------------------------------------------------

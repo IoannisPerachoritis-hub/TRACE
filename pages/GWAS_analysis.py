@@ -638,8 +638,8 @@ show_secondary_threshold = st.sidebar.checkbox(
     key="show_secondary_threshold_main",
 )
 
-# --- Reproducibility ---
-st.sidebar.subheader("Reproducibility")
+# --- Subsampling ---
+st.sidebar.subheader("Subsampling")
 random_seed = st.sidebar.number_input(
     "Random seed",
     min_value=0,
@@ -647,9 +647,10 @@ random_seed = st.sidebar.number_input(
     value=42,
     step=1,
     help=(
-        "Seed for stochastic steps (FarmCPU initialization, subsampling "
-        "resampling, permutation tests). Set to a fixed value for "
-        "reproducible results across runs."
+        "Seed for the subsampling resampling step. Haplotype permutation "
+        "p-values are seeded deterministically from each block's coordinates, "
+        "and FarmCPU takes no seed -- this control affects neither. Set to a "
+        "fixed value for reproducible subsampling across runs."
     ),
 )
 
