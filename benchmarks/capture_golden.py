@@ -112,7 +112,7 @@ def capture_golden(
     ld_decay_kb: float | None = None,
     ld_threshold: float = 0.6,
     adj_r2_min: float = 0.2,
-    min_snps: int = 3,
+    min_snps: int = 2,
     top_n: int = 10,
     sig_thresh: float = 1e-5,
     gap_factor: float = 10.0,

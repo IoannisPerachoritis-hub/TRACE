@@ -997,7 +997,7 @@ def run_pipeline(args):
                 gwas_df=model_df, chroms=chroms, positions=positions,
                 geno_imputed=_geno_float, sid=sid,
                 ld_threshold=args.ld_r2, flank_kb=ld_flank_kb,
-                ld_decay_kb=ld_decay_kb, min_snps=3,
+                ld_decay_kb=ld_decay_kb, min_snps=2,
                 top_n=_ld_seed_top_n, sig_thresh=_ld_seed_thresh,
                 ld_merge_r2=args.ld_merge_r2,
             )
@@ -1478,7 +1478,7 @@ def run_pipeline(args):
         "LD_merge_iou": _md_lddef.get("merge_iou"),
         "LD_adj_r2_min": _md_lddef.get("adj_r2_min"),
         "LD_gap_factor": _md_lddef.get("gap_factor"),
-        "LD_min_snps": 3,
+        "LD_min_snps": 2,
         "Hap_min_group_size (--hap-min-group-size)": args.hap_min_group_size,
         "Hap_n_perm": args.hap_perms,
         "LD blocks (MLM)": len(ld_blocks_mlm) if ld_blocks_mlm is not None else "N/A",

@@ -189,7 +189,7 @@ def _ifexp_consts_for_target(tree, target_name):
 SIGNATURE_DEFAULTS = [
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "ld_threshold", 0.6, "gwas/ld.py:818"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "flank_kb", 300, "gwas/ld.py:819"),
-    ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "min_snps", 3, "gwas/ld.py:820"),
+    ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "min_snps", 2, "gwas/ld.py:820"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "top_n", 0, "gwas/ld.py:821"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "sig_thresh", 1e-5, "gwas/ld.py:822"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "adj_r2_min", 0.2, "gwas/ld.py:825"),
@@ -197,7 +197,7 @@ SIGNATURE_DEFAULTS = [
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "merge_iou", 0.3, "gwas/ld.py:827"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "gap_factor", 10.0, "gwas/ld.py:828"),
     ("ld.find_ld_clusters_genomewide", ld.find_ld_clusters_genomewide, "ld_merge_r2", 0.5, "gwas/ld.py (--ld-merge-r2)"),
-    ("ld.find_ld_blocks_graph", ld.find_ld_blocks_graph, "min_snps", 3, "gwas/ld.py:690"),
+    ("ld.find_ld_blocks_graph", ld.find_ld_blocks_graph, "min_snps", 2, "gwas/ld.py:690"),
     ("ld.find_ld_blocks_graph", ld.find_ld_blocks_graph, "adj_r2_min", 0.3, "gwas/ld.py:691"),
     ("ld.contiguous_segments_by_adjacent", ld.contiguous_segments_by_adjacent, "adj_r2_min", 0.3, "gwas/ld.py:445"),
     ("ld._adaptive_adj_threshold", ld._adaptive_adj_threshold, "base", 0.3, "gwas/ld.py:39"),
@@ -348,7 +348,7 @@ def test_gui_call_site_fixed_detection_params():
         "tab_genome_wide.py — GUI detection call must pass adj_r2_min=0.2"
     assert _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "gap_factor") == "10.0", \
         "tab_genome_wide.py — GUI detection call must pass gap_factor=10.0"
-    assert _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "min_snps") == "3", \
+    assert _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "min_snps") == "2", \
         "tab_genome_wide.py — GUI detection call min_snps literal"
 
 
@@ -411,4 +411,4 @@ def test_cli_hardcoded_min_snps_at_block_detection():
     the only thing standing between a published block table and a re-partition."""
     src, tree = _load("cli.py")
     val = _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "min_snps")
-    assert val == "3", f"CLI block-detection min_snps literal changed to {val!r} — cli.py:1070"
+    assert val == "2", f"CLI block-detection min_snps literal changed to {val!r} — cli.py:1070"

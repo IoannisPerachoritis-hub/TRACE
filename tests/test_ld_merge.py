@@ -158,7 +158,7 @@ def test_redesign_invariants_tomato():
     out = ld.find_ld_clusters_genomewide(
         gwas_df=gwas_df, chroms=chroms, positions=positions,
         geno_imputed=geno.astype(float), sid=sid, ld_threshold=0.6,
-        flank_kb=144, ld_decay_kb=72.17, min_snps=3, top_n=10, sig_thresh=1e-5,
+        flank_kb=144, ld_decay_kb=72.17, min_snps=2, top_n=10, sig_thresh=1e-5,
         adj_r2_min=0.2, merge_iou=0.3, gap_factor=10.0, ld_merge_r2=0.5)
     out, _ = ld.filter_contained_blocks(out, min_contained=2)
     assert len(out) >= 1

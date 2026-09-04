@@ -588,7 +588,7 @@ def ld_analysis_page():
                 sid=sid,
                 ld_threshold=0.6,
                 flank_kb=float(ld_decay_kb * 2),
-                min_snps=3,
+                min_snps=2,
                 top_n=10,
                 sig_thresh=1e-5,
                 max_dist_bp=None,

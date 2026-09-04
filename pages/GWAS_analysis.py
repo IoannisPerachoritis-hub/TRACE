@@ -2244,7 +2244,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     ld_threshold=_pipe_ld_r2,
                                     flank_kb=_pipe_ld_flank,
                                     ld_decay_kb=_pipe_ld_decay_kb,
-                                    min_snps=3,
+                                    min_snps=2,
                                     top_n=_pipe_ld_top_n if _ld_suggestive else 0,
                                     sig_thresh=_pipe_ld_sig_p if _ld_suggestive else _pipe_sig_thresh,
                                 )
@@ -2765,7 +2765,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         "LD_merge_iou": _pp_lddef.get("merge_iou"),
                         "LD_adj_r2_min": _pp_lddef.get("adj_r2_min"),
                         "LD_gap_factor": _pp_lddef.get("gap_factor"),
-                        "LD_min_snps": 3,
+                        "LD_min_snps": 2,
                         "Hap_min_group_size (--hap-min-group-size)": 3,
                         "Hap_n_perm": int(_pipe_hap_perms),
                         **{f"LD_blocks_{mn}": len(tb) if tb is not None else 0

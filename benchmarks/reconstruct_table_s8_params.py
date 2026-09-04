@@ -44,7 +44,7 @@ TABLE_S8_BP = [
 ]
 
 # Fixed parameters held constant across the whole grid (T-61 / rerun_downstream_demo
-# defaults): ld_threshold=0.6, adj_r2_min=0.2, min_snps=3, top_n=10, sig_thresh=1e-5,
+# defaults): ld_threshold=0.6, adj_r2_min=0.2, min_snps=2, top_n=10, sig_thresh=1e-5,
 # gap_factor=10.0, merge_iou=0.3, min_pair_n=20 (all detector defaults except top_n).
 
 
@@ -97,7 +97,7 @@ def _detect(gwas_df, chroms_str, positions, geno, sid, *, flank_kb, ld_decay_kb)
         gwas_df=gwas_df, chroms=chroms_str, positions=positions,
         geno_imputed=geno.astype(float), sid=sid,
         ld_threshold=0.6, flank_kb=flank_kb, ld_decay_kb=ld_decay_kb,
-        min_snps=3, top_n=10, sig_thresh=1e-5,
+        min_snps=2, top_n=10, sig_thresh=1e-5,
     )
     blocks, _ = ld.filter_contained_blocks(blocks, min_contained=2)
     return blocks

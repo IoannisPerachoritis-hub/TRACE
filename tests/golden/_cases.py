@@ -28,7 +28,7 @@ N_SAMPLES = 120
 STD_PARAMS = {
     "ld_threshold": 0.6,
     "flank_kb": 300,
-    "min_snps": 3,
+    "min_snps": 2,
     "top_n": 0,
     "sig_thresh": 1e-5,
     "adj_r2_min": 0.2,
@@ -56,8 +56,10 @@ CASE_REASON = {
                             "seed window -> two disjoint components -> two blocks.",
     "blocks_gap_split": "One connected component split into two segments by a physical gap "
                         "exceeding gap_factor x median gap (contiguous_segments_by_adjacent).",
-    "blocks_below_min_snps": "A component of size min_snps-1 (=2) that must emit NOTHING at "
-                             "min_snps=3; the discriminating case for the min-SNP gate.",
+    "blocks_below_min_snps": "A seed whose flank window has >=2 markers but whose LD-connected "
+                             "component is size 1 (= min_snps-1) -> dropped by the min_snps gate at "
+                             "min_snps=2 (distinct from the m<2 single-marker skip); the "
+                             "discriminating case for the min-SNP gate.",
     "blocks_monomorphic_window": "Window of >=2 markers that collapses to <2 after the variance "
                                  "filter -> emits nothing (monomorphic-window path).",
     "blocks_single_typed_marker": "A significant SNP alone in its flank window (m<2) -> the "
@@ -149,10 +151,11 @@ def build_case_input(name):
         return _assemble(rows)
 
     if name == "blocks_below_min_snps":
-        block = _block_snps(rng, n, 2)                 # component of size min_snps-1
+        seed = _block_snps(rng, n, 1)[:, 0]            # lone significant seed, no LD partner
+        neigh = _indep_snps(rng, n, 1)[:, 0]           # independent neighbour keeps window m>=2
         bg = _indep_snps(rng, n, 6)
-        rows = [("1", 1000, block[:, 0], _SIG),
-                ("1", 1100, block[:, 1], _NOT_SIG)]
+        rows = [("1", 1000, seed, _SIG),               # seed's LD component is size 1 (min_snps-1)
+                ("1", 1100, neigh, _NOT_SIG)]          # -> dropped by the min_snps gate at min_snps=2
         for j in range(bg.shape[1]):
             rows.append(("2", 4000 + j * 200, bg[:, j], _NOT_SIG))
         return _assemble(rows)
