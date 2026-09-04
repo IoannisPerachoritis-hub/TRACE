@@ -2754,6 +2754,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         "Run date": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "Pipeline": "One-Click Full Analysis",
                         "Trait": trait_col,
+                        "Covariate columns": (", ".join(user_covar_names)
+                                              if user_covar_names else None),
+                        "Covariates applied": user_covar_mat is not None,
                         "PCs_MLM": _pipe_k_mlm,
                         "PCs_MLMM": _pipe_k_mlmm if "MLMM (iterative cofactors)" in _pipe_models else "N/A",
                         "PCs_FarmCPU": _pipe_k_fc if "FarmCPU (multi-locus)" in _pipe_models else "N/A",
@@ -4317,6 +4320,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     # Merge run manifest into metadata (both embedded in ZIP)
     if "manifest" in locals() and manifest is not None:
+        manifest["Covariate columns"] = (
+            ", ".join(user_covar_names) if user_covar_names else None)
+        manifest["Covariates applied"] = user_covar_mat is not None
         meta["run_manifest"] = manifest
 
 
