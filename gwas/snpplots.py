@@ -66,7 +66,11 @@ def render_snp_boxplot(snp_id, geno_col, y, *, beta_mlm=None, se_mlm=None,
         m = valid & (np.rint(g) == cls)
         yc = yy[m]
         info = s["classes"][cls]
-        if info["draw_box"]:
+        # Draw a box for every non-empty genotype class (n>=1). The per-class n in the
+        # tick label below is the only remaining signal of how many points a box rests
+        # on. (draw_box, the n>=5 flag from genotype_class_summary, is left intact but
+        # no longer gates the box -- markers below the MAF floor are removed by QC.)
+        if len(yc):
             ax.boxplot([yc], positions=[cls], widths=0.5, showfliers=False)
         if len(yc):
             jitter = cls + (rng.random(len(yc)) - 0.5) * 0.18
