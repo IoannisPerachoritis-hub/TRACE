@@ -81,6 +81,10 @@ def _r2_stub(*a, **k):
 def _extract_stub(*a, **k):
     return np.zeros((n, 2)), positions[:2], sid[:2]
 
+# detection now runs unconditionally (the run/refresh checkbox was removed); mock it
+# to return the fixture inventory so the always-on path uses these blocks.
+tgw.find_ld_clusters_genomewide = lambda **kw: blocks.copy()
+
 tgw.render(
     ctx,
     get_r2_cached=_r2_stub,
@@ -107,11 +111,11 @@ def test_block_tables_render_with_new_labels():
     assert any("LD blocks" in s.value for s in at.subheader), \
         "LD blocks subheader missing"
 
-    # the results table is behind an unkeyed 'Run haplotype…' checkbox -> check + rerun
-    hap_cb = [c for c in at.checkbox if "Run haplotype" in c.label]
-    assert hap_cb, "'Run haplotype' checkbox not found"
-    hap_cb[0].check().run()
-    assert not at.exception or _only_harness_error(at)
+    # Detection + haplotype analysis now run unconditionally (the run/refresh and
+    # 'Run haplotype' checkboxes were removed), so the results table renders on the
+    # first run -- there is no checkbox to tick.
+    assert not any("Run haplotype" in c.label for c in at.checkbox), \
+        "'Run haplotype' checkbox should be gone (analysis is unconditional)"
 
     # results-table subheader (its caption was removed in the UI-text pass)
     assert any("Association results per block" in s.value for s in at.subheader), \
