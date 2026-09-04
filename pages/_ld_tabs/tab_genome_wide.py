@@ -930,6 +930,100 @@ def _render_block_visualization(
         st.warning("Too few non-missing phenotype values for haplotype visualization.")
         st.stop()
 
+    # ============================================================
+    # Lead-SNP genotype/phenotype panel (for the selected block)
+    # ------------------------------------------------------------
+    # A box per genotype class 0/1/2 for the block's lead SNP, annotated with two
+    # STRUCTURE-AWARE tests (a marginal Mann-Whitney/t-test is deliberately NOT used --
+    # it adjusts for neither kinship nor structure): (A) the LOCO-MLM model Wald p, READ
+    # from the GWAS results (kinship-adjusted; never recomputed here), and (B) a
+    # Freedman-Lane permutation F-test on the genotype classes using the SAME PC
+    # covariate set the scan used (None -> structure-unadjusted at the --n-pcs 0 default).
+    _lead = str(block_row.get("lead_snp", "") or "")
+    _sid_arr = np.asarray(st.session_state.get("ld_sid", ctx.sid)).astype(str)
+    _lead_idx = np.where(_sid_arr == _lead)[0] if _lead else np.array([], dtype=int)
+    if _lead and _lead_idx.size and st.session_state.get("ld_geno_hard") is not None:
+        from gwas.snpplots import render_snp_boxplot
+        from gwas.haplotype import freedman_lane_perm_pvalue
+        from gwas.utils import stable_seed
+
+        _li = int(_lead_idx[0])
+        _lead_dose = np.asarray(st.session_state["ld_geno_hard"])[:, _li].astype(float)
+        _y_full = pheno_selected.values.astype(float)          # aligned to geno_sample_ids
+        _ok = np.isfinite(_lead_dose) & np.isfinite(_y_full)
+        if int(_ok.sum()) >= 5:
+            _g = _lead_dose[_ok]
+            _y = _y_full[_ok]
+            _samp = pd.Index(np.asarray(geno_sample_ids)[_ok]).astype(str)
+
+            # Test B covariates: the SAME PC set the scan used (ctx.pcs / pcs_for_hap),
+            # reindexed to these samples; None at the shipped --n-pcs 0 default.
+            _pcs, _k = None, 0
+            _pcs_src = st.session_state.get("pcs_for_hap", ctx.pcs)
+            if _pcs_src is not None:
+                try:
+                    _pcs_df = pd.DataFrame(np.asarray(_pcs_src), index=geno_df.index.astype(str))
+                    _pcs_block = _pcs_df.reindex(_samp).dropna(axis=0, how="any")
+                    if _pcs_block.shape[0] == len(_samp) and _pcs_block.shape[1] > 0:
+                        _pcs, _k = _pcs_block.values, int(_pcs_block.shape[1])
+                except Exception:
+                    _pcs, _k = None, 0
+
+            # Effect sizes + the model Wald p for the lead SNP, READ from the GWAS
+            # results. Guard the conditional effect columns -> None where absent (the
+            # renderer then prints its own "structure-unadjusted" note; a value it did
+            # not receive is never substituted).
+            _bm = _se = _bo = _model_p = None
+            _gdf = ctx.gwas_df
+            if isinstance(_gdf, pd.DataFrame) and "SNP" in _gdf.columns:
+                _r = _gdf.loc[_gdf["SNP"].astype(str) == _lead]
+                if not _r.empty:
+                    _r0 = _r.iloc[0]
+
+                    def _num(_col):
+                        _v = _r0.get(_col)
+                        try:
+                            _f = float(_v)
+                            return _f if np.isfinite(_f) else None
+                        except (TypeError, ValueError):
+                            return None
+                    _bm, _se, _bo = _num("Beta_MLM"), _num("SE_MLM"), _num("Beta_OLS")
+                    _model_p = _num("PValue")
+
+            st.markdown("#### Lead-SNP genotype effect")
+            _fig = render_snp_boxplot(_lead, _g, _y, beta_mlm=_bm, se_mlm=_se, beta_ols=_bo)
+            st.pyplot(_fig)
+            import matplotlib.pyplot as _plt
+            _plt.close(_fig)
+
+            # Test B: Freedman-Lane permutation F-test (cached per lead/sample-set/params).
+            _n_perm = int(st.session_state.get("n_perm_hap", 1000))
+            _pos = int(np.asarray(st.session_state.get("ld_positions", ctx.positions))[_li])
+            _snp_key = f"SNPPERM::{block_chr}:{_pos}::{_lead}::n{int(_ok.sum())}::k{_k}::B{_n_perm}"
+            if _snp_key in st.session_state:
+                _F, _p_emp = st.session_state[_snp_key]
+            else:
+                _seed = stable_seed(block_chr, _pos, trait_col, "FL_SNP")
+                _g_cls = np.rint(_g).astype(int).astype(str)
+                _F, _p_emp = freedman_lane_perm_pvalue(
+                    y=_y, groups=_g_cls, pcs=_pcs, n_perm=_n_perm, seed=_seed)
+                st.session_state[_snp_key] = (float(_F), float(_p_emp))
+
+            _covar_txt = (f"{_k} PC covariate(s)" if _k > 0 else
+                          "no PC covariates, kinship not modelled -- see the model p above "
+                          "for the kinship-adjusted test")
+            _testA = (f"model p = {_model_p:.2e}" if _model_p is not None else "model p unavailable")
+            _testB = (f"F = {_F:.2f}, p = {_p_emp:.3g}" if np.isfinite(_F) else "not computable")
+            st.caption(
+                f"Structure-aware tests for {_lead}. "
+                f"A (primary): LOCO-MLM Wald {_testA} -- the kinship-adjusted additive "
+                f"per-allele-dose test (assumes approximately normal residuals). "
+                f"B (secondary): Freedman-Lane permutation F-test ({_covar_txt}): {_testB} "
+                f"over {_n_perm} permutations -- distribution-free, treats genotype as a "
+                f"factor. A marginal genotype test (Mann-Whitney/t-test) is deliberately "
+                f"omitted: it adjusts for neither kinship nor structure."
+            )
+
     # --------------------------------------------------------
     # Extract SNPs using phenotype mask
     # --------------------------------------------------------
