@@ -330,21 +330,26 @@ def test_hardcoded_pipeline_determinism_seed():
 
 
 # ===========================================================================
-# 4. GUI widget defaults (5) — AST over the Streamlit page source
+# 4. GUI widget defaults / fixed detection literals — AST over the Streamlit page source
+#    (adj_r2_min + min_snps widgets were removed; those params are now fixed literals)
 # ===========================================================================
 def test_gui_widget_ld_threshold():
     _src, tree = _load("pages/_ld_tabs/tab_genome_wide.py")
     assert _widget_value_by_target(tree, "ld_threshold_auto") == 0.6, "tab_genome_wide.py:412"
 
 
-def test_gui_widget_adj_r2_min():
-    _src, tree = _load("pages/_ld_tabs/tab_genome_wide.py")
-    assert _widget_value_by_target(tree, "adj_r2_min_auto") == 0.2, "tab_genome_wide.py:425"
-
-
-def test_gui_widget_min_snps_block():
-    _src, tree = _load("pages/_ld_tabs/tab_genome_wide.py")
-    assert _widget_value_by_target(tree, "min_snps_block_auto") == 3, "tab_genome_wide.py:480"
+def test_gui_call_site_fixed_detection_params():
+    """adj_r2_min, gap_factor and min_snps are no longer GUI widgets (the CLI has no
+    flag for them, so the GUI must not expose them either). The interactive detection
+    call now passes fixed literals that match the CLI. Pin those literals; min_snps
+    flips to 2 when the block floor is lowered."""
+    src, tree = _load("pages/_ld_tabs/tab_genome_wide.py")
+    assert _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "adj_r2_min") == "0.2", \
+        "tab_genome_wide.py — GUI detection call must pass adj_r2_min=0.2"
+    assert _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "gap_factor") == "10.0", \
+        "tab_genome_wide.py — GUI detection call must pass gap_factor=10.0"
+    assert _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "min_snps") == "3", \
+        "tab_genome_wide.py — GUI detection call min_snps literal"
 
 
 def test_gui_widget_top_n():
@@ -396,8 +401,8 @@ def test_adj_r2_min_call_site_literals():
     )
 
     _gsrc, gtree = _load("pages/_ld_tabs/tab_genome_wide.py")
-    assert _widget_value_by_label(gtree, "Adjacent coherence split threshold") == 0.2, (
-        "tab_genome_wide.py:425"
+    assert _call_kwarg_src(_gsrc, gtree, "find_ld_clusters_genomewide", "adj_r2_min") == "0.2", (
+        "tab_genome_wide.py — GUI detection call must pass adj_r2_min=0.2 (widget removed)"
     )
 
 

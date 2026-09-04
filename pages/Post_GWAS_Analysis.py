@@ -6,6 +6,7 @@ from utils.pub_theme import apply_matplotlib_theme, build_plotly_template
 apply_matplotlib_theme()
 build_plotly_template()
 import hashlib
+import logging
 
 from gwas.ld import (
     filter_contained_blocks, extract_block_geno_for_paper,
@@ -340,22 +341,6 @@ def compute_block_qc_effects(
 # 1. Sanity: require genotype / phenotype (GWAS resolved below)
 # --------------------------------------------------------
 
-def _mega_filter_label():
-    """Reactive label for the mega-block-filter expander, built from the PREVIOUS
-    run's result (an expander label is fixed before its body renders, so the live
-    count is one rerun behind — the toast covers the immediate signal). Turns the
-    collapsed control into a status line so its effect isn't hidden."""
-    s = st.session_state.get("mega_label_state")
-    if not s or not s.get("n_total"):
-        return "Block table filter"
-    n_total, count, n_shown, mode = s["n_total"], s["count"], s["n_shown"], s["mode"]
-    if count == 0:
-        return f"Block table filter: {n_total} blocks, no mega-blocks removed"
-    if mode == "Remove":
-        return f"Block table filter: {count} mega-blocks removed ({n_shown} of {n_total} blocks shown)"
-    return f"Block table filter: {count} mega-blocks flagged, none removed"
-
-
 def ld_analysis_page():
     st.title("Post-GWAS Analysis")
     check_data_version("ld_analysis")
@@ -628,87 +613,28 @@ def ld_analysis_page():
         haplo_df_auto = auto_store
 
     # --------------------------------------------------------
-    # Page-scoped control: mega-block filter (applies to ALL tabs).
-    # Collapsed expander whose LABEL carries the last result (from the previous
-    # run) so a collapsed control still reads as a status line. Rendered above the
-    # tab bar and BEFORE filter_contained_blocks (mega_* feed it).
+    # Mega-block containment is structurally impossible after the disjoint-block
+    # redesign (WO4): _occupancy_select claims each accepted span and rejects any
+    # candidate overlapping a claimed marker, so block detection is disjoint by
+    # construction. The former page-scoped mega-block filter control (mode /
+    # min_contained / size_ratio) is RETIRED -- it configured a case that cannot
+    # occur. This is now an invariant CHECK only: if nesting is EVER found it is
+    # disclosed + LOGGED with the block coordinates, never silently removed, and the
+    # block set passes through unchanged.
     # --------------------------------------------------------
-    _n_total_raw = len(haplo_df_auto) if isinstance(haplo_df_auto, pd.DataFrame) else 0
-    # Show the mega-block filter control ONLY when there is something to filter.
-    # Detection is by NESTING (min_contained + size_ratio), not size, so it is rare
-    # (0 on a disjoint block set) but not structurally impossible -- so the control
-    # stays available when nesting occurs. A non-destructive "flag" pass on a copy
-    # decides visibility at the current thresholds; the real filter call below is
-    # unchanged. (If a user tunes the thresholds up until 0 are detected, the control
-    # hides -- an accepted expert-only corner; the filter is then a no-op anyway.)
-    _mega_min_pre = int(st.session_state.get("mega_min_contained", 2))
-    _mega_ratio_pre = float(st.session_state.get("mega_size_ratio", 3.0))
-    _n_mega_detected = 0
     if isinstance(haplo_df_auto, pd.DataFrame) and not haplo_df_auto.empty:
-        _flagged_pre, _ = filter_contained_blocks(
-            haplo_df_auto.copy(), min_contained=_mega_min_pre,
-            size_ratio_threshold=_mega_ratio_pre, mode="flag",
-        )
-        _n_mega_detected = (int(_flagged_pre["is_mega_block"].sum())
-                            if "is_mega_block" in _flagged_pre.columns else 0)
-
-    if _n_mega_detected > 0:
-        with st.expander(_mega_filter_label(), expanded=False):
-            _mc1, _mc2, _mc3 = st.columns([1.3, 1, 1])
-            mega_mode = _mc1.radio(
-                "Mega-block handling", ["Remove", "Flag only"], index=0,
-                key="mega_block_mode", horizontal=True,
-            )
-            mega_min = _mc2.number_input(
-                "Min contained blocks", min_value=1, max_value=10, value=2,
-                key="mega_min_contained",
-            )
-            mega_ratio = _mc3.number_input(
-                "Size ratio threshold", min_value=1.5, max_value=20.0, value=3.0, step=0.5,
-                key="mega_size_ratio",
-            )
+        _cf, _ = filter_contained_blocks(
+            haplo_df_auto.copy(), min_contained=2, size_ratio_threshold=3.0, mode="flag")
+        if "is_mega_block" in _cf.columns and bool(_cf["is_mega_block"].any()):
+            _mb = _cf[_cf["is_mega_block"]]
+            logging.getLogger(__name__).warning(
+                "LD containment detected (should be impossible post-occupancy): %s",
+                [f"{r['Chr']}:{int(r['Start (bp)'])}-{int(r['End (bp)'])}"
+                 for _, r in _mb.iterrows()])
             st.caption(
-                "Removing mega-blocks changes the block set **every tab uses**: the Regional Plot's "
-                "shaded span, the annotated gene set, and significant-SNP block membership all follow this filter."
-            )
-    else:
-        st.caption(
-            "Block table filter: no mega-blocks (nested-block artefacts) detected; "
-            "nothing removed from the block set."
-        )
-        mega_mode = st.session_state.get("mega_block_mode", "Remove")
-        mega_min = _mega_min_pre
-        mega_ratio = _mega_ratio_pre
-
-    if isinstance(haplo_df_auto, pd.DataFrame) and not haplo_df_auto.empty:
-        haplo_df_auto, n_removed = filter_contained_blocks(
-            haplo_df_auto,
-            min_contained=int(mega_min),
-            size_ratio_threshold=float(mega_ratio),
-            mode="remove" if mega_mode == "Remove" else "flag",
-        )
-
-        # Persist the result for the (previous-run) reactive expander label. Flag
-        # mode returns n_removed=0 and keeps an is_mega_block column, so count the
-        # flagged rows there instead.
-        if mega_mode == "Remove":
-            _mega_count = int(n_removed)
-        else:
-            _mega_count = (int(haplo_df_auto["is_mega_block"].sum())
-                           if "is_mega_block" in haplo_df_auto.columns else 0)
-        st.session_state["mega_label_state"] = {
-            "n_total": _n_total_raw,
-            "count": _mega_count,
-            "n_shown": len(haplo_df_auto),
-            "mode": mega_mode,
-        }
-
-        if mega_mode == "Remove" and n_removed > 0:
-            st.toast(f"Removed {n_removed} mega-block(s).")
-    else:
-        st.session_state["mega_label_state"] = {
-            "n_total": _n_total_raw, "count": 0, "n_shown": _n_total_raw, "mode": mega_mode,
-        }
+                "⚠ Nested LD blocks detected — this should not occur after the "
+                "disjoint-block redesign; the block set is left unchanged. Please report "
+                "(see _occupancy_select's span_idx.size==0 short-circuit).")
 
     if not isinstance(st.session_state.get("haplo_df_auto"), dict):
         st.session_state["haplo_df_auto"] = {}

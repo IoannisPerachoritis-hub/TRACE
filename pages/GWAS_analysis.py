@@ -2248,16 +2248,18 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     top_n=_pipe_ld_top_n if _ld_suggestive else 0,
                                     sig_thresh=_pipe_ld_sig_p if _ld_suggestive else _pipe_sig_thresh,
                                 )
-                                _n_before_filter = len(_m_ld_blocks)
-                                _m_ld_blocks, _ = ld.filter_contained_blocks(
-                                    _m_ld_blocks, min_contained=2,
-                                    size_ratio_threshold=3.0, mode="remove",
-                                )
-                                if _n_before_filter > 0 and _m_ld_blocks.empty:
-                                    st.write(
-                                        f"  {_model_name}: All {_n_before_filter} LD blocks "
-                                        f"removed by containment filter."
-                                    )
+                                # Containment is structurally impossible after the
+                                # disjoint-block redesign (WO4); invariant check only,
+                                # never a silent drop -- _m_ld_blocks passes through.
+                                _cf, _ = ld.filter_contained_blocks(
+                                    _m_ld_blocks.copy(), min_contained=2,
+                                    size_ratio_threshold=3.0, mode="flag")
+                                if "is_mega_block" in _cf.columns and bool(_cf["is_mega_block"].any()):
+                                    logging.getLogger(__name__).warning(
+                                        "LD containment detected (should be impossible "
+                                        "post-occupancy) for %s: %s", _model_name,
+                                        [f"{r['Chr']}:{int(r['Start (bp)'])}-{int(r['End (bp)'])}"
+                                         for _, r in _cf[_cf["is_mega_block"]].iterrows()])
                                 _n_seeds = int((_model_df["PValue"] < _pipe_ld_sig_p).sum()) if _ld_suggestive else int(_model_df[_sig_col].sum())
                                 st.write(
                                     f"  {_model_name}: {len(_m_ld_blocks)} LD blocks "

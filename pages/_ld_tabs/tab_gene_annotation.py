@@ -143,12 +143,17 @@ def render(ctx: LDContext):
     if _use_hap_gwas_blocks:
         blocks_for_annot = st.session_state.get("hap_gwas_df", None)
     else:
-        blocks_for_annot, _ = filter_contained_blocks(
-            ctx.haplo_df_auto,
-            min_contained=int(st.session_state.get("mega_min_contained", 2)),
-            size_ratio_threshold=float(st.session_state.get("mega_size_ratio", 3.0)),
-            mode="remove",
-        )
+        # Containment is structurally impossible after the disjoint-block redesign
+        # (WO4); invariant check only (never a silent drop) -- blocks pass through.
+        _cf, _ = filter_contained_blocks(
+            ctx.haplo_df_auto.copy(), min_contained=2,
+            size_ratio_threshold=3.0, mode="flag")
+        if "is_mega_block" in _cf.columns and bool(_cf["is_mega_block"].any()):
+            logging.getLogger(__name__).warning(
+                "LD containment detected (should be impossible post-occupancy): %s",
+                [f"{r['Chr']}:{int(r['Start (bp)'])}-{int(r['End (bp)'])}"
+                 for _, r in _cf[_cf["is_mega_block"]].iterrows()])
+        blocks_for_annot = ctx.haplo_df_auto
 
     if blocks_for_annot is None or (
             isinstance(blocks_for_annot, pd.DataFrame) and blocks_for_annot.empty):
