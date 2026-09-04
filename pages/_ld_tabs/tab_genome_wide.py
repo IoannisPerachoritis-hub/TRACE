@@ -385,6 +385,11 @@ def render(
                 max_value=0.1,
                 value=1e-5,
                 format="%.1e",
+                help=(
+                    "Markers below this p-value seed LD blocks. After the disjoint-block "
+                    "redesign each seed yields at most one block, so this threshold now "
+                    "determines the block count directly."
+                ),
             )
 
             flank_kb_default = float(np.clip(ld_decay_kb * 2, 200, 2000))
@@ -395,9 +400,10 @@ def render(
                 value=float(flank_kb_default),
                 step=50.0,
                 help=(
-                    "Physical distance (in kb) to extend around each lead SNP when building "
-                    "LD blocks. Default is 2× the estimated LD decay distance. Increase for "
-                    "self-pollinating crops with slow LD decay."
+                    "Physical distance (in kb) to extend around each seed SNP. After the "
+                    "disjoint-block redesign it bounds how far one block can extend from "
+                    "its seed; clusters that do not contain the seed are discarded. The "
+                    "default is 2× the measured LD decay distance."
                 ),
             )
 
@@ -414,36 +420,13 @@ def render(
                 ),
             )
 
-            adj_r2_min_auto = st.number_input(
-                "Adjacent coherence split threshold (r²) (split if below)",
-                min_value=0.0,
-                max_value=0.9,
-                value=0.2,
-                step=0.05,
-                help=(
-                    "Split a candidate block when adjacent SNPs have r² below this value, "
-                    "indicating a recombination breakpoint. Lower values = fewer splits "
-                    "(more permissive blocks)."
-                ),
-            )
-            st.session_state["adj_r2_min"] = float(adj_r2_min_auto)
-
-            gap_factor_auto = st.slider(
-                "Split blocks if adjacent SNP gap > (multiplier × median gap)",
-                min_value=1.0,
-                max_value=50.0,
-                value=float(st.session_state.get("gap_factor_auto", 10.0)),
-                step=0.5,
-                help="Higher = fewer splits caused by uneven marker spacing.",
-            )
-            st.session_state["gap_factor_auto"] = float(gap_factor_auto)
-            min_snps_block_auto = st.number_input(
-                "Minimum SNPs per cluster",
-                min_value=2,
-                max_value=50,
-                value=3,
-                step=1,
-            )
+            # Detection parameters the CLI has no flag for are fixed here so the GUI
+            # exposes exactly what the CLI exposes (one control per flag), and a GUI
+            # run is reproducible from the command line. adj_r2_min (0.2) is measured
+            # inert -- the adaptive floor min(0.5, max(floor, 0.5*median adj r2)) never
+            # binds on real blocks; gap_factor (10.0) has no CLI flag; min_snps (3) is
+            # hardcoded in cli.py's detection call.
+            st.session_state["adj_r2_min"] = 0.2   # consumed by Post_GWAS_Analysis.py
 
             top_n = st.number_input(
                 "Also include top N SNPs by P-value",
@@ -462,22 +445,33 @@ def render(
                     sid=sid,
                     ld_threshold=ld_threshold_auto,
                     flank_kb=flank_kb_auto,
-                    min_snps=min_snps_block_auto,
+                    min_snps=3,
                     top_n=top_n,
                     sig_thresh=sig_thresh,
                     max_dist_bp=None,
                     ld_decay_kb=ld_decay_kb,
-                    adj_r2_min=float(adj_r2_min_auto),
-                    gap_factor=float(gap_factor_auto),
+                    adj_r2_min=0.2,
+                    gap_factor=10.0,
                 )
 
-                # --- APPLY mega-block filter consistently ---
-                haplo_df_auto, _ = filter_contained_blocks(
-                    haplo_df_auto,
-                    min_contained=int(st.session_state.get("mega_min_contained", 2)),
-                    size_ratio_threshold=float(st.session_state.get("mega_size_ratio", 3.0)),
-                    mode="remove" if st.session_state.get("mega_block_mode", "Remove") == "Remove" else "flag",
-                )
+                # Mega-block containment is structurally impossible after the
+                # disjoint-block redesign (WO4): _occupancy_select claims each accepted
+                # span and rejects any candidate overlapping a claimed marker. This is
+                # now an invariant CHECK on a copy, never a silent removal -- the block
+                # set passes through unchanged.
+                _cf, _ = filter_contained_blocks(
+                    haplo_df_auto.copy(), min_contained=2,
+                    size_ratio_threshold=3.0, mode="flag")
+                if "is_mega_block" in _cf.columns and bool(_cf["is_mega_block"].any()):
+                    _mb = _cf[_cf["is_mega_block"]]
+                    logging.getLogger(__name__).warning(
+                        "LD containment detected (should be impossible post-occupancy): %s",
+                        [f"{r['Chr']}:{int(r['Start (bp)'])}-{int(r['End (bp)'])}"
+                         for _, r in _mb.iterrows()])
+                    st.caption(
+                        "⚠ Nested LD blocks detected — this should not occur after the "
+                        "disjoint-block redesign; the block set is left unchanged. "
+                        "Please report (see _occupancy_select's span_idx.size==0 short-circuit).")
 
             if "haplo_df_auto" not in st.session_state:
                 st.session_state["haplo_df_auto"] = {}
@@ -491,11 +485,11 @@ def render(
                 "method": "peak-centric LD blocks",
                 "ld_threshold_r2": float(ld_threshold_auto),
                 "flank_kb": float(flank_kb_auto),
-                "min_snps_per_block": int(min_snps_block_auto),
+                "min_snps_per_block": 3,
                 "top_n_snps": int(top_n),
                 "sig_threshold": float(sig_thresh),
                 "ld_decay_kb": float(ld_decay_kb),
-                "adjacent_r2_split": float(adj_r2_min_auto),
+                "adjacent_r2_split": 0.2,
             }
 
             st.session_state["ld_block_metadata_auto"] = ld_metadata_auto
@@ -509,10 +503,19 @@ def render(
         else:
             st.success(f"Found {haplo_df_auto.shape[0]} LD blocks.")
             with st.expander("Block inventory: coordinates, SNP counts, coherence"):
-                st.dataframe(haplo_df_auto, use_container_width=True)
+                # seed_significant: does each block's lead clear the significance
+                # threshold? Retaining the top-N control admits blocks seeded by
+                # non-significant markers; this column tells them apart in the inventory.
+                _inv = haplo_df_auto.copy()
+                _sig_thr = float(st.session_state.get("ld_block_metadata_auto", {})
+                                 .get("sig_threshold", 1e-5))
+                if "lead_snp_pvalue" in _inv.columns:
+                    _inv["seed_significant"] = (
+                        pd.to_numeric(_inv["lead_snp_pvalue"], errors="coerce") < _sig_thr)
+                st.dataframe(_inv, use_container_width=True)
                 st.download_button(
                     "Download LD blocks (CSV)",
-                    haplo_df_auto.to_csv(index=False).encode(),
+                    _inv.to_csv(index=False).encode(),
                     file_name="LD_clusters_genomewide.csv",
                     mime="text/csv",
                     key="dl_ld_clusters"
@@ -788,6 +791,10 @@ def _render_haplotype_gwas(
     )
     if _ldq_full is not None and not _ldq_full.empty:
         with st.expander("LD-block coherence: full per-block quality metrics"):
+            st.caption(
+                "Within-block coherence threshold (--ld-merge-r2): **0.5** (active default). "
+                "It governs both the within-block coherence split and the cross-block merge test."
+            )
             st.dataframe(_ldq_full, use_container_width=True)
             st.download_button(
                 "Download LD-block coherence (CSV)",

@@ -692,6 +692,13 @@ def find_ld_blocks_graph(
         return [(int(region_pos[final_seg].min()), int(region_pos[final_seg].max()),
                  int(final_seg.size), _mean_r2, region_sids[final_seg].tolist())]
 
+    # Legacy pre-WO4 path: no seed passed -> emit every connected component (the
+    # original multi-component algorithm, with the seed NOT guaranteed a member).
+    # Production always passes seed_sid; a caller reaching here is a direct unit test
+    # or a future caller that omitted it. Warn, do not raise (test_ld.py uses this path).
+    log.warning("find_ld_blocks_graph called without seed_sid -- using the legacy "
+                "pre-WO4 multi-component path (no seed-containment guarantee).")
+
     visited = np.zeros(n, dtype=bool)
     blocks = []
 
