@@ -86,8 +86,8 @@ def test_ld_py_has_no_rescue_code():
         assert token not in src, f"rescue code leaked into gwas/ld.py: {token}"
 
 
-# ---- AC-N8 (reinforce here too): the CLI still passes min_snps=3 to detection ----
-def test_cli_still_passes_min_snps_3():
+# ---- AC-N8 (reinforce here too): the CLI passes min_snps=2 to detection ----
+def test_cli_still_passes_min_snps_2():
     import ast
     tree = ast.parse(pathlib.Path("cli.py").read_text(encoding="utf-8"))
     found = []
@@ -98,4 +98,4 @@ def test_cli_still_passes_min_snps_3():
                 for kw in node.keywords:
                     if kw.arg == "min_snps":
                         found.append(ast.literal_eval(kw.value) if isinstance(kw.value, ast.Constant) else None)
-    assert found and all(v == 3 for v in found), f"CLI min_snps at detection != 3: {found}"
+    assert found and all(v == 2 for v in found), f"CLI min_snps at detection != 2: {found}"

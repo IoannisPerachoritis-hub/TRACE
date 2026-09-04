@@ -70,3 +70,27 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   164x43749 QC and copied byte-identical here. TRACE-release cannot regenerate them locally (its on-disk QC is the
   stale pre-R2.2 165-sample checkpoint), so the real-data @golden/@manuscript tests skip on a clean clone and fail
   locally only when the stale QC is present -- the same situation recorded for the R2.2 sync. No push (freeze).
+
+## 2026-09-04 -- Commit B: LD-block min_snps floor 3 -> 2 (GUI = CLI). TYPE (c)
+- reason: the LD-block detector's minimum cluster size (min_snps) 3 -> 2 at every LIVE site (gwas/ld.py
+  find_ld_clusters_genomewide + find_ld_blocks_graph signature defaults, cli.py detection call + run_manifest
+  "LD_min_snps", the three GUI detection call sites -- tab_genome_wide, Post_GWAS_Analysis auto-detect, GWAS_analysis
+  one-click -- + their metadata, benchmarks/capture_golden.py); the two DEAD ld.py functions and the Table-S8
+  reproduction benchmarks stay at 3. The GUI and CLI now share the same floor (the UI-cleanup governing rule). The
+  haplotype stage (min_hap_count=5, min_group_size=3) remains the real thin-block protection, so a 2-marker floor is
+  defensible.
+- before/after (tomato_locule): 3 blocks -> 4. A new significant 2-marker block surfaces (46,799,142-46,914,856,
+  eta2 0.196, P_perm floor) that min_snps=3 discarded as below-size; the three prior blocks are unchanged except
+  block 4's lead shifts member -> member (SL25ch02p47391467 -> SL25ch02p47301921; coordinates unchanged, so P_perm
+  floor unchanged). STOP conditions all PASS (no P_perm crossing, no non-member lead, zero overlaps); meff (249) /
+  n_significant_meff (43) / n_significant_bonf (11) unchanged.
+- files regenerated: tomato_locule/{ld_blocks,haplotype_blocks,annotated_blocks}.csv + run_manifest.json (3 -> 4;
+  manifest min_snps 2); varitome_locule/{expected_blocks.csv,meta.json} (3 -> 4). Tier-A: blocks_below_min_snps input
+  redesigned to a size-1 LD component + one independent neighbour (still emits 0 at min_snps=2; discriminates at the
+  relaxed min_snps=1) -- its input.npz + meta.json move but its expected_blocks.csv is byte-identical; all six Tier-A
+  meta.json record params.min_snps=2; NO Tier-A expected_*.csv moved. GOLDEN_LOCK c768db78... -> 7439a5cb... (driven
+  solely by varitome_locule/expected_blocks.csv).
+- provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (Solanaceae-gwas) from the corrected
+  164x43749 QC and copied byte-identical here; TRACE-release cannot regenerate them locally (stale pre-R2.2
+  165-sample on-disk QC), so the real-data @golden/@manuscript tests skip on a clean clone and fail locally only when
+  the stale QC is present. No push (freeze).

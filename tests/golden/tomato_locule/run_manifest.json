@@ -5,7 +5,7 @@
   "ld_decay_kb": 72.17,
   "ld_threshold": 0.6,
   "adj_r2_min": 0.2,
-  "min_snps": 3,
+  "min_snps": 2,
   "top_n": 10,
   "sig_thresh": 1e-05,
   "gap_factor": 10.0,
@@ -22,7 +22,7 @@
   "genes_csv": "C:\\Users\\User\\Antigravity\\Projects\\Solanaceae-gwas\\data\\Sol_genes_SL3.csv",
   "descriptions_csv": null,
   "trait_col": "locule_number",
-  "n_blocks": 3,
+  "n_blocks": 4,
   "haplotype_missing_columns": [],
   "annotated_missing_columns": []
 }

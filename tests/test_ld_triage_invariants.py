@@ -63,7 +63,7 @@ CLI_HAP_COLUMNS = ["Hap_PValue", "Hap_FDR_BH", "Hap_F_perm", "Hap_F_param",
 def test_n3_detection_defaults_untouched():
     defs = {p.name: p.default
             for p in inspect.signature(ld.find_ld_clusters_genomewide).parameters.values()}
-    expect = {"ld_threshold": 0.6, "flank_kb": 300, "min_snps": 3, "top_n": 0,
+    expect = {"ld_threshold": 0.6, "flank_kb": 300, "min_snps": 2, "top_n": 0,
               "sig_thresh": 1e-5, "adj_r2_min": 0.2, "min_pair_n": 20, "merge_iou": 0.3}
     for k, v in expect.items():
         assert k in defs, f"detection default {k} vanished from find_ld_clusters_genomewide"

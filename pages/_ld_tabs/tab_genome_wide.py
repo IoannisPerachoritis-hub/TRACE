@@ -424,7 +424,7 @@ def render(
             # exposes exactly what the CLI exposes (one control per flag), and a GUI
             # run is reproducible from the command line. adj_r2_min (0.2) is measured
             # inert -- the adaptive floor min(0.5, max(floor, 0.5*median adj r2)) never
-            # binds on real blocks; gap_factor (10.0) has no CLI flag; min_snps (3) is
+            # binds on real blocks; gap_factor (10.0) has no CLI flag; min_snps (2) is
             # hardcoded in cli.py's detection call.
             st.session_state["adj_r2_min"] = 0.2   # consumed by Post_GWAS_Analysis.py
 
@@ -445,7 +445,7 @@ def render(
                     sid=sid,
                     ld_threshold=ld_threshold_auto,
                     flank_kb=flank_kb_auto,
-                    min_snps=3,
+                    min_snps=2,
                     top_n=top_n,
                     sig_thresh=sig_thresh,
                     max_dist_bp=None,
@@ -485,7 +485,7 @@ def render(
                 "method": "peak-centric LD blocks",
                 "ld_threshold_r2": float(ld_threshold_auto),
                 "flank_kb": float(flank_kb_auto),
-                "min_snps_per_block": 3,
+                "min_snps_per_block": 2,
                 "top_n_snps": int(top_n),
                 "sig_threshold": float(sig_thresh),
                 "ld_decay_kb": float(ld_decay_kb),

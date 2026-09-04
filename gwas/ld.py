@@ -552,7 +552,7 @@ def find_ld_blocks_graph(
     r2: np.ndarray,
     ld_threshold: float = 0.6,
     max_dist_bp: int | None = None,
-    min_snps: int = 3,
+    min_snps: int = 2,
     adj_r2_min: float = 0.3,   # dead default: live callers pass 0.2 (find_ld_clusters_genomewide)
     gap_factor: float = 10.0,
     region_sids: np.ndarray | None = None,
@@ -958,7 +958,7 @@ def find_ld_clusters_genomewide(
     sid,
     ld_threshold=0.6,
     flank_kb=300,
-    min_snps=3,
+    min_snps=2,
     top_n=0,
     sig_thresh=1e-5,
     max_dist_bp=None,
