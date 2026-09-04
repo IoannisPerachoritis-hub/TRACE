@@ -1466,8 +1466,6 @@ def _render_tukey_and_boxplot(
     st.markdown("#### Compact Letter Display (CLD)")
 
     groups = sorted(mlg_df["MLG_label"].unique())
-    n_groups = len(groups)
-
     sig_matrix = pd.DataFrame(False, index=groups, columns=groups)
     for _, row in tukey_df.iterrows():
         g1 = str(row["group1"])
@@ -1476,125 +1474,26 @@ def _render_tukey_and_boxplot(
         sig_matrix.loc[g1, g2] = reject
         sig_matrix.loc[g2, g1] = reject
 
-    letter_sets = {g: {i} for i, g in enumerate(groups)}
-    next_letter = n_groups
+    # Maximal-clique CLD (gwas/cld.py): two groups share a letter iff they are NOT
+    # significantly different. Replaces a greedy insert/absorb that could leave private
+    # seed letters unmerged (3 mutually non-sig groups -> a, ab, ac instead of a, a, a).
+    from gwas.cld import compact_letter_display
 
-    changed = True
-    max_iter = 200
-    iteration = 0
-
-    while changed and iteration < max_iter:
-        changed = False
-        iteration += 1
-
-        for i_g in range(n_groups):
-            for j_g in range(i_g + 1, n_groups):
-                g1 = groups[i_g]
-                g2 = groups[j_g]
-
-                if sig_matrix.loc[g1, g2]:
-                    continue
-
-                if letter_sets[g1].intersection(letter_sets[g2]):
-                    continue
-
-                found = False
-
-                for L in list(letter_sets[g1]):
-                    ok = True
-                    for g_other in groups:
-                        if g_other == g2:
-                            continue
-                        if L in letter_sets[g_other] and sig_matrix.loc[g2, g_other]:
-                            ok = False
-                            break
-                    if ok:
-                        letter_sets[g2].add(L)
-                        found = True
-                        changed = True
-                        break
-
-                if found:
-                    continue
-
-                for L in list(letter_sets[g2]):
-                    ok = True
-                    for g_other in groups:
-                        if g_other == g1:
-                            continue
-                        if L in letter_sets[g_other] and sig_matrix.loc[g1, g_other]:
-                            ok = False
-                            break
-                    if ok:
-                        letter_sets[g1].add(L)
-                        found = True
-                        changed = True
-                        break
-
-                if found:
-                    continue
-
-                letter_sets[g1].add(next_letter)
-                letter_sets[g2].add(next_letter)
-                next_letter += 1
-                changed = True
-
-    # Absorption
-    all_letters = set()
-    for s in letter_sets.values():
-        all_letters.update(s)
-
-    for L in sorted(all_letters):
-        groups_with_L = [g for g in groups if L in letter_sets[g]]
-        if len(groups_with_L) <= 1:
-            continue
-
-        can_remove = True
-        for g in groups_with_L:
-            if len(letter_sets[g]) <= 1:
-                can_remove = False
-                break
-
-        if not can_remove:
-            continue
-
-        trial = {g: letter_sets[g] - {L} for g in groups_with_L}
-        ok = True
-        for i_g in range(len(groups_with_L)):
-            if not ok:
-                break
-            for j_g in range(i_g + 1, len(groups_with_L)):
-                g1 = groups_with_L[i_g]
-                g2 = groups_with_L[j_g]
-                if sig_matrix.loc[g1, g2]:
-                    continue
-                s1 = trial.get(g1, letter_sets[g1])
-                s2 = trial.get(g2, letter_sets[g2])
-                if not s1.intersection(s2):
-                    ok = False
-                    break
-
-        if ok:
-            for g in groups_with_L:
-                letter_sets[g].discard(L)
-
-    # Map to letters
-    used_ids = sorted(set().union(*letter_sets.values()))
-    letters_str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    id_to_char = {}
-    for idx, lid in enumerate(used_ids):
-        id_to_char[lid] = letters_str[idx] if idx < len(letters_str) else f"L{idx}"
-
-    cld_strings = {
-        g: "".join(sorted(id_to_char[lid] for lid in letter_sets[g]))
-        for g in groups
-    }
+    _cld_means = mlg_df.groupby("MLG_label")[trait_col].mean().to_dict()
+    cld_strings = compact_letter_display(groups, sig_matrix, means=_cld_means)
 
     cld_df = pd.DataFrame({
         "MLG_label": groups,
         "CLD": [cld_strings[g] for g in groups],
     })
     st.dataframe(cld_df, use_container_width=True)
+    if any(len(_v) > 1 for _v in cld_strings.values()):
+        st.caption(
+            "Some groups carry more than one letter: they are statistically "
+            "indistinguishable from groups that themselves differ (a chain of "
+            "overlapping non-differences), so no single letter can separate every "
+            "group. See **Help → Interpreting Results** for how to read this."
+        )
 
     # --------------------------------------------------------
     # Boxplot WITH CLD letters (closure — rendered via the viz toggle below)
