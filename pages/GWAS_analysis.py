@@ -931,17 +931,23 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     pcs = results["pcs"]
     y = results["y"]
 
-    # Aligned user covariates (iid order); applied only when complete for every
-    # analysis sample (else warn + run without — the CLI --covar drops instead).
+    # Aligned user covariates (iid order); applied only when complete for every analysis
+    # sample. One missing cell stops the run: the uploaded file is a declaration that a
+    # confounder exists, so a silent drop would both discard the correction and change n
+    # behind a warning. The CLI --covar drops the incomplete samples instead.
     user_covar_mat = None
     user_covar_names = None
     if covar_df is not None:
         _cov_M, _cov_names, _cov_ok = _align_cov(covar_df, iid[:, 0])
         if not _cov_ok.all():
-            st.warning(
-                f"{int((~_cov_ok).sum())} of {len(_cov_ok)} analysis samples are missing "
-                "covariate values; covariates NOT applied. Provide covariates for all "
-                "samples, or use the CLI --covar (which drops incomplete samples)."
+            _cov_missing = [str(s) for s, ok in zip(iid[:, 0], _cov_ok) if not ok]
+            _cov_shown = ", ".join(_cov_missing[:10]) + (
+                f", and {len(_cov_missing) - 10} more" if len(_cov_missing) > 10 else "")
+            _rehydrate_or_stop(
+                f"{len(_cov_missing)} of {len(_cov_ok)} analysis samples without covariate "
+                f"values: {_cov_shown}. Two ways forward: complete covariate values for "
+                f"every analysis sample, or file removal. CLI --covar: incomplete-sample "
+                f"drop instead."
             )
         else:
             user_covar_mat, user_covar_names = _cov_M, _cov_names
