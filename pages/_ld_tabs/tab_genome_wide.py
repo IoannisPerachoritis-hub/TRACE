@@ -847,13 +847,29 @@ def _render_block_visualization(
     labels = []
     id_map = []
 
+    # Block MEMBERSHIP (len SNP_IDs) from the source LD-blocks table, keyed by lead SNP, so
+    # the selector shows the block's SNP count AND the (call-rate/monomorphic/LD-thinned)
+    # marker count that actually built the MLGs -- the two diverge when markers are dropped.
+    _member_ct = {}
+    if isinstance(haplo_df_auto, pd.DataFrame) and "lead_snp" in haplo_df_auto.columns:
+        for _, _br in haplo_df_auto.iterrows():
+            _ids = str(_br.get("SNP_IDs", "") or "")
+            _member_ct[str(_br["lead_snp"])] = len([s for s in _ids.split(",") if s])
+    if "n_snps" not in hap_gwas_df.columns:
+        st.warning(
+            "Haplotype results are missing the expected 'n_snps' column; the block "
+            "selector cannot show the per-block MLG-marker count."
+        )
+
     for idx, row in hap_gwas_df.iterrows():
         block_id = row["Block_ID"] if "Block_ID" in hap_gwas_df.columns else idx
         chr_ = str(row["Chr"])
         start = int(row["Start"])
         end = int(row["End"])
 
-        snps = int(row.get("n_snps", row.get("N_SNPs", row.get("SNPs", 0))))
+        n_mlg = int(row["n_snps"]) if "n_snps" in hap_gwas_df.columns else 0
+        n_members = _member_ct.get(str(row.get("lead_snp", "")), n_mlg)
+        _mlg_txt = "" if n_members == n_mlg else f" ({n_mlg} used for MLG)"
 
         pval = float(row["PValue"])
         logp = -np.log10(max(pval, 1e-300))
@@ -861,7 +877,7 @@ def _render_block_visualization(
         label = (
             f"Block {block_id}, Chr{chr_}: "
             f"{start / 1e6:.2f}-{end / 1e6:.2f} Mb | "
-            f"{snps} SNPs | -log10(p)={logp:.2f}"
+            f"{n_members} SNPs{_mlg_txt} | -log10(p)={logp:.2f}"
         )
 
         labels.append(label)
@@ -1009,20 +1025,25 @@ def _render_block_visualization(
                     y=_y, groups=_g_cls, pcs=_pcs, n_perm=_n_perm, seed=_seed)
                 st.session_state[_snp_key] = (float(_F), float(_p_emp))
 
-            _covar_txt = (f"{_k} PC covariate(s)" if _k > 0 else
-                          "no PC covariates, kinship not modelled -- see the model p above "
-                          "for the kinship-adjusted test")
-            _testA = (f"model p = {_model_p:.2e}" if _model_p is not None else "model p unavailable")
-            _testB = (f"F = {_F:.2f}, p = {_p_emp:.3g}" if np.isfinite(_F) else "not computable")
-            st.caption(
-                f"Structure-aware tests for {_lead}. "
-                f"A (primary): LOCO-MLM Wald {_testA} -- the kinship-adjusted additive "
-                f"per-allele-dose test (assumes approximately normal residuals). "
-                f"B (secondary): Freedman-Lane permutation F-test ({_covar_txt}): {_testB} "
-                f"over {_n_perm} permutations -- distribution-free, treats genotype as a "
-                f"factor. A marginal genotype test (Mann-Whitney/t-test) is deliberately "
-                f"omitted: it adjusts for neither kinship nor structure."
-            )
+            # Compact two-number disclosure beside the plot; methodology in the popover.
+            _pA = f"{_model_p:.2e}" if _model_p is not None else "n/a"
+            _pB = f"{_p_emp:.3g}" if np.isfinite(_F) else "n/a"
+            st.caption(f"MLM p = {_pA} · FL p = {_pB}  (B = {_n_perm}, k = {_k})")
+            with st.popover("How to read these two tests"):
+                st.markdown(
+                    "- **MLM p** (primary): the LOCO-MLM Wald test on the lead SNP -- "
+                    "kinship-adjusted, additive per-allele-dose, read from the GWAS results "
+                    "(not recomputed).\n"
+                    "- **FL p** (secondary): a Freedman-Lane permutation F-test on the "
+                    "genotype classes -- distribution-free, treats genotype as a factor, "
+                    "adjusted for the same **k** PC covariates the scan used.\n"
+                    "- **k = 0** (the shipped `--n-pcs 0` default) means the permutation test "
+                    "is NOT structure-adjusted; use the MLM p above for the kinship-adjusted "
+                    "answer.\n"
+                    "- A marginal genotype test (Mann-Whitney / t-test) is deliberately not "
+                    "shown: it adjusts for neither kinship nor structure.\n\n"
+                    "Full guidance: **Help → Interpreting Results**."
+                )
 
     # --------------------------------------------------------
     # Extract SNPs using phenotype mask
@@ -1118,10 +1139,16 @@ def _render_block_visualization(
         st.warning("Too few haplotypes remain after filtering.")
         st.stop()
 
-    st.caption(
-        f"Showing {len(valid_groups)} haplotype groups "
-        f"(≥{min_group_size} samples each, excluding 'Other')."
-    )
+    # Only surface a notice when groups were actually dropped (short, not a paragraph).
+    _dropped = [g for g in group_counts.index if g not in valid_groups]
+    if _dropped:
+        _bits = []
+        _n_small = sum(1 for g in _dropped if g != "Other")
+        if _n_small:
+            _bits.append(f"{_n_small} group(s) with < {int(min_group_size)} samples")
+        if "Other" in group_counts.index:
+            _bits.append("an 'Other' bucket of rare haplotypes")
+        st.caption(f"{len(valid_groups)} haplotype groups tested; excluded: {', '.join(_bits)}.")
 
     mlg_df = mlg_df.loc[mlg_df["MLG"].isin(valid_groups)].copy()
     mlg_df["MLG"] = pd.Categorical(mlg_df["MLG"])
