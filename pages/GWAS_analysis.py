@@ -2351,6 +2351,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     pcs=_pcs_for["MLM"],
                                     n_perm=_pipe_hap_perms,
                                     n_pcs_used=_pipe_k_mlm,
+                                    user_covar=user_covar_mat,
                                 )
                                 if _m_hap_gwas is not None and not _m_hap_gwas.empty:
                                     _n_sig_hap = int((_m_hap_gwas.get("FDR_BH", pd.Series(dtype=float)) < 0.05).sum())

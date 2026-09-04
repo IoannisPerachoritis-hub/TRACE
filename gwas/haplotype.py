@@ -118,6 +118,7 @@ def run_haplotype_block_gwas(
     n_perm=1000,
     geno_encoding="dosage012",
     n_pcs_used=None,
+    user_covar=None,
 ):
     """
     Genome-wide haplotype/MLG association per LD block.
@@ -454,6 +455,19 @@ def run_haplotype_block_gwas(
             k_used = int(min(k_target, pcs_block.shape[1]))
             pcs_use = pcs_block.iloc[:, :k_used].values if k_used > 0 else None
 
+        # Append user covariates AFTER the PC truncation above (n_pcs_used slices only the
+        # PC columns, so covariates stacked before it would be sliced off). Aligned to the
+        # block's final samples, PCs first then covariates (the _make_covar convention);
+        # inert when user_covar is None, and NaN-safe (any missing cell -> PCs only).
+        _cov_use = pcs_use
+        if user_covar is not None:
+            _uc = pd.DataFrame(np.asarray(user_covar, float),
+                               index=geno_df.index.astype(str))
+            _uc_mat = _uc.reindex(df_test["Sample"].astype(str)).to_numpy(dtype=float)
+            if np.isfinite(_uc_mat).all():
+                _cov_use = (np.column_stack([pcs_use, _uc_mat])
+                            if pcs_use is not None else _uc_mat)
+
         try:
             F_param, pval_param, df1, df2 = block_test_lm_with_pcs(
                 y=y_test,
@@ -470,7 +484,7 @@ def run_haplotype_block_gwas(
             F_obs, pval_perm = freedman_lane_perm_pvalue(
                 y=y_test,
                 groups=g_test,
-                pcs=pcs_use,
+                pcs=_cov_use,
                 n_perm=int(n_perm),
                 seed=block_seed,
             )
@@ -580,7 +594,8 @@ def run_haplotype_block_gwas_cached(
     min_group_size,
     n_perm,
     geno_encoding,
-    n_pcs_used
+    n_pcs_used,
+    user_covar=None
 ):
     """
     Cached wrapper for haplotype/MLG GWAS.
@@ -604,6 +619,7 @@ def run_haplotype_block_gwas_cached(
         n_perm=n_perm,
         geno_encoding=geno_encoding,
         n_pcs_used=n_pcs_used,
+        user_covar=user_covar,
     )
 
 if st is not None:

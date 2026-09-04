@@ -1129,6 +1129,7 @@ def run_pipeline(args):
                 geno_df=geno_df, pheno_df=pheno_clean, trait_col=args.trait,
                 pcs=_hap_pcs, n_perm=args.hap_perms, n_pcs_used=n_pcs_mlm,
                 min_hap_count=args.hap_min_count, min_group_size=args.hap_min_group_size,
+                user_covar=user_covar_mat,
             )
             if m_hap_gwas is not None and not m_hap_gwas.empty:
                 n_sig_hap = int((m_hap_gwas.get("FDR_BH", pd.Series(dtype=float)) < 0.05).sum())
