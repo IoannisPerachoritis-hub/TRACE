@@ -117,3 +117,17 @@ def test_custom_sig_thresh_runs_from_memory():
     # the rule + custom threshold are propagated to downstream pages (LD tab)
     assert at.session_state["sig_rule"] == "Custom p-value"
     assert float(at.session_state["custom_sig_thresh"]) == 5e-8
+
+
+def test_covar_persist_decision():
+    """Commit 1 §1a: the covariate-source decision. AppTest cannot hold a live upload
+    (vcf_file is always None there), so the removable-covariate branch is exercised by
+    this pure helper: live session (running_from_memory=False) + a persisted covariate +
+    an empty uploader -> 'clear' (the user removed it); rehydrate -> 'session' (keep)."""
+    from pages.GWAS_analysis import _covar_persist_decision as d
+    assert d(True, False, False) == "upload"      # a file is present
+    assert d(True, True, True) == "upload"         # file present wins regardless
+    assert d(False, True, True) == "session"       # rehydrate + persisted -> keep
+    assert d(False, False, True) == "clear"        # live + uploader emptied -> remove
+    assert d(False, True, False) == "none"         # nothing persisted
+    assert d(False, False, False) == "none"
