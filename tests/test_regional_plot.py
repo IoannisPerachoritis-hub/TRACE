@@ -225,3 +225,15 @@ def test_extract_by_snp_ids_is_member_aware():
         geno, chroms, positions, sid, "2", 1000, 1800, snp_ids=None)
     assert set(sids_mem.astype(str)) == {"m1", "m2", "m3"}
     assert set(sids_pos.astype(str)) == {"m1", "x1", "m2", "x2", "m3"}
+
+
+def test_absent_gene_track_caption_distinguishes_no_model_from_empty_window():
+    """WO-GUI-01: the zero-gene case discloses WHICH fact applies. No model loaded
+    (genes_df None or empty) points the user to load one; a loaded model with no
+    genes in the window states that instead."""
+    from pages._ld_tabs.tab_regional import _absent_gene_track_caption
+    for gm in (None, pd.DataFrame()):
+        msg = _absent_gene_track_caption(gm)
+        assert "No gene model loaded" in msg and "Gene Annotation tab" in msg
+    loaded = pd.DataFrame({"Chr": ["2"], "Start": [1000], "End": [2000], "Gene_ID": ["G1"]})
+    assert _absent_gene_track_caption(loaded) == "No annotated genes fall in this window."
