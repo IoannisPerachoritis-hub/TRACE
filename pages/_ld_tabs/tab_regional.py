@@ -105,6 +105,16 @@ def _filter_genes(genes_df, chr_sel, start_bp, end_bp):
     return sub
 
 
+def _absent_gene_track_caption(genes_df):
+    """Caption for the zero-gene case on the Regional Plot: distinguishes a missing
+    gene model from a loaded model that has no annotated genes in this window (two
+    different facts for interpreting a locus). None or empty -> no model is loaded."""
+    if genes_df is None or getattr(genes_df, "empty", True):
+        return ("No gene model loaded, so no gene track is shown. Load one "
+                "in the Gene Annotation tab to add gene context here.")
+    return "No annotated genes fall in this window."
+
+
 def render(ctx: LDContext, window):
     st.subheader("Regional association plot")
 
@@ -252,6 +262,7 @@ def render(ctx: LDContext, window):
                            "for the full list. Bars show position, extent and strand.")
         else:
             gene_labels = True
+            st.caption(_absent_gene_track_caption(st.session_state.get("genes_df")))
         fig_s = plot_regional_association_static(
             wdf, r2_final, window.lead_snp, sig_threshold,
             block_interval=block_interval, block_members=block_members,
