@@ -230,6 +230,26 @@ def _has_persisted_upload():
             and "_persist_pheno" in st.session_state)
 
 
+def _covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):
+    """How to source the covariate when the uploader holds no file this rerun.
+
+    "upload"  -> a file is present; load it.
+    "session" -> run-from-memory rehydrate (the whole page is sourced from _persist_*);
+                 reuse the persisted covariate.
+    "clear"   -> live session with the uploader emptied; the user removed the covariate,
+                 so drop the persisted one (nothing else ever clears it, so it would
+                 otherwise apply silently to every later trait).
+    "none"    -> no file and nothing persisted.
+    Pure decision (no Streamlit / IO) so both branches are unit-testable without a
+    browser; `running_from_memory` is `vcf_file is None` (the page's own read-back gate).
+    """
+    if covar_file_present:
+        return "upload"
+    if not has_persisted_covar:
+        return "none"
+    return "session" if running_from_memory else "clear"
+
+
 def _render_last_run_results():
     _g = st.session_state.get("gwas_df")
     _summ = st.session_state.get("gwas_run_summary", {})
@@ -719,15 +739,25 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         align_covariates as _align_cov,
     )
     covar_df = None
-    if covar_file is not None:
+    _covar_source = None
+    _covar_decision = _covar_persist_decision(
+        covar_file is not None, vcf_file is None, "_persist_covar" in st.session_state
+    )
+    if _covar_decision == "upload":
         try:
             covar_file.seek(0)
             covar_df = _sel_cov(_load_cov(covar_file))
             st.session_state["_persist_covar"] = covar_df
+            _covar_source = covar_file.name
         except Exception as _cov_err:
             _rehydrate_or_stop(f"Could not read covariate file: {_cov_err}")
-    elif "_persist_covar" in st.session_state:
+    elif _covar_decision == "session":
         covar_df = st.session_state["_persist_covar"]
+        _covar_source = "from session"
+    elif _covar_decision == "clear":
+        # Live session, uploader emptied -> user removed the covariate; drop the
+        # persisted copy so it does not silently apply to every later trait.
+        st.session_state.pop("_persist_covar", None)
     # Store RAW phenotype immediately (before zero-handling or transformations)
     # Always refresh pheno_raw when a new phenotype file is loaded
     st.session_state["pheno_raw"] = pheno.copy()
@@ -951,6 +981,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             )
         else:
             user_covar_mat, user_covar_names = _cov_M, _cov_names
+    if user_covar_mat is not None:
+        st.caption(
+            f"Covariate: {_covar_source} · columns: {', '.join(user_covar_names)}"
+        )
     y_key = put_array_in_session(
         np.asarray(y),
         "Y_VEC",
