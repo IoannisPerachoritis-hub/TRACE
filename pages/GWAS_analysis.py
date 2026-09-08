@@ -250,10 +250,15 @@ def _covar_persist_decision(covar_file_present, running_from_memory, has_persist
     return "session" if running_from_memory else "clear"
 
 
-def _render_last_run_results():
+def _render_last_run_results(stale=False):
     _g = st.session_state.get("gwas_df")
     _summ = st.session_state.get("gwas_run_summary", {})
     _figs = st.session_state.get("gwas_figures", {})
+    if stale:
+        st.warning(
+            "Current settings differ from the run shown below. "
+            "Click Run GWAS to apply them."
+        )
     _trait = (_summ.get("trait") or st.session_state.get("active_trait")
               or st.session_state.get("trait_col", "?"))
     _bits = [f"trait **{_trait}**"]
@@ -2989,11 +2994,26 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     _run_clicked = st.button("Run GWAS", type="primary", help="Click to start the GWAS analysis with current parameters.")
     if _run_clicked:
         st.session_state["gwas_triggered"] = True
-    # Navigated back (did not click Run this rerun) and results already exist for
-    # this trait -> re-display them without recomputing.
+    # Input fingerprint for the stale-result guard below: every input that changes the
+    # scan. _covar_fp is duplicated here (also computed for the MLMM/FarmCPU readers) so a
+    # covariate change is caught before the guard.
+    _covar_fp = (
+        "nocov" if user_covar_mat is None
+        else f"cov{hash_bytes(user_covar_mat.tobytes(), digest_size=8)}"
+    )
+    _scan_fp = hash_bytes(repr((
+        trait_col, int(n_pcs), _covar_fp,
+        maf_thresh, miss_thresh, ind_miss_thresh, mac_thresh, info_thresh,
+        impute_method, impute_k, impute_l,
+        int(drop_alt), vcf_hash, pheno_hash,
+    )).encode(), digest_size=16)
+    # Navigated back (did not click Run this rerun) and results already exist for this
+    # trait -> re-display them, with a staleness notice if the inputs have since changed.
     if (not _run_clicked and _has_persisted_gwas()
             and st.session_state.get("gwas_run_summary", {}).get("trait") == trait_col):
-        _render_last_run_results()
+        _stored_fp = st.session_state.get("gwas_run_summary", {}).get("scan_fp")
+        _stale = _stored_fp is not None and _stored_fp != _scan_fp
+        _render_last_run_results(stale=_stale)
         st.stop()
     if not st.session_state.get("gwas_triggered", False):
         _rehydrate_or_stop()
@@ -4269,6 +4289,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         "models": sorted(set(["MLM"] + [m.split()[0] for m in model_choices])) if "model_choices" in locals() else ["MLM"],
         "lambda_gc": float(lambda_gc) if "lambda_gc" in locals() else None,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "scan_fp": _scan_fp if "_scan_fp" in locals() else None,
     }
     bump_data_version()  # GWAS complete — notify downstream pages
     # ============================================================

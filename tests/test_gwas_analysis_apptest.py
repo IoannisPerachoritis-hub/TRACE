@@ -131,3 +131,25 @@ def test_covar_persist_decision():
     assert d(False, False, True) == "clear"        # live + uploader emptied -> remove
     assert d(False, True, False) == "none"         # nothing persisted
     assert d(False, False, False) == "none"
+
+
+def test_stale_scan_notice():
+    """Commit 2: after a completed run, an input change without re-clicking Run
+    re-displays the last results WITH a staleness notice; an unchanged rerun shows none."""
+    at = AppTest.from_file(_PAGE, default_timeout=300)
+    samples = _seed_from_memory(at, run=True)   # RunA computes -> stores gwas_run_summary.scan_fp
+    at.run()
+    assert "gwas_df" in at.session_state and len(at.session_state["gwas_df"]) > 0
+    assert "gwas_run_summary" in at.session_state
+    assert "scan_fp" in at.session_state["gwas_run_summary"]
+    _msg = "Current settings differ"
+    # RunB: no input change, no Run-click -> guard fires, fingerprint matches -> NO notice
+    at.run()
+    assert not any(_msg in w.value for w in at.warning)
+    # RunC: add a covariate (changes the fingerprint) without a Run-click -> stale notice
+    rng = np.random.default_rng(3)
+    at.session_state["_persist_covar"] = pd.DataFrame(
+        {"batch": rng.normal(0, 1, len(samples))}, index=samples
+    )
+    at.run()
+    assert any(_msg in w.value for w in at.warning)
