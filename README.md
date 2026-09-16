@@ -379,7 +379,7 @@ Enable subsampling GWAS to check signal reproducibility. Each iteration draws 80
 
 ### 5. CLI Batch Mode
 
-TRACE ships a command-line interface for headless runs on HPC clusters or in batch scripts.
+TRACE ships a command-line interface for headless and batch-scripted runs.
 
 ```bash
 trace-gwas --vcf data.vcf.gz --pheno pheno.csv --trait Yield --output results/

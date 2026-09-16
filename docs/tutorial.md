@@ -73,7 +73,7 @@ The pipeline writes a ZIP containing:
 
 - `tables/GWAS_<trait>.csv` — full GWAS results table
 - `tables/CrossModel_Consensus.csv` — per-SNP detection across MLM/MLMM/FarmCPU (when multiple models are run)
-- `tables/LD_blocks_annotated_<model>.csv` — LD blocks with gene annotations and haplotype statistics
+- `tables/LD_blocks_annotated_<model>.csv` — LD blocks with gene annotations and haplotype statistics (when significant LD blocks are detected)
 - `figures/` — Manhattan plots, QQ plots, LD heatmaps
 - `report.html` — self-contained HTML analysis report
 
