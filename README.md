@@ -111,20 +111,20 @@ Run `trace-gwas --help` for the full list of arguments. If not installed via pip
 ### CLI ↔ Web UI parity
 
 Every analysis surfaced in the one-click web pipeline has a corresponding
-CLI flag, so headless / HPC runs produce the same artifacts as the UI.
+CLI flag, so headless / batch runs produce the same artifacts as the UI.
 
 | Capability                              | Web UI page              | CLI flag(s)                                               |
 |-----------------------------------------|--------------------------|-----------------------------------------------------------|
 | MLM (LOCO) GWAS                         | GWAS Analysis            | `--model mlm` (default), `--no-loco` to disable           |
-| MLMM                                    | GWAS Analysis            | `--models mlm,mlmm`                                       |
-| TRACE-FarmCPU                           | GWAS Analysis            | `--models mlm,farmcpu`                                    |
+| MLMM                                    | GWAS Analysis            | `--model mlm mlmm`                                        |
+| TRACE-FarmCPU                           | GWAS Analysis            | `--model mlm farmcpu`                                     |
 | Cross-model consensus                   | GWAS Analysis            | automatic when ≥ 2 models requested (`CrossModel_Consensus.csv`) |
 | PC covariates + selection diagnostics   | GWAS Analysis            | `--n-pcs INT` (fixed; default 0); report includes PC-selection diagnostics |
-| QC: MAF / MAC / missingness / INFO      | GWAS Analysis            | `--maf`, `--mac`, `--miss`, `--info`                      |
-| Significance threshold                  | GWAS Analysis            | `--sig-rule {meff,bonferroni,fdr}`                        |
-| LD blocks + haplotype testing           | Post-GWAS Analysis       | `--ld-blocks`, `--haplotype-test`                         |
-| Gene annotation                         | Post-GWAS Analysis       | `--annotate`, `--gene-window-kb`                          |
-| Subsampling stability                   | GWAS Analysis            | `--subsample`, `--n-subsamples`, `--retain-frac`          |
+| QC: MAF / MAC / missingness / INFO      | GWAS Analysis            | `--maf`, `--mac`, `--miss`, `--ind-miss`, `--info-thresh` |
+| Significance threshold                  | GWAS Analysis            | `--sig-thresh {meff,bonferroni,fdr,<p-value>}` (default bonferroni) |
+| LD blocks + haplotype testing           | Post-GWAS Analysis       | `--ld-r2`, `--ld-seed-p`, `--ld-top-n`, `--hap-perms`     |
+| Gene annotation                         | Post-GWAS Analysis       | `--gene-model`, `--genome-build`; `--no-annotation` to skip |
+| Subsampling stability                   | GWAS Analysis            | `--subsampling`, `--boot-reps`, `--boot-frac`             |
 | Reproducible RNG                        | (deterministic by build) | `--seed INT` (default 42)                                 |
 | HTML report                             | GWAS Analysis            | enabled by default; suppress with `--no-report`           |
 | Plots (Manhattan / QQ / heatmaps)       | GWAS, LD pages           | enabled by default; suppress with `--no-plots`            |
@@ -247,7 +247,7 @@ TRACE/
 │
 ├── gwas/                               # Core statistical modules
 │   ├── __init__.py
-│   ├── models.py                       # MLM, MLMM, OLS effects, BIC proxy, auto PC selection
+│   ├── models.py                       # MLM, MLMM, OLS effects, BIC proxy
 │   ├── kinship.py                      # GRM construction, LOCO kernels, LD pruning
 │   ├── qc.py                           # Quality control pipeline (MAF, MAC, missingness, INFO score)
 │   ├── ld.py                           # r², LD decay, graph-based block detection
@@ -268,7 +268,7 @@ TRACE/
 ├── tests/                              # Automated test suite (378 tests)
 │   ├── conftest.py                     # Shared fixtures
 │   ├── test_ld.py                      # r², LD blocks, IoU, decay, SNP membership
-│   ├── test_models.py                  # OLS, F-test, one-hot encoding, auto PC
+│   ├── test_models.py                  # OLS, F-test, one-hot encoding
 │   ├── test_haplotype.py               # Block GWAS, Freedman-Lane, η²
 │   ├── test_kinship.py                 # GRM construction, standardization
 │   ├── test_qc.py                      # Allele freq, AF masks, call rate
@@ -342,7 +342,7 @@ TRACE ships with bundled gene models for tomato:
 | Tomato (*S. lycopersicum*) | SL3.1 (default) | GCF_000188115.5 | NCBI RefSeq |
 | Tomato (*S. lycopersicum*) | ITAG4.0 (SL4 option) | SL4.0 | Sol Genomics Network |
 
-**Using TRACE with other species:** TRACE works with any diploid VCF. For species beyond tomato, supply a tab-delimited gene coordinate file with columns: `chr`, `start`, `end`, `gene_id`, `description`. Load it via the Gene Annotation upload in the UI or `--genes` on the CLI.
+**Using TRACE with other species:** TRACE works with any diploid VCF. For species beyond tomato, supply a tab-delimited gene coordinate file with columns: `chr`, `start`, `end`, `gene_id`, `description`. Load it via the Gene Annotation upload in the UI or `--gene-model` on the CLI.
 
 **Chromosome naming:** common prefixes (`chr`, `SL4.0ch`, `Ca`, `Os`, `Gm`, etc.) are stripped and entries that resolve to positive integers are kept. The chromosome count comes from the data. Anything that does not resolve to an integer is mapped to `"ALT"` and dropped from LOCO kernels and LD pruning. If no chromosomes resolve, the error prints a sample of the original CHROM values. Implementation: `_clean_chr_series()` in `gwas/io.py`.
 
@@ -358,8 +358,8 @@ Upload VCF + phenotype CSV. Configure QC thresholds (MAF, MAC, missingness), sel
 
 - **Manual workflow** — Set the PC count via slider, click "Run GWAS", then explore results section by section (Manhattan, QQ, multi-model, subsampling). Each section has its own download buttons.
 
-- **One-Click Full Analysis** — open the "One-Click Full Analysis" section, pick the models (default: MLM + FarmCPU) and a significance threshold (M_eff / Bonferroni / FDR), then click "Run Full Analysis". The pipeline chains auto PC selection → MLM GWAS → MLMM/FarmCPU (if selected) → Manhattan + QQ plots → LD blocks → HTML report → ZIP bundle. A live status indicator shows progress. The ZIP contains:
-  - `tables/` — GWAS results CSV (with `Significant_Bonf` and `Significant_Meff` columns), multi-model CSVs, PC selection lambda table
+- **One-Click Full Analysis** — open the "One-Click Full Analysis" section, pick the models (default: MLM + FarmCPU) and a significance threshold (M_eff / Bonferroni / FDR), then click "Run Full Analysis". The pipeline runs MLM GWAS → MLMM/FarmCPU (if selected) → Manhattan + QQ plots → LD blocks → HTML report → ZIP bundle at the fixed PC count you set (default 0; TRACE no longer auto-selects PCs, but the run report includes PC-selection diagnostics). A live status indicator shows progress. The ZIP contains:
+  - `tables/` — GWAS results CSV (with `Significant_Bonf` and `Significant_Meff` columns), multi-model CSVs, PC-selection diagnostics (eigenvalue spectrum)
   - `figures/` — Manhattan plot, QQ plot (300 DPI PNG)
   - `report.html` — self-contained HTML report with all results
 
@@ -404,7 +404,7 @@ python -m pytest tests/test_ld.py -v
 | Module              | Tests | Coverage                                         |
 |---------------------|-------|--------------------------------------------------|
 | `gwas/ld.py`        | 39    | r², LD blocks, IoU, decay, SNP membership        |
-| `gwas/models.py`    | 48    | OLS effects, F-test, one-hot encoding, auto PC selection |
+| `gwas/models.py`    | 48    | OLS effects, F-test, one-hot encoding |
 | `gwas/haplotype.py` | 14    | Block GWAS, Freedman-Lane, η²                    |
 | `gwas/kinship.py`   | 15    | GRM construction, standardization, LOCO          |
 | `gwas/qc.py`        | 22    | Allele frequency, AF masks, call rate, INFO score, chr guards |
