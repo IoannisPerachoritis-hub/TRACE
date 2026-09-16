@@ -20,7 +20,6 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
                   [--seed SEED] [--ld-r2 LD_R2] [--ld-flank-kb LD_FLANK_KB]
                   [--ld-seed-mode {suggestive,significant}]
                   [--ld-seed-p LD_SEED_P] [--ld-top-n LD_TOP_N]
-                  [--ld-merge-mode {occupancy,iou,correlation}]
                   [--ld-merge-r2 LD_MERGE_R2] [--hap-perms HAP_PERMS]
                   [--no-annotation] [--genome-build {SL3,SL4}]
                   [--species {tomato,custom}] [--gene-model GENE_MODEL]
@@ -135,18 +134,14 @@ LD & post-GWAS:
   --ld-top-n LD_TOP_N   Suggestive-mode FLOOR: always also seed the top-N SNPs
                         by p-value, even when fewer than N pass --ld-seed-p
                         (default: 10; 0 disables the floor).
-  --ld-merge-mode {occupancy,iou,correlation}
-                        LD-block merge criterion. 'occupancy' (default) makes
-                        blocks disjoint by greedy occupancy selection --
-                        accept the strongest-seeded candidate, claim its whole
-                        span, discard overlapping candidates -- so no marker
-                        is tested in more than one block; 'iou' fuses
-                        overlapping blocks by interval overlap; 'correlation'
-                        adds a cross-block seam + merged-block mean-r^2
-                        requirement (--ld-merge-r2) to iou.
   --ld-merge-r2 LD_MERGE_R2
-                        Mean-r^2 threshold for --ld-merge-mode correlation
-                        (default: 0.5).
+                        Within-block coherence threshold (mean off-diagonal
+                        r^2). Governs BOTH the seed-following within-block
+                        coherence split and the cross-block merge test: a
+                        block is split (following its seed) until its members
+                        reach this mean r^2, and two overlapping blocks fuse
+                        only when their cross-seam AND union mean r^2 both
+                        reach it (default: 0.5).
   --hap-perms HAP_PERMS
                         Haplotype permutations (default: 1000)
   --no-annotation       Skip gene annotation
