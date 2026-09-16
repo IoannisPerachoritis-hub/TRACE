@@ -77,7 +77,7 @@ The pipeline writes a ZIP containing:
 - `figures/` — Manhattan plots, QQ plots, LD heatmaps
 - `report.html` — self-contained HTML analysis report
 
-See [`docs/outputs.md`](outputs.md) for a column-by-column description of every CSV.
+The columns of these tables are described in the CSV Column Glossary on the app's **Help & Reference** page. See [`docs/outputs.md`](outputs.md) for the additional post-GWAS CSVs written by the LD, haplotype and regional-plot tabs.
 
 ---
 
