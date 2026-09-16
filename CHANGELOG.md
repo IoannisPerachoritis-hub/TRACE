@@ -16,10 +16,8 @@ All notable changes to TRACE are documented in this file.
   track; interactive (Plotly) + static (PNG/SVG/PDF) with numeric CSV export.
 - **Local LD** tab gained numeric r² export (long `SNP_A,SNP_B,r2` + square matrix).
 - **PC-selection diagnostics** (report-only): the run report + GUI now show the
-  genotype-PCA eigenvalue spectrum and a conventional-criteria table (Kaiser /
-  cumulative-variance / Marchenko–Pastur edge / broken-stick; Horn's parallel
-  analysis opt-in via `--pc-diagnostics-parallel`). These REPORT and never set the
-  PC count.
+  genotype-PCA eigenvalue spectrum (variance explained per PC + cumulative).
+  These REPORT and never set the PC count.
 
 ### Removed
 - The per-block "Block Heatmaps" tab moved behind a "Legacy views" expander —
@@ -32,9 +30,11 @@ All notable changes to TRACE are documented in this file.
 - **LD blocks could bridge uncorrelated SNP clusters.** The block merge fused
   overlapping intervals with no correlation check, and the adjacency split only
   tested consecutive pairs, so a long-range LD edge (or a chain of segment
-  merges) could join distinct clusters into one low-coherence block. The opt-in
-  `--ld-merge-mode correlation` gates both the within-segment split and the
-  cross-boundary merge on mean r² (see Added).
+  merges) could join distinct clusters into one low-coherence block. Block
+  formation now enforces coherence unconditionally, controlled by
+  `--ld-merge-r2`: a block is split (following its seed) until its members reach
+  that mean r², and two overlapping blocks fuse only when their cross-seam AND
+  union mean r² both reach it.
 
 ## [1.0.0] - 2026-04-21
 
