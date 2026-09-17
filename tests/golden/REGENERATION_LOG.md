@@ -24,7 +24,7 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
 - plumbing: capture_golden + test_golden_published._rebuild now thread ld_merge_mode via the manifest.
 
 ## 2026-09-01 -- R2.2: missing-as-reference parse fix + MAF>=0.05 boundary alignment (TYPE c; synced from DEV)
-- PROVENANCE: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (Solanaceae-gwas, commit 9e661cc) and
+- PROVENANCE: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (commit 9e661cc) and
   CANNOT be regenerated in TRACE-release -- release ships no source VCF and no QC checkpoint (benchmarks/qc_data is
   gitignored and untracked here). They were copied byte-for-byte from DEV, and the accompanying gwas/qc.py fix was
   applied identically. The real-data golden tests (test_golden_published, test_golden_blocks::...varitome...) skip on
@@ -66,7 +66,7 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
 - files regenerated: tomato_locule/{ld_blocks,haplotype_blocks,annotated_blocks}.csv + run_manifest.json;
   varitome_locule/{expected_blocks.csv,meta.json}; blocks_two_separated (2->1) and blocks_gap_split (2->1); the other
   four Tier-A cases are byte-identical. GOLDEN_LOCK f2733277... -> c768db78...
-- provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (Solanaceae-gwas) from the corrected
+- provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (the development tree) from the corrected
   164x43749 QC and copied byte-identical here. TRACE-release cannot regenerate them locally (its on-disk QC is the
   stale pre-R2.2 165-sample checkpoint), so the real-data @golden/@manuscript tests skip on a clean clone and fail
   locally only when the stale QC is present -- the same situation recorded for the R2.2 sync. No push (freeze).
@@ -90,7 +90,7 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   relaxed min_snps=1) -- its input.npz + meta.json move but its expected_blocks.csv is byte-identical; all six Tier-A
   meta.json record params.min_snps=2; NO Tier-A expected_*.csv moved. GOLDEN_LOCK c768db78... -> 7439a5cb... (driven
   solely by varitome_locule/expected_blocks.csv).
-- provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (Solanaceae-gwas) from the corrected
+- provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (the development tree) from the corrected
   164x43749 QC and copied byte-identical here; TRACE-release cannot regenerate them locally (stale pre-R2.2
   165-sample on-disk QC), so the real-data @golden/@manuscript tests skip on a clean clone and fail locally only when
   the stale QC is present. No push (freeze).
