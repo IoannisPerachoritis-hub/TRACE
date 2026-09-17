@@ -11,6 +11,26 @@ TRACE takes a VCF and a phenotype file and returns annotated candidate loci. One
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 ---
 
+## Run it in one command
+
+Requires only [Docker](https://docs.docker.com/get-started/get-docker/) — no Python, no compiler, no clone:
+
+```bash
+docker run -p 8501:8501 ghcr.io/ioannisperachoritis-hub/trace:latest
+```
+
+Then open <http://localhost:8501>. Upload a VCF and a phenotype table in the browser, and download the results archive before closing the container — nothing persists between sessions.
+
+To update to a newer release, pull it explicitly (`docker run` uses the local copy and never checks):
+
+```bash
+docker pull ghcr.io/ioannisperachoritis-hub/trace:latest
+```
+
+To install TRACE rather than run it in a container, see [Installation](#installation).
+
+---
+
 ## Screenshots
 
 **GWAS Analysis** — One-click pipeline with QC, Manhattan/QQ plots, subsampling stability, and cross-model consensus:
@@ -190,26 +210,28 @@ See `requirements.txt` for the complete pinned dependency list. For bit-reproduc
 
 ### Docker
 
-A Dockerfile is provided for containerized deployment.
+Run the published image — no build, no clone:
 
 ```bash
-# Build the image
-docker build -t trace-gwas .
+docker run -p 8501:8501 ghcr.io/ioannisperachoritis-hub/trace:latest
+```
 
-# Run the Streamlit UI (default)
-docker run -p 8501:8501 trace-gwas
+For a headless CLI run, mount a working directory and write results into it. Files written to the mounted directory are owned by your user, not root:
 
-# Run the CLI inside the container
-docker run --entrypoint trace-gwas trace-gwas \
-    --vcf /app/examples/example.vcf.gz \
-    --pheno /app/examples/example_pheno.csv \
-    --trait Trait1 --output /app/results/
-
-# Mount local data for CLI analysis
-docker run -v $(pwd)/data:/data --entrypoint trace-gwas trace-gwas \
+```bash
+docker run --rm -v "$(pwd)/data:/data" --entrypoint trace-gwas ghcr.io/ioannisperachoritis-hub/trace:latest \
     --vcf /data/my_genotypes.vcf.gz \
     --pheno /data/my_pheno.csv \
     --trait MyTrait --output /data/results/
+```
+
+#### Build from source
+
+The Dockerfile ships with the repository if you prefer to build the image yourself:
+
+```bash
+docker build -t trace .
+docker run -p 8501:8501 trace
 ```
 
 ---
