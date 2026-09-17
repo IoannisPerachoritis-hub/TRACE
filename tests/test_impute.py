@@ -11,7 +11,7 @@ import pytest
 from sklearn.impute import SimpleImputer
 
 from gwas.impute import (ld_knni, imputation_selfcheck, _ld_distances, _vote,
-                         _ld_rank_topl, _mode_or_zero, empty_topl_fraction)
+                         empty_topl_fraction)
 from gwas.qc import _pipeline_build_geno_matrices
 
 

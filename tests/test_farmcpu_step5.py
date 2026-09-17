@@ -19,7 +19,6 @@ path is unchanged); end-to-end ``run_farmcpu(step5_reml_bins=True)`` is exercise
 by the pilot measurement.
 """
 import numpy as np
-import pytest
 
 from gwas import models
 
