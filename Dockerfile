@@ -2,21 +2,16 @@ FROM python:3.11-slim@sha256:233de06753d30d120b1a3ce359d8d3be8bda78524cd8f520c99
 
 WORKDIR /app
 
-# System dependencies for numpy/scipy/fastlmm compilation
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc gfortran libopenblas-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 1000 appuser \
+    && chown appuser:appuser /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY --chown=appuser:appuser . .
 
 RUN pip install --no-cache-dir .
 
-# Run as a non-root user (least privilege)
-RUN useradd --create-home --uid 1000 appuser \
-    && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8501
