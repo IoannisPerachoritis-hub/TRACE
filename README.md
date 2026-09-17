@@ -1,53 +1,115 @@
-# TRACE: An Automated End-to-End GWAS Framework for Crop Breeding
+# TRACE: An Automated, Extensive GWAS Framework for Crop Breeding
 
-TRACE takes a VCF and a phenotype file and returns annotated candidate loci. One command runs QC, LOCO-based GWAS, LD block detection, haplotype testing, gene annotation, and subsampling stability in a single pass. It was built around tomato diversity panels, but works with any diploid VCF.
+Crop genetics is well supplied with software for the association scan itself. The step that remains largely
+manual is the transition from significant markers to a small set of annotated candidate intervals. TRACE
+addresses that step: it takes a VCF and a phenotype file and runs QC, LOCO-based GWAS, LD block detection,
+haplotype testing, gene annotation and subsampling stability in a single command. Built around tomato
+diversity panels, it works with any diploid VCF.
 
-> Developed at the [Center of Plant Systems Biology and Biotechnology (CPSBB)](https://cpsbb.eu/), Plovdiv, Bulgaria, as part of the **NATGENCROP** project (EU Horizon Europe).
+> Developed at the [Center of Plant Systems Biology and Biotechnology (CPSBB)](https://cpsbb.eu/), Plovdiv,
+> Bulgaria, as part of the **NATGENCROP** project (EU Horizon Europe).
 
----
-
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20280937.svg)](https://doi.org/10.5281/zenodo.20280937)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19678860.svg)](https://doi.org/10.5281/zenodo.19678860)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
----
-
-## Run it in one command
-
-Requires only [Docker](https://docs.docker.com/get-started/get-docker/) — no Python, no compiler, no clone:
-
-```bash
-docker run -p 8501:8501 ghcr.io/ioannisperachoritis-hub/trace:latest
-```
-
-Then open <http://localhost:8501>. Upload a VCF and a phenotype table in the browser, and download the results archive before closing the container — nothing persists between sessions.
-
-To update to a newer release, pull it explicitly (`docker run` uses the local copy and never checks):
-
-```bash
-docker pull ghcr.io/ioannisperachoritis-hub/trace:latest
-```
-
-To install TRACE rather than run it in a container, see [Installation](#installation).
 
 ---
 
 ## Screenshots
 
-**GWAS Analysis** — One-click pipeline with QC, Manhattan/QQ plots, subsampling stability, and cross-model consensus:
+**GWAS Analysis** — one-click pipeline with QC, Manhattan/QQ plots, subsampling stability, and cross-model
+consensus:
 
 ![GWAS Analysis](docs/screenshot_gwas.png)
 
-**Post-GWAS Analysis** — Peak-centric LD block detection, haplotype effect testing (Tukey HSD + CLD, raincloud, forest plot), and haplotype-coloured PCA:
+**TRACE-FarmCPU** — multi-locus scan with REML-optimised pseudo-QTN selection and a fixed-effect final test:
+
+![TRACE-FarmCPU](docs/screenshot_farmcpu.png)
+
+**Post-GWAS Analysis** — peak-centric LD block detection, haplotype effect testing (Tukey HSD + compact
+letter display, raincloud, forest plot), and haplotype-coloured PCA:
 
 ![Post-GWAS Analysis](docs/screenshot_ld.png)
 
-**Local LD heatmap** — Lead-SNP-centric LD heatmap with a configurable buffer; pick a detected block via the region selector:
+**Regional association plot** — physical position against association statistic, coloured by r² to the lead
+marker computed from the analysed genotypes; the detected LD block is shaded, with an overlapping gene track
+beneath:
+
+![Regional association](docs/screenshot_regional.png)
+
+**Local LD heatmap** — lead-SNP-centric heatmap with a configurable buffer; pick a detected block via the
+region selector:
 
 ![Local LD](docs/screenshot_local_ld.png)
 
 ---
 
-## Overview
+## Getting started
+
+Three routes. **Pick the one whose requirement you already meet.**
+
+### Run it without installing anything — needs only Docker
+
+```bash
+docker run -p 8501:8501 ghcr.io/ioannisperachoritis-hub/trace:latest
+```
+
+Open <http://localhost:8501>, upload a VCF and a phenotype table, and download the results archive before
+closing the container — nothing persists between sessions. No Python, no compiler, no clone.
+
+Once pulled, `docker run` uses the local copy and never checks for a newer release, so update explicitly:
+
+```bash
+docker pull ghcr.io/ioannisperachoritis-hub/trace:latest
+```
+
+For a headless CLI run, mount a working directory. Files written there belong to your user, not root:
+
+```bash
+docker run --rm -v "$(pwd)/data:/data" --entrypoint trace-gwas \
+    ghcr.io/ioannisperachoritis-hub/trace:latest \
+    --vcf /data/my_genotypes.vcf.gz --pheno /data/my_pheno.csv \
+    --trait MyTrait --output /data/results/
+```
+
+### Install without administrator rights — needs only [uv](https://docs.astral.sh/uv/)
+
+uv is a single binary that installs into your home directory and fetches Python itself, so this route works
+on a managed machine where you cannot install Docker.
+
+```bash
+git clone https://github.com/IoannisPerachoritis-hub/TRACE.git && cd TRACE
+uv venv --python 3.11
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+uv pip install -e .
+streamlit run app.py
+```
+
+### Install with pip — if you already have Python 3.11+
+
+See [Installation](#installation) below. This is the documented installation route.
+
+### Then try the bundled example
+
+50 samples, 510 SNPs, three chromosomes — enough to see every stage run in under a minute.
+
+```bash
+bash examples/run_example.sh
+```
+
+Or upload `examples/example.vcf.gz` and `examples/example_pheno.csv` in the web app, select trait
+`Trait1`, and choose **One-Click Full Analysis**. The equivalent CLI call:
+
+```bash
+trace-gwas --vcf examples/example.vcf.gz --pheno examples/example_pheno.csv \
+    --trait Trait1 --output results/
+```
+
+Run `trace-gwas --help` for every flag, or `python cli.py` if you have not installed the package.
+
+---
+
+## What it does
 
 A single run covers every step:
 
@@ -57,81 +119,63 @@ VCF + Phenotypes → QC → GWAS (LOCO-MLM / MLMM / FarmCPU) → LD blocks → G
                     Subsampling stability                       Haplotype testing
 ```
 
+### Association testing
+
+- **Mixed linear model (MLM)** via [FaST-LMM](https://github.com/fastlmm/FaST-LMM), with **LOCO**
+  (leave-one-chromosome-out) kinship to avoid proximal contamination
+- **MLMM** (multi-locus mixed model) and **TRACE-FarmCPU** — a FarmCPU (Liu et al., 2016) implementation in
+  which pseudo-QTNs are selected by REML-optimised bin selection at the published bound and the final scan is
+  a classical fixed-effect (OLS) test with no kinship fitted
+- **Cross-model consensus table** when two or more models are requested
+- **User-supplied covariates** (`--covar`, or upload in the web app) combined with any principal components
+  into a single fixed-effect design matrix, retained at every forward-selection iteration
+- **Principal-component spectrum diagnostics** — the eigenvalue spectrum and each component's correlation
+  with the trait are reported to inform the analyst's choice; the count is specified, never selected
+  automatically
+- **User-selectable significance threshold** — Bonferroni (default), M_eff (Li & Ji, 2005, LD-aware), FDR, or
+  an explicit p-value
+- **OLS effect sizes** (beta, SE, t), **rank-based inverse normal transform** for skewed traits, Manhattan and
+  QQ plots, and the genomic inflation factor λGC
+
+### Quality control and missing data
+
+- MAF, MAC, per-variant and per-sample missingness, with adjustable thresholds
+- **Imputation quality awareness** — INFO / DR2 / R2 / AR2 fields are detected automatically in imputed VCFs
+  and can be filtered on
+- **Two imputation options** — mean imputation, or **LD-kNNi** (LD-weighted k-nearest-neighbour) for
+  missing calls
+- A quality-control report with heterozygosity, F_IS and trait distributions
+
+### Post-GWAS analysis
+
+- **Graph-based LD block detection** with a within-block correlation requirement, seeded from significant
+  markers
+- Haplotype grouping by multi-locus genotype, tested with a block-level nested F-test and
+  **Freedman-Lane permutation** p-values (1,000 permutations by default), with **η²** effect sizes and
+  Tukey HSD post-hoc comparisons
+- **Regional association plots** and **local LD heatmaps** around a lead marker or a detected block, with r²
+  computed from the analysed genotypes rather than a reference panel
+- **LD decay curves** per chromosome
+
+### Subsampling stability
+
+- Resampling without replacement, **recomputing the GRM and the principal components inside every replicate**
+  from the subsampled individuals alone, with optional per-iteration LOCO kinship
+- Discovery frequency per marker and per LD block, so a signal's dependence on particular accessions is
+  visible
+
+### Gene annotation
+
+- Overlapping genes with functional descriptions for blocks inside gene bodies, and **flanking genes**
+  (nearest two upstream and downstream within 500 kb) for intergenic blocks
+- Bundled tomato gene models, or supply your own
+
 ---
 
-## Features
+## CLI ↔ Web UI parity
 
-### GWAS Analysis
-- **Mixed Linear Model (MLM)** via [FastLMM](https://github.com/fastlmm/FaST-LMM)
-- **LOCO** (Leave-One-Chromosome-Out) kinship to avoid proximal contamination
-- **MLMM** (Multi-Locus Mixed Model) 
-- **TRACE-FarmCPU** — a FarmCPU (Liu et al., 2016) implementation. Pseudo-QTNs are selected by REML-optimised bin selection at the published bound, and the final scan is a classical fixed-effect (OLS) scan (no kinship built).
-- **Cross-model consensus table** 
-- **OLS effect sizes** (Beta, SE, t-statistic) 
-- **Rank-based inverse normal transform** (INT) for skewed traits
-- **Freedman-Lane permutation testing** (1,000+ permutations) preserving covariate structure
-- **Manhattan plots and QQ plots**
-- **M_eff** (Li & Ji, 2005) 
-- **Genomic inflation factor** (λGC) 
-- **User-selectable significance threshold** — M_eff (default), Bonferroni, or FDR
-- **Imputation quality awareness** — automatic detection of INFO/DR2/R2/AR2 fields from imputed VCFs with configurable filtering threshold
-
-### Subsampling GWAS Stability
-- **Subsampling resampling without replacement**: recomputes GRM, and PCs for each subsample
-- Optional **LOCO kinship** per subsampling iteration
-- **Block-level aggregation**: discovery frequency, lead SNP consistency, and stability metrics
-- Quantifies **signal reproducibility** across subsets of accessions
-
-### Post-GWAS Analysis
-- **Graph-based LD block detection** 
-- Haplotype grouping via multi-locus genotype (MLG) 
-- Block-level nested F-test with **Freedman-Lane permutation p-values**
-- **η² (eta-squared)** effect size for haplotype groups
-- **LD decay curves** per chromosome 
-
-### Gene Annotation
-- Automatic annotation of LD blocks using bundled gene models and functional descriptions
-- Overlapping gene detection for blocks within gene bodies
-- **Flanking gene reporting** (nearest 2 upstream + 2 downstream within 500 kb) for intergenic blocks
-- Summary tables with gene IDs, descriptions, and distances
-
----
-
-## Quick Start
-
-```bash
-# 1. Clone and install
-git clone https://github.com/IoannisPerachoritis-hub/TRACE.git
-cd TRACE
-pip install -r requirements.txt
-# Or install as a package (enables the `trace-gwas` CLI entry point):
-#   pip install -e .
-
-# 2. Launch the web app
-streamlit run app.py
-
-# 3. Try the example dataset (simulated by examples/simulate_example.py)
-#    bash examples/run_example.sh
-#    — or upload examples/example.vcf.gz and examples/example_pheno.csv in the
-#      web app, select trait "Trait1" → "One-Click Full Analysis".
-```
-
-Or use the **CLI** for batch processing:
-
-```bash
-trace-gwas \
-    --vcf examples/example.vcf.gz \
-    --pheno examples/example_pheno.csv \
-    --trait Trait1 \
-    --output results/
-```
-
-Run `trace-gwas --help` for the full list of arguments. If not installed via pip, use `python cli.py` instead.
-
-### CLI ↔ Web UI parity
-
-Every analysis surfaced in the one-click web pipeline has a corresponding
-CLI flag, so headless / batch runs produce the same artifacts as the UI.
+Every analysis surfaced in the one-click web pipeline has a corresponding CLI flag, so headless and batch
+runs produce the same artifacts as the interface.
 
 | Capability                              | Web UI page              | CLI flag(s)                                               |
 |-----------------------------------------|--------------------------|-----------------------------------------------------------|
@@ -139,7 +183,8 @@ CLI flag, so headless / batch runs produce the same artifacts as the UI.
 | MLMM                                    | GWAS Analysis            | `--model mlm mlmm`                                        |
 | TRACE-FarmCPU                           | GWAS Analysis            | `--model mlm farmcpu`                                     |
 | Cross-model consensus                   | GWAS Analysis            | automatic when ≥ 2 models requested (`CrossModel_Consensus.csv`) |
-| PC covariates + selection diagnostics   | GWAS Analysis            | `--n-pcs INT` (fixed; default 0); report includes PC-selection diagnostics |
+| User covariates                         | GWAS Analysis            | `--covar FILE` (combined with any PCs into one design matrix) |
+| PC covariates + spectrum diagnostics    | GWAS Analysis            | `--n-pcs INT` (fixed; default 0); the report includes the eigenvalue spectrum |
 | QC: MAF / MAC / missingness / INFO      | GWAS Analysis            | `--maf`, `--mac`, `--miss`, `--ind-miss`, `--info-thresh` |
 | Significance threshold                  | GWAS Analysis            | `--sig-thresh {meff,bonferroni,fdr,<p-value>}` (default bonferroni) |
 | LD blocks + haplotype testing           | Post-GWAS Analysis       | `--ld-r2`, `--ld-seed-p`, `--ld-top-n`, `--hap-perms`     |
@@ -150,17 +195,20 @@ CLI flag, so headless / batch runs produce the same artifacts as the UI.
 | Plots (Manhattan / QQ / heatmaps)       | GWAS, LD pages           | enabled by default; suppress with `--no-plots`            |
 | Export QC matrices for cross-tool runs  | (not in UI)              | `--export-qc`                                             |
 
-Deep-dive interactive features (per-block LD heatmaps, decay curves) live
-in the Post-GWAS Analysis page and have no CLI counterpart by design — the CLI
-emits the underlying CSVs so the same plots can be regenerated externally.
+Deep-dive interactive features — per-block LD heatmaps, decay curves, the regional plot — live in the
+Post-GWAS Analysis page and have no CLI counterpart by design; the CLI emits the underlying CSVs so the same
+plots can be regenerated externally.
 
 ---
 
 ## Documentation
 
-- **[Quick-Start Tutorial](docs/tutorial.md)** — end-to-end walkthrough of both the CLI and the web app on the bundled example dataset.
+- **[Quick-Start Tutorial](docs/tutorial.md)** — a walkthrough of both the CLI and the web app on the bundled
+  example dataset.
 - **[CLI Reference](docs/cli_reference.md)** — every command-line flag, generated from the parser.
-- **[Output Files](docs/outputs.md)** — a column-by-column description of every CSV the pipeline writes.
+- **[Output Files](docs/outputs.md)** — the post-GWAS CSVs written by the LD, haplotype and regional-plot
+  tabs. The GWAS, LD-block, haplotype, subsampling and consensus columns are documented in the **CSV Column
+  Glossary** on the app's **Help & Reference** page.
 - **[Gene-Model Upload](docs/gene_model_upload.md)** — the format for supplying your own gene annotation.
 
 ---
@@ -170,7 +218,7 @@ emits the underlying CSVs so the same plots can be regenerated externally.
 ### Requirements
 
 - **Python ≥ 3.11** (tested on 3.11 and 3.12)
-- Works on Linux, macOS, and Windows
+- Linux, macOS, or Windows
 
 ### Setup
 
@@ -180,7 +228,7 @@ cd TRACE
 pip install -r requirements.txt
 ```
 
-Verify the installation:
+Verify it:
 
 ```bash
 python -c "import streamlit, fastlmm; print('TRACE dependencies OK')"
@@ -192,7 +240,9 @@ Then launch the web interface:
 streamlit run app.py
 ```
 
-### Key Dependencies
+Installing as a package (`pip install -e .`) additionally provides the `trace-gwas` command-line entry point.
+
+### Key dependencies
 
 ```
 streamlit>=1.38         # Interactive web UI
@@ -206,28 +256,16 @@ plotly>=5.18            # Interactive plots (Manhattan, QQ, heatmaps)
 scikit-allel>=1.3.13    # VCF parsing and allele processing
 ```
 
-See `requirements.txt` for the complete pinned dependency list. For bit-reproducible installs matching the manuscript benchmarks, use `pip install -r requirements.txt -c constraints.txt`, which pins every transitive numerical dependency to the exact version used in CI.
+`requirements.txt` holds the complete dependency list as **minimum version floors**. For reproducible
+installs matching the manuscript benchmarks, add the exact pins used in CI:
+
+```bash
+pip install -r requirements.txt -c constraints.txt
+```
 
 ### Docker
 
-Run the published image — no build, no clone:
-
-```bash
-docker run -p 8501:8501 ghcr.io/ioannisperachoritis-hub/trace:latest
-```
-
-For a headless CLI run, mount a working directory and write results into it. Files written to the mounted directory are owned by your user, not root:
-
-```bash
-docker run --rm -v "$(pwd)/data:/data" --entrypoint trace-gwas ghcr.io/ioannisperachoritis-hub/trace:latest \
-    --vcf /data/my_genotypes.vcf.gz \
-    --pheno /data/my_pheno.csv \
-    --trait MyTrait --output /data/results/
-```
-
-#### Build from source
-
-The Dockerfile ships with the repository if you prefer to build the image yourself:
+The published image needs no build; see [Getting started](#getting-started). To build it yourself:
 
 ```bash
 docker build -t trace .
@@ -236,213 +274,147 @@ docker run -p 8501:8501 trace
 
 ---
 
-## Project Structure
+## Repository layout
 
 ```
 TRACE/
-│
-├── app.py                              # Main entry point (front page + project management)
-├── cli.py                              # CLI batch mode (headless GWAS pipeline)
-├── annotation.py                       # Gene annotation and LD decay
-├── pyproject.toml                      # Packaging and version metadata
-├── requirements.txt                    # Minimum version floors for pip install
-├── constraints.txt                     # Exact pins for reproducible CI/manuscript builds
-├── Dockerfile                          # Containerised deployment image
-├── LICENSE                             # MIT
-├── README.md                           # This file
-├── CHANGELOG.md                        # Release notes
-├── CITATION.cff                        # Citation metadata (used by GitHub/Zenodo)
-├── CONTRIBUTING.md                     # Development setup + PR workflow
-├── docs/                               # README assets (screenshots)
-├── .github/workflows/                  # GitHub Actions CI (test.yml)
-│
-├── pages/
-│   ├── GWAS_analysis.py                # GWAS analysis page (MLM, LOCO, MLMM, FarmCPU, subsampling)
-│   ├── Post_GWAS_Analysis.py          # LD blocks, haplotypes, annotation, decay
-│   ├── z_Help.py                       # In-app help and quick start
-│   └── _ld_tabs/                        # LD page submodules
-│       ├── __init__.py                 # LDContext dataclass
-│       ├── tab_genome_wide.py          # Peak-centric LD block table
-│       ├── tab_block_heatmaps.py       # Block-level LD visualization
-│       ├── tab_gene_annotation.py      # Gene annotation within blocks
-│       └── tab_decay.py                # LD decay curves
-│
-├── gwas/                               # Core statistical modules
-│   ├── __init__.py
-│   ├── models.py                       # MLM, MLMM, OLS effects, BIC proxy
-│   ├── kinship.py                      # GRM construction, LOCO kernels, LD pruning
-│   ├── qc.py                           # Quality control pipeline (MAF, MAC, missingness, INFO score)
-│   ├── ld.py                           # r², LD decay, graph-based block detection
-│   ├── haplotype.py                    # Haplotype GWAS, Freedman-Lane permutation, η²
-│   ├── subsampling.py                  # Subsampling GWAS stability, block-level aggregation
-│   ├── plotting.py                     # Manhattan, QQ, λGC, M_eff
-│   ├── reports.py                      # HTML report generator
-│   ├── utils.py                        # PhenoData/CovarData, rank INT, imputation
-│   ├── io.py                           # VCF/genotype I/O utilities
-│   ├── stability.py                    # GWAS stability metrics
-│   └── templates/
-│       └── report.html.j2             # Jinja2 report template
-│
-├── utils/                              # Auxiliary utilities
-│   ├── pub_theme.py                    # Publication-ready plot theme (Matplotlib + Plotly)
-│   └── species_files.py               # Species-specific file paths and gene models
-│
-├── tests/                              # Automated test suite (378 tests)
-│   ├── conftest.py                     # Shared fixtures
-│   ├── test_ld.py                      # r², LD blocks, IoU, decay, SNP membership
-│   ├── test_models.py                  # OLS, F-test, one-hot encoding
-│   ├── test_haplotype.py               # Block GWAS, Freedman-Lane, η²
-│   ├── test_kinship.py                 # GRM construction, standardization
-│   ├── test_qc.py                      # Allele freq, AF masks, call rate
-│   ├── test_plotting_stats.py          # λGC, r² to lead SNP, M_eff
-│   ├── test_stability.py              # GWAS stability metrics
-│   ├── test_utils.py                   # Mean imputation, rank INT, seeds
-│   ├── test_annotation.py             # Chr normalization, LD block annotation
-│   ├── test_gwas_integration.py       # End-to-end GWAS, FarmCPU, MLMM, consensus
-│   ├── test_cli.py                     # CLI batch mode arg parsing
-│   ├── test_cli_e2e.py                 # CLI pipeline integration tests
-│   ├── test_reports.py                 # HTML report generation, sig labels
-│   ├── test_info_scores.py             # Imputation quality (INFO/DR2/R2) extraction + e2e VCF tests
-│   ├── test_subsampling.py            # Subsampling aggregation, block-level stability
-│   ├── test_io.py                      # VCF I/O, genotype loading
-│   ├── test_upload_edge_cases.py       # BOM, ID normalization, encoding edge cases
-│   ├── test_pipeline_stages.py         # Pipeline stage integration
-│   └── test_null_calibration.py        # End-to-end λGC calibration check (CI gate)
-│
-├── data/                               # Bundled gene models + annotations
-│   ├── Sol_genes_SL3.csv               # Tomato SL3.1 gene coordinates
-│   ├── SL3.1_descriptions.txt          # Tomato SL3.1 functional descriptions
-│   ├── Sol_genes.csv                   # Tomato SL4 / ITAG4.0 gene coordinates
-│   └── ITAG4.0_annotation.txt          # Tomato ITAG4.0 functional descriptions
-│
-├── examples/                           # Synthetic quick-start tutorial dataset
-│   ├── simulate_example.py             # Generates example.vcf.gz + example_pheno.csv
-│   ├── example.vcf.gz                  # Simulated genotypes (50 samples × 510 SNPs, 3 chromosomes)
-│   ├── example_pheno.csv               # Matching phenotype file (trait "Trait1")
-│   ├── run_example.sh                  # One-command end-to-end example run
-│   └── README.md                       # Example-specific usage notes
-│
-├── benchmarks/                         # Simulation + real-data benchmarking
-│   ├── README.md                       # Benchmark reproduction guide (start here)
-│   ├── simulation/                     # Power/FDR simulation (9 scenarios × 100 reps)
-│   ├── plink_qc/                       # PLINK QC comparison
-│   ├── qc_data/                        # Post-QC genotype matrices for benchmark scripts
-│   ├── results/                        # Concordance tables vs GAPIT3 / rMVP
-│   ├── plots/                          # Benchmark figure outputs
-│   ├── make_qc_data.sh                 # Regenerates qc_data/ from source VCFs
-│   └── reproduce.sh                    # End-to-end reviewer reproduction script
-│
-└── .streamlit/                         # Streamlit theme configuration
+├── app.py, cli.py                    # web app and CLI entry points
+├── gwas/                             # statistical core: QC, kinship, models, LD, haplotypes, subsampling
+├── pages/                            # Streamlit pages and the Post-GWAS tab modules
+├── annotation.py, data/              # gene annotation and the bundled tomato gene models
+├── utils/                            # publication plot theme, species file resolution
+├── tests/                            # automated test suite (see Testing)
+├── examples/                         # synthetic quick-start dataset
+├── benchmarks/                       # simulation and real-data benchmarking (start at benchmarks/README.md)
+├── docs/                             # tutorial, CLI reference, output glossary, screenshots
+├── launchers/                        # one-click launch scripts for non-terminal users
+└── Dockerfile, pyproject.toml, requirements.txt, constraints.txt
 ```
 
 ---
 
-## Input Data
+## Input data
 
-### Genotype Data
-- **VCF format** (`.vcf` or `.vcf.gz`)
-- Biallelic SNPs recommended
-- Missing data handled internally (mean imputation for GRM, pairwise-complete for LD)
-- Imputed VCFs supported — INFO/DR2/R2/AR2 quality fields auto-detected and optionally filtered
+### Genotypes
 
-### Phenotype Data
-- CSV with columns: sample ID + numeric trait columns
-- ID column auto-detected (`Genotype`, `ID`, `Line`, `Sample`, `Accession`)
-- Optional rank-based inverse normal transform (INT) for non-normal traits
+- **VCF** (`.vcf` or `.vcf.gz`), biallelic SNPs recommended
+- Genotypes are stored as alternate-allele counts (0, 1, 2 for a diploid); missing calls are filled by mean
+  imputation or by LD-kNNi, and LD is computed pairwise-complete
+- Imputed VCFs supported — INFO / DR2 / R2 / AR2 quality fields are auto-detected and optionally filtered
 
-### Gene Annotation (optional)
-- **Sol_genes_SL3.csv** (default) or **Sol_genes.csv** (SL4): columns `CHROM, START, END, STRAND, GENE`
-- **SL3.1_descriptions.txt** (default) or **ITAG4.0_annotation.txt** (SL4): tab-separated `gene_id\tdescription`
-  - SL3.1 gene model matches Varitome / SL2.5 VCF coordinates; SL4 matches ITAG4.0 assemblies
+### Phenotypes
 
-### Species & Gene Model Support
+- CSV with a sample-ID column plus numeric trait columns
+- The ID column is auto-detected (`Genotype`, `ID`, `Line`, `Sample`, `Accession`)
+- Optional rank-based inverse normal transform for non-normal traits
 
-TRACE ships with bundled gene models for tomato:
+### Gene annotation (optional)
 
 | Species | Gene model | Assembly | Source |
 |---------|-----------|----------|--------|
 | Tomato (*S. lycopersicum*) | SL3.1 (default) | GCF_000188115.5 | NCBI RefSeq |
 | Tomato (*S. lycopersicum*) | ITAG4.0 (SL4 option) | SL4.0 | Sol Genomics Network |
 
-**Using TRACE with other species:** TRACE works with any diploid VCF. For species beyond tomato, supply a tab-delimited gene coordinate file with columns: `chr`, `start`, `end`, `gene_id`, `description`. Load it via the Gene Annotation upload in the UI or `--gene-model` on the CLI.
+SL3.1 matches Varitome / SL2.5 VCF coordinates; SL4 matches ITAG4.0 assemblies. **Gene models and variant
+coordinates must share an assembly build** — annotation against a mismatched build is positional rather than
+coordinate-exact.
 
-**Chromosome naming:** common prefixes (`chr`, `SL4.0ch`, `Ca`, `Os`, `Gm`, etc.) are stripped and entries that resolve to positive integers are kept. The chromosome count comes from the data. Anything that does not resolve to an integer is mapped to `"ALT"` and dropped from LOCO kernels and LD pruning. If no chromosomes resolve, the error prints a sample of the original CHROM values. Implementation: `_clean_chr_series()` in `gwas/io.py`.
+**Other species:** TRACE works with any diploid VCF. Supply a tab-delimited gene coordinate file with
+columns `chr`, `start`, `end`, `gene_id`, `description` via the Gene Annotation upload or `--gene-model`.
+
+**Chromosome naming:** common prefixes (`chr`, `SL4.0ch`, `Ca`, `Os`, `Gm`) are stripped and entries
+resolving to positive integers are kept; the chromosome count comes from the data. Anything that does not
+resolve is mapped to `"ALT"` and dropped from LOCO kernels and LD pruning. Implementation:
+`_clean_chr_series()` in `gwas/io.py`.
 
 ---
 
-## Usage Guide
+## Usage guide
 
-### 1. GWAS Analysis
+### 1. GWAS analysis
 
-Upload VCF + phenotype CSV. Configure QC thresholds (MAF, MAC, missingness), select association models (MLM / MLMM / FarmCPU), and set parameters.
+Upload a VCF and a phenotype CSV, set QC thresholds, and select models. Two modes:
 
-**Two analysis modes:**
+- **Manual** — set the PC count, run the GWAS, then work through the results section by section, each with
+  its own downloads.
+- **One-Click Full Analysis** — pick the models (default MLM + FarmCPU) and a significance threshold, then
+  run. The pipeline goes MLM → MLMM/FarmCPU → Manhattan and QQ plots → LD blocks → HTML report → ZIP, at the
+  PC count you set (default 0; TRACE does not select principal components automatically, but the report
+  includes the eigenvalue spectrum). The ZIP contains `tables/` (GWAS results with `Significant_Bonf` and
+  `Significant_Meff` columns, per-model CSVs, the PC spectrum), `figures/` (300 DPI Manhattan and QQ), and a
+  self-contained `report.html`.
 
-- **Manual workflow** — Set the PC count via slider, click "Run GWAS", then explore results section by section (Manhattan, QQ, multi-model, subsampling). Each section has its own download buttons.
+### 2. Post-GWAS analysis
 
-- **One-Click Full Analysis** — open the "One-Click Full Analysis" section, pick the models (default: MLM + FarmCPU) and a significance threshold (M_eff / Bonferroni / FDR), then click "Run Full Analysis". The pipeline runs MLM GWAS → MLMM/FarmCPU (if selected) → Manhattan + QQ plots → LD blocks → HTML report → ZIP bundle at the fixed PC count you set (default 0; TRACE no longer auto-selects PCs, but the run report includes PC-selection diagnostics). A live status indicator shows progress. The ZIP contains:
-  - `tables/` — GWAS results CSV (with `Significant_Bonf` and `Significant_Meff` columns), multi-model CSVs, PC-selection diagnostics (eigenvalue spectrum)
-  - `figures/` — Manhattan plot, QQ plot (300 DPI PNG)
-  - `report.html` — self-contained HTML report with all results
+LD blocks are detected with a graph-based algorithm seeded from significant markers. Haplotype groups are
+tested against the trait with a nested F-test and Freedman-Lane permutation p-values; η² reports the
+variance explained. Regional plots and local LD heatmaps show the neighbourhood of a lead marker, and LD
+decay is computed per chromosome.
 
-Results include the Manhattan and QQ plots, the significant-SNP table, OLS effect sizes, λGC, and the M_eff threshold. Subsampling GWAS is optional and reports signal stability.
+### 3. Gene annotation
 
-### 2. Post-GWAS Analysis
+Upload a gene model and optionally a descriptions file (bundled files auto-load by species and build). The
+module reports overlapping genes with functional descriptions, and flanking genes for intergenic blocks.
 
-After GWAS, open the LD page. LD blocks are detected with a graph-based algorithm using adaptive r² thresholds. Haplotype groups are tested against the trait with a nested F-test and Freedman-Lane permutation p-values. η² reports the variance explained by each haplotype group, and LD decay is computed per chromosome.
+### 4. Subsampling stability
 
-### 3. Gene Annotation
+Each iteration draws 80% of accessions without replacement, recomputes the GRM and the principal components
+from those individuals alone, and re-runs the MLM. Discovery frequency per marker and per block shows which
+signals survive sample perturbation. Per-iteration LOCO kinship is optional.
 
-Upload a gene model file and optionally a gene descriptions file (bundled files auto-load by species and genome build). The module reports overlapping genes (with functional descriptions) and flanking genes for intergenic blocks.
-
-### 4. Subsampling GWAS Stability
-
-Enable subsampling GWAS to check signal reproducibility. Each iteration draws 80% of accessions without replacement, recomputes the GRM and PCs, and re-runs the MLM. Discovery frequency per SNP and per LD block flags which signals survive sample perturbation. LOCO kinship per iteration is optional and removes proximal contamination from the stability estimate.
-
-### 5. CLI Batch Mode
-
-TRACE ships a command-line interface for headless and batch-scripted runs.
+### 5. CLI batch mode
 
 ```bash
 trace-gwas --vcf data.vcf.gz --pheno pheno.csv --trait Yield --output results/
 ```
 
-Run `trace-gwas --help` for all available arguments including model selection, QC thresholds, subsampling settings, and significance criteria. Use `python cli.py` if not installed via pip.
+`trace-gwas --help` lists every argument. Use `python cli.py` if the package is not installed.
 
 ---
 
 ## Testing
 
-The test suite covers the core statistical functions:
+Continuous integration runs the full suite on every push and pull request to `main`, under Python 3.11 and
+3.12, with coverage measurement and a floor below which the build fails.
 
 ```bash
-# Run full test suite
-python -m pytest tests/ -v
-
-# Run specific module tests
-python -m pytest tests/test_ld.py -v
+python -m pytest tests/ -v              # full suite
+python -m pytest tests/test_ld.py -v    # one module
 ```
 
-| Module              | Tests | Coverage                                         |
-|---------------------|-------|--------------------------------------------------|
-| `gwas/ld.py`        | 39    | r², LD blocks, IoU, decay, SNP membership        |
-| `gwas/models.py`    | 48    | OLS effects, F-test, one-hot encoding |
-| `gwas/haplotype.py` | 14    | Block GWAS, Freedman-Lane, η²                    |
-| `gwas/kinship.py`   | 15    | GRM construction, standardization, LOCO          |
-| `gwas/qc.py`        | 22    | Allele frequency, AF masks, call rate, INFO score, chr guards |
-| `gwas/plotting.py`  | 15    | λGC, r² to lead SNP, M_eff                      |
-| `gwas/reports.py`   | 17    | HTML report generation, sig labels, per-model sections |
-| `gwas/io.py`        | 43    | VCF I/O, genotype loading, INFO score extraction, multi-species chr parsing |
-| `gwas/subsampling.py` | 9   | Subsampling aggregation, block-level stability   |
-| `gwas/stability.py` | 16    | GWAS stability metrics                           |
-| `gwas/utils.py`     | 11    | Mean imputation, rank INT, seeds                 |
-| `annotation.py`     | 39    | Chr normalization, LD block annotation, IoU      |
-| `cli.py`            | 28    | CLI arg parsing, defaults, model selection, e2e  |
-| Upload/edge cases   | 15    | BOM handling, ID normalization, encoding edge cases |
-| Integration         | 45    | End-to-end GWAS, FarmCPU, MLMM, consensus, pipeline stages, INFO scores |
-| Null calibration    | 2     | End-to-end λGC in [0.85, 1.15] on permuted null, zero genome-wide hits |
+Edge cases covered include all-NaN columns, monomorphic SNPs, single haplotype groups, too few samples,
+perfect LD (r² = 1) and intergenic SNPs.
 
-Edge cases validated: all-NaN columns, monomorphic SNPs, single haplotype groups, too few samples, perfect LD (r²=1), intergenic SNPs.
+<!-- BEGIN GENERATED: test-table (scripts/gen_test_table.py -- do not edit by hand) -->
+
+| Module | Tests | What it exercises |
+|--------|-------|-------------------|
+| Genotype I/O & parsing | 74 | VCF/dosage parsing, INFO scores, upload edge cases |
+| Quality control | 55 | MAF/missingness/MAC/heterozygosity filters, per-group QC, QC report |
+| Imputation | 22 | mean and LD-kNNi imputation and its cache |
+| Phenotype QC & transforms | 24 | normality diagnostics, transformations, embedded QC panel |
+| Kinship (GRM / LOCO) | 15 | VanRaden GRM and leave-one-chromosome-out kernels |
+| Association models | 22 | MLM / MLMM / FarmCPU scans and FarmCPU pseudo-QTN selection |
+| Significance & multiple testing | 14 | M_eff / Bonferroni / FDR / custom-threshold rules |
+| Covariates & PC diagnostics | 19 | user covariates and the PC eigenvalue-spectrum diagnostics |
+| LD block detection | 47 | peak-centric LD block detection and merging |
+| Haplotype testing | 49 | block haplotype effects, effect sizes, compact letter display |
+| LD triage | 28 | coherence/haplotype triage layers, router and eta-squared comparability |
+| Isolated-SNP rescue & significant-SNP table | 33 | unblocked-SNP intervals and the significant-SNP table |
+| Regional & per-SNP visualisation | 47 | regional association plots, per-SNP boxplots, plotting stats, sample views |
+| Gene annotation | 42 | LD-block gene annotation and gene-model summaries |
+| Subsampling stability | 25 | bootstrap subsampling and stability metrics |
+| HTML report | 24 | run-report assembly and section rendering |
+| Command-line interface | 32 | CLI parsing, end-to-end runs, doc-to-parser flag parity |
+| Web UI (Streamlit) | 15 | app-test coverage of the GWAS, Post-GWAS, help and landing pages |
+| Pipeline integration | 30 | end-to-end GWAS pipeline and stage wiring |
+| Golden regression & pinned defaults | 103 | byte-stable golden fixtures, the golden lock, and pinned signatures/defaults |
+| Calibration & reproducibility | 8 | null-phenotype calibration and LOCO reproducibility |
+| Utilities | 11 | shared helpers |
+
+_Total: 739 tests. Line coverage: 75% (gwas + utils)._
+
+<!-- END GENERATED: test-table -->
 
 ---
 
@@ -451,7 +423,9 @@ Edge cases validated: all-NaN columns, monomorphic SNPs, single haplotype groups
 If you use TRACE in your research, please cite:
 
 > To be filled after acceptance.
-> DOI: [10.5281/zenodo.19678860](https://doi.org/10.5281/zenodo.19678860)
+>
+> Software archive: [10.5281/zenodo.19678860](https://doi.org/10.5281/zenodo.19678860) — concept DOI,
+> resolving to the latest archived version. Each release also carries its own version DOI.
 >
 > See [CITATION.cff](CITATION.cff) for citation metadata.
 
@@ -459,13 +433,13 @@ If you use TRACE in your research, please cite:
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
 
 ---
 
 ## Acknowledgments
 
-- **European Regional Development Fund** — Program "Research Innovation and Digitalisation for Smart Transformation" 2021-2027, Grant No. BG16RFPR002-1.014-0003-C01
+- **European Regional Development Fund** — Program "Research Innovation and Digitalisation for Smart
+  Transformation" 2021-2027, Grant No. BG16RFPR002-1.014-0003-C01
 - **NATGENCROP Project** — HORIZON-WIDERA-2022-TALENTS-01, No. 101087091
 - **Center of Plant Systems Biology and Biotechnology (CPSBB)**, Plovdiv, Bulgaria
-

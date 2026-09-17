@@ -13,6 +13,10 @@ All notable changes to TRACE are documented in this file.
   toolchain (`build-essential`, `gcc`, `gfortran`, `libopenblas-dev`) — every
   dependency installs from a wheel (numpy and scipy bundle their own OpenBLAS) —
   and set file ownership during `COPY --chown` instead of a post-hoc `chown -R`.
+- **Rewrote the README** — corrected the title (R1.8) and the archive DOI, merged
+  the install paths into one "Getting started" with three routes, documented
+  `--covar`, regional plots, LD-kNNi imputation and the PC spectrum diagnostics,
+  and refreshed the screenshots (now five).
 
 ### Added
 - **Regional Plot tab** (locus-zoom-style): −log₁₀(p) vs position around a lead
@@ -22,6 +26,10 @@ All notable changes to TRACE are documented in this file.
 - **PC-selection diagnostics** (report-only): the run report + GUI now show the
   genotype-PCA eigenvalue spectrum (variance explained per PC + cumulative).
   These REPORT and never set the PC count.
+- **README test-suite table is now generated** by `scripts/gen_test_table.py`
+  from the collected pytest suite — grouped into thematic rows whose counts sum
+  to the collected total (the generator aborts if a test file is unmapped), so the
+  table can no longer drift from the suite; it also prints the line-coverage figure.
 
 ### Removed
 - The per-block "Block Heatmaps" tab moved behind a "Legacy views" expander —
