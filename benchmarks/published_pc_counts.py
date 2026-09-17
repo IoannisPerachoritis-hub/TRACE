@@ -2,8 +2,9 @@
 
 These are the number of principal components used as fixed-effect covariates in the
 published TRACE mixed-model GWAS for each concordance panel. They were selected by the
-shipped band auto-PC strategy (with the directional deflation guard); see the "Auto-PC
-Strategy" section of CLAUDE.md and gwas/models.py::auto_select_pcs.
+band auto-PC strategy that shipped at the time of those runs, with its directional
+deflation guard. That strategy has since been removed and the PC count is now set by the
+analyst; these values are retained as the provenance of the published results.
 
 Provenance of each value (why it is what it is, not a magic number):
 
