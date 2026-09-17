@@ -28,6 +28,10 @@ build/
 # Allow small example VCF
 !examples/*.vcf
 !examples/*.vcf.gz
+
+# Coverage artifacts (gen_test_table.py reads coverage.xml; both are transient)
+.coverage
+coverage.xml
 *.bcf
 *.bed
 *.bim
