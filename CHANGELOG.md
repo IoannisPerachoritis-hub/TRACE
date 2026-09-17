@@ -9,6 +9,10 @@ All notable changes to TRACE are documented in this file.
   "Post GWAS Analysis"), aligning the app with the manuscript's terminology.
   The page URL changed to `/Post_GWAS_Analysis`.
 - **`--n-pcs` default changed 4 → 0** (fixed PC count; TRACE no longer auto-selects PCs).
+- **Slimmed the shipped Docker image** (~3 GB → ~1.94 GB): removed the build-time
+  toolchain (`build-essential`, `gcc`, `gfortran`, `libopenblas-dev`) — every
+  dependency installs from a wheel (numpy and scipy bundle their own OpenBLAS) —
+  and set file ownership during `COPY --chown` instead of a post-hoc `chown -R`.
 
 ### Added
 - **Regional Plot tab** (locus-zoom-style): −log₁₀(p) vs position around a lead
