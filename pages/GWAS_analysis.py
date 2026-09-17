@@ -101,7 +101,7 @@ def _display_gwas_df(df, **kwargs):
 
 def _render_results_summary_card(
     lambda_gc, n_significant, sig_label,
-    n_ld_blocks=None, auto_pc_k=None,
+    n_ld_blocks=None, pc_k=None,
 ):
     """Render a results summary card with context-aware lambda_GC interpretation."""
     # Lambda interpretation
@@ -129,8 +129,8 @@ def _render_results_summary_card(
             "consider adding more PCs or checking for batch effects."
         )
 
-    if auto_pc_k is not None:
-        lgc_note += f" Auto-PC selected k = {auto_pc_k}."
+    if pc_k is not None:
+        lgc_note += f" The model included k = {pc_k} principal component(s)."
 
     # Metrics row
     cols = st.columns(4 if n_ld_blocks is not None else 3)
@@ -2936,7 +2936,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     n_significant=_td["n_sig"],
                     sig_label=_td["sig_label"],
                     n_ld_blocks=_n_ld_blks,
-                    auto_pc_k=None,  # R1.4: no auto-PC selection
+                    pc_k=None,  # R1.4: no auto-PC selection
                 )
 
             if len(selected_traits) > 1:
@@ -3798,7 +3798,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             lambda_gc=lambda_gc,
             n_significant=_st_n_sig,
             sig_label=active_label,
-            auto_pc_k=n_pcs,
+            pc_k=n_pcs,
         )
 
         # Continue to the Post-GWAS page from here — where the user finishes reading
