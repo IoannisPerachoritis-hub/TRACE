@@ -138,9 +138,9 @@ Run `trace-gwas --help` for the `--covar` covariate flag and the numeric
 """)
 
 # ============================================================
-# 3. Interpreting Results for Breeding
+# 3. Interpreting Results
 # ============================================================
-st.header("Interpreting Results for Breeding")
+st.header("Interpreting Results")
 
 st.subheader("Significance Thresholds")
 st.markdown("""
@@ -154,7 +154,7 @@ TRACE reports significance under one of four rules. **The default is Bonferroni.
   much depends on how much LD is present. It does not assume the SNPs are independent.
 - **FDR (Benjamini-Hochberg)**: controls the expected proportion of false positives
   among the SNPs called significant, instead of the family-wise error rate. The least
-  stringent of the three; suited to exploratory screening.
+  stringent of these three; suited to exploratory screening.
 - **Custom p-value**: a fixed threshold you set (e.g. 5e-8).
 
 Which rule fits depends on whether you are prioritising **discovery** (more permissive)
@@ -162,46 +162,57 @@ or **control of false positives** (more stringent), a study-design choice, not a
 property of the data.
 """)
 
-st.subheader("Lambda GC (Genomic Control)")
+st.subheader("Lambda GC")
 st.markdown("""
-Lambda GC measures how well the model accounts for population structure:
+Lambda GC is the ratio of the median observed chi-square statistic to its expected value
+under the null. It summarises whether the bulk of the test statistics is inflated
+relative to the null. It does not tell you whether any individual p-value is correct.
 
-| Lambda GC | Interpretation |
-|-----------|---------------|
-| **0.9 - 1.1** | Well-calibrated. P-values are reliable. |
-| **< 0.9** | Deflated. Common for oligogenic traits with large-effect loci, or when LOCO kinship removes most confounding. Usually benign, but check that known loci are still detected. |
-| **1.1 - 1.3** | Mildly inflated. Some residual population structure may remain. Results are usable. |
-| **> 1.3** | Notably inflated. Interpret with caution. Consider adding more PCs or checking for batch effects. |
+There is no single correct value. What it should be depends on the genetic architecture
+of the trait. Under a polygenic architecture, real signal at many loci raises the median
+statistic, so an elevated lambda GC is an expected consequence of real association
+rather than a defect. Under an oligogenic architecture most markers are null and a value
+near 1 is the expected result.
+
+TRACE reports lambda GC and does not act on it. A value far from 1 in either direction is
+worth examining alongside the QQ plot and the principal-component diagnostics. Adding
+covariates until lambda GC approaches 1 can remove real signal from a polygenic trait.
 """)
 
-st.subheader("Effect Sizes and Variance Explained")
+st.subheader("Effect Sizes")
 st.markdown("""
-- **Effect (Beta)**: The estimated change in trait value per copy of the minor allele.
-  Positive = minor allele increases the trait. The magnitude depends on the trait's scale.
-- **Variance Explained (eta-squared)**: The percentage of total phenotypic variance
-  accounted for by haplotype differences at an LD block. This is the most interpretable
-  measure of QTL importance for breeding decisions.
-  - **> 10%**: Major QTL, strong candidate for marker-assisted selection
-  - **5-10%**: Moderate QTL, useful in combination with other loci
-  - **< 5%**: Minor QTL, contributes to polygenic background
+- **Effect (Beta)**: the estimated change in trait value per copy of the minor allele, on
+  the trait's own scale. A positive value means the minor allele increases the trait.
+- **eta-squared**: the proportion of phenotypic variance associated with haplotype
+  differences at an LD block, computed on the phenotype after any principal-component
+  covariates have been removed.
+
+Three properties to keep in mind when comparing eta-squared across blocks. It grows with
+the number of haplotype groups, so a block with more groups is not directly comparable
+with one that has fewer. It is not corrected for the block having been selected because
+it contains a significant marker, so it is biased upward. And it describes the panel
+analysed, not a general population.
 """)
 
 st.subheader("Cross-Model Consensus")
 st.markdown("""
-SNPs detected by multiple GWAS models (e.g., MLM + FarmCPU) are higher-confidence
-candidates. The cross-model consensus table shows which SNPs pass the significance
-threshold in 2 or more models. These are your strongest candidates for follow-up.
+The consensus table lists markers that pass the significance threshold in more than one
+model. Agreement between models that make different assumptions is informative, but the
+models are not independent: they share the genotype matrix, the quality control and, in
+most configurations, the kinship. Agreement is therefore weaker evidence than the count
+suggests. TRACE reports the overlap without weighting it.
 """)
 
 st.subheader("Subsampling Stability")
 st.markdown("""
-Subsampling tests whether a GWAS signal is robust to sample composition.
-Each iteration subsamples your panel, recomputes the kinship matrix, and reruns
-the full MLM GWAS.
+Subsampling repeats the full scan on random subsets of the panel, recomputing the kinship
+matrix and the covariates inside each replicate, and reports how often each signal is
+recovered. A signal recovered in most replicates does not depend on a few influential
+samples; one recovered rarely may.
 
-- **Discovery frequency > 80%**: Robust signal, detected in most resamples
-- **Discovery frequency 50-80%**: Moderately stable, consider sample-size limitations
-- **Discovery frequency < 50%**: Unstable, may be driven by a few influential samples
+It is a guide rather than a correction. In TRACE's own simulations it separated true from
+false signals in most but not all of the architectures tested; under high polygenicity
+the separation disappeared.
 """)
 
 # ============================================================
@@ -212,11 +223,12 @@ st.markdown("""
 If you use TRACE in your research, please cite:
 
 > Perachoritis I., Vatov E., Alseekh S., Gechev T., Rai A. (2026).
-> TRACE: *[full title pending, under R1.8 revision]*.
-> *Bioinformatics Advances* (Application Note). [In preparation]
+> TRACE: An Automated, Extensive GWAS Framework for Crop Breeding.
+> *Bioinformatics Advances* (Application Note). Submitted.
 
 **Software:**
-> TRACE v1.0. https://github.com/IoannisPerachoritis-hub/TRACE
+> TRACE. https://github.com/IoannisPerachoritis-hub/TRACE
+> https://doi.org/10.5281/zenodo.19678860
 """)
 
 # ============================================================

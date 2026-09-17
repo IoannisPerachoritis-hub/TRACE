@@ -166,6 +166,6 @@ st.info(
 st.markdown("""
 ---
 <div style="color: #666666; font-size: 0.85em;">
-    © 2026 TRACE · Built for the NatGenCrop Project · v1.0
+    © 2026 TRACE · Built for the NATGENCROP Project
 </div>
 """, unsafe_allow_html=True)

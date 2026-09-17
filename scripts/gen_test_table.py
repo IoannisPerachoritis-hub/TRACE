@@ -10,7 +10,7 @@ is auto-generated from the live suite -- **do not edit it by hand**. Re-run::
 after adding or removing tests. The generator collects the suite with
 ``pytest --collect-only -q``, groups every ``tests/test_*.py`` into the thematic
 rows in ``AREAS`` below, and asserts the per-row counts sum to the collected
-total -- so the table can never silently drift from the suite (R3.1: the counts
+total -- so the table can never silently drift from the suite (the counts
 must sum to the total reported in the manuscript).
 
 Hard rule: a collected test file that is not mapped in ``AREAS`` makes this

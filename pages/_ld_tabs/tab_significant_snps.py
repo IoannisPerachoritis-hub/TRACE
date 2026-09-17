@@ -2,7 +2,7 @@
 
 Surfaces EVERY reporting-significant SNP, each marked as belonging to an LD block
 or as *unblocked* (formed no block), with its candidate interval and Block_Status.
-This is the R1.6/R3.7 deliverable: a block-only view hides the unblocked SNPs;
+A block-only view hides the unblocked SNPs;
 this tab shows all of them as data. The table is always complete — never
 truncated. Pure glue over ``gwas.sigtable`` + ``gwas.significance``; the heavy
 work + tests live in those modules.

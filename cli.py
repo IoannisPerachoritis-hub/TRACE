@@ -673,8 +673,8 @@ def run_pipeline(args):
     n_pcs_mlmm = min(args.n_pcs_mlmm if args.n_pcs_mlmm is not None else n_pcs_mlm, _max_avail)
     n_pcs_fc = min(args.n_pcs_farmcpu if args.n_pcs_farmcpu is not None else n_pcs, _max_avail)
 
-    # ── PC-selection diagnostics (report-only; R1.4 -- REPORTS, never selects) ──
-    # The lambda-GC auto-PC selector was removed (D-R1.4-FINAL): TRACE uses the fixed
+    # ── PC-selection diagnostics (report-only; REPORTS, never selects) ──
+    # The lambda-GC auto-PC selector was removed (D-FINAL): TRACE uses the fixed
     # --n-pcs default and reports the genotype-PCA eigenvalue spectrum so the user can
     # judge the choice.  No criterion, no recommended k; one eigendecomposition, no model fits.
     _pc_diag = None

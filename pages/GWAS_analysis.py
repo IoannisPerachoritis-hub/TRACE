@@ -1191,7 +1191,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     plt.close(_qc_fig)
 
         # ================================================================
-        #       PC-selection diagnostics (report-only; never selects -- R1.4)
+        #       PC-selection diagnostics (report-only; never selects)
         # ================================================================
 
         with st.expander("PC-selection diagnostics", expanded=False):
@@ -1357,7 +1357,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     "sidebar LOCO setting for this pipeline run only."
                 ),
             )
-            # PC count is a documented fixed default per model (no auto-selection -- R1.4);
+            # PC count is a documented fixed default per model (no auto-selection);
             # the run report includes eigenvalue-spectrum + conventional-criteria diagnostics.
             _pipe_pc_mode = "Manual"
             _pipe_pc_strategy = None
@@ -1689,7 +1689,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     pcs_full_arr = st.session_state["pcs_full"]
                     _max_avail = pcs_full_arr.shape[1] if pcs_full_arr is not None else 0
 
-                    # --- Per-model PC counts (fixed; no auto-selection -- R1.4) ---
+                    # --- Per-model PC counts (fixed; no auto-selection) ---
                     _pipe_k_mlm = min(_pipe_manual_pcs.get("MLM", n_pcs), _max_avail)
                     _pipe_k_mlmm = min(_pipe_manual_pcs.get("MLMM", _pipe_k_mlm), _max_avail)
                     _pipe_k_fc = min(_pipe_manual_pcs.get("FarmCPU", _pipe_k_mlm), _max_avail)
@@ -1700,7 +1700,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         _pc_msg += f", FarmCPU: {_pipe_k_fc}"
                     st.write(_pc_msg)
 
-                    # --- PC-selection diagnostics (report-only; never selects -- R1.4) ---
+                    # --- PC-selection diagnostics (report-only; never selects) ---
                     _pipe_pc_df = None
                     try:
                         from gwas.pc_diagnostics import compute_pc_diagnostics
@@ -2936,7 +2936,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     n_significant=_td["n_sig"],
                     sig_label=_td["sig_label"],
                     n_ld_blocks=_n_ld_blks,
-                    pc_k=None,  # R1.4: no auto-PC selection
+                    pc_k=None,  # no auto-PC selection
                 )
 
             if len(selected_traits) > 1:

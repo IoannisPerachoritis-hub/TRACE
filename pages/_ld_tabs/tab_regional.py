@@ -4,8 +4,8 @@ A display of the existing genome-wide scan around a lead SNP: −log₁₀(p) vs
 position, points coloured by r² to the lead (computed from the user's own
 genotypes), the active significance line, the detected LD block (or, for an
 isolated SNP, its flanking-marker interval), and a gene track. This is NOT
-fine-mapping — no credible sets, no candidate ranking, no p-value changes (R1.7
-asks about fine-mapping separately; this does not answer it).
+fine-mapping — no credible sets, no candidate ranking, no p-value changes
+(fine-mapping is a separate question; this does not answer it).
 
 Thin renderer over the pure functions in ``gwas.plotting``; the window comes from
 the shared selector (``pages/_ld_tabs/_window.py``) so this and Local LD render one
