@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 type: software
-title: "TRACE: An Automated End-to-End GWAS Framework for Crop Breeding"
+title: "TRACE: An Automated, Extensive GWAS Framework for Crop Breeding"
 message: >-
   If you use this software, please cite it using the metadata from this file.
 authors:
@@ -12,23 +12,22 @@ authors:
     affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
   - family-names: Alseekh
     given-names: Saleh
-    affiliation: "Max Planck Institute of Molecular Plant Physiology"
+    affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
   - family-names: Gechev
     given-names: Tsanko
     affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
   - family-names: Rai
     given-names: Avanish
     affiliation: "Center of Plant Systems Biology and Biotechnology (CPSBB)"
-version: "1.0.0"
-date-released: "2026-04-21"
+version: "1.1.0"
+date-released: "YYYY-MM-DD"
 license: MIT
 url: "https://github.com/IoannisPerachoritis-hub/TRACE"
 repository-code: "https://github.com/IoannisPerachoritis-hub/TRACE"
 identifiers:
   - type: doi
     value: 10.5281/zenodo.19678860
-  - type: doi
-    value: 10.5281/zenodo.19677539
+    description: "Concept DOI (resolves to all versions of this record)"
 keywords:
   - GWAS
   - mixed models
@@ -38,26 +37,24 @@ keywords:
   - LD block detection
   - subsampling stability
 abstract: >-
-  Motivation: In crop breeding panels, global kinship matrices absorb
-  genuine association signal through proximal contamination, and significant hits
-  frequently span broad chromosomal regions in species with extended LD.
+  In crop breeding panels, global kinship matrices absorb genuine association
+  signal through proximal contamination, and significant hits frequently span
+  broad chromosomal regions in species with extended linkage disequilibrium.
   Moving from these raw p-values to interpretable candidate loci requires
-  multiple manual post-processing steps that existing crop GWAS tools do not integrate.
-
-  Results: We developed TRACE (Trait Resolution and Candidate Evaluation), 
-  a Python framework that automates the full GWAS workflow from VCF input to
-  annotated candidate loci. TRACE integrates LOCO-based mixed models with
-  automatic PC calibration, LD block detection, gene annotation, permutation-based haplotype testing,
-  and subsampling stability assessment. Null testing on permuted phenotypes well-controlled
-  type I error under the null. Simulations across nine genetic architectures showed that
-  TRACE with LOCO achieved the highest F1 score in 8 out of 9 scenarios, and real-data
-  concordance with GAPIT3 and rMVP showed similar p-value rankings. Using a single command,
-  TRACE was applied to a tomato diversity panel, where it re-detected the known
-  lc locule number locus and six annotated LD blocks with significant haplotype effects.
-
+  multiple manual post-processing steps that existing crop GWAS tools do not
+  integrate. We developed TRACE (Trait Resolution and Candidate Evaluation), a
+  Python framework that automates the full GWAS workflow from VCF input to
+  annotated candidate loci. TRACE integrates leave-one-chromosome-out (LOCO)
+  kinship strategy, LD block detection, gene annotation, permutation-based
+  haplotype testing, and subsampling stability assessment. Simulations across
+  nine genetic architectures showed that TRACE with LOCO achieved the highest F1
+  score in eight out of nine scenarios, and real-data concordance with GAPIT3 and
+  rMVP showed similar p-value rankings. Using a single command, TRACE was applied
+  to a tomato diversity panel, where it localised the known lc locule number
+  signal to a 1.2 Mb interval on chromosome 2.
 preferred-citation:
   type: article
-  title: "TRACE: An Automated End-To-End GWAS Framework for Crop Breeding"
+  title: "TRACE: An Automated, Extensive GWAS Framework for Crop Breeding"
   authors:
     - family-names: Perachoritis
       given-names: Ioannis
