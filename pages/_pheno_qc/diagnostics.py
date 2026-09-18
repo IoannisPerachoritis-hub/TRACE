@@ -1,4 +1,4 @@
-"""Phase 3 — per-trait diagnostics (histogram, Q-Q) + transform before/after."""
+"""Phase 3: per-trait diagnostics (histogram, Q-Q) + transform before/after."""
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -80,11 +80,11 @@ def _panel(vals, trait, tag):
     if finite.size < 3:
         st.warning(f"{tag}: fewer than 3 finite values; cannot plot.")
         return
-    hist = _hist_fig(finite, f"{trait} — {tag}")
+    hist = _hist_fig(finite, f"{trait}: {tag}")
     st.plotly_chart(hist, use_container_width=True)
     export_plotly(hist, f"hist_{trait}_{tag}".replace(" ", "_"),
                   label_prefix=f"Download {tag} histogram")
-    qq = _qq_fig(finite, f"{trait} — {tag}")
+    qq = _qq_fig(finite, f"{trait}: {tag}")
     st.pyplot(qq)
     export_matplotlib(qq, f"qq_{trait}_{tag}".replace(" ", "_"),
                       label_prefix=f"Download {tag} Q-Q")

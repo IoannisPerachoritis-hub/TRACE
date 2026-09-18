@@ -1,10 +1,10 @@
-"""Tab — Regional association plot (locus-zoom-style), T-08.
+"""Tab: Regional association plot (locus-zoom-style), T-08.
 
 A display of the existing genome-wide scan around a lead SNP: −log₁₀(p) vs
 position, points coloured by r² to the lead (computed from the user's own
 genotypes), the active significance line, the detected LD block (or, for an
 isolated SNP, its flanking-marker interval), and a gene track. This is NOT
-fine-mapping — no credible sets, no candidate ranking, no p-value changes
+fine-mapping: no credible sets, no candidate ranking, no p-value changes
 (fine-mapping is a separate question; this does not answer it).
 
 Thin renderer over the pure functions in ``gwas.plotting``; the window comes from
@@ -74,7 +74,7 @@ def _block_for_window(ctx, window):
 
 
 def _flank_interval(positions_in_window, lead_pos):
-    """Nearest typed markers flanking the lead — the isolated-SNP fallback span."""
+    """Nearest typed markers flanking the lead: the isolated-SNP fallback span."""
     pos = np.sort(np.asarray(positions_in_window, dtype=float))
     if pos.size == 0:
         return None
@@ -219,7 +219,7 @@ def render(ctx: LDContext, window):
         st.caption("r² to the lead is not computable for these markers (e.g. a single typed "
                    "marker); points are shown in grey.")
 
-    # --- interactive (plotly) — the GUI view, hover for SNP / p / r² / block ---
+    # --- interactive (plotly): the GUI view, hover for SNP / p / r² / block ---
     _winsig = f"{window.chr}:{window.start_bp}-{window.end_bp}:{window.lead_snp}"
     fig_i = plot_regional_association_interactive(
         wdf, r2_final, window.lead_snp, sig_threshold,
@@ -248,7 +248,7 @@ def render(ctx: LDContext, window):
         mime="text/csv", key="dl_regional_csv",
     )
 
-    # --- static (matplotlib) — the downloadable / report figure, with gene track ---
+    # --- static (matplotlib): the downloadable / report figure, with gene track ---
     MAX_GENE_LABELS = 12
     n_genes = 0 if genes is None else len(genes)
     with st.expander("Static figure + downloads (PNG / SVG / PDF)", expanded=False):

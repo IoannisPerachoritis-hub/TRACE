@@ -1,4 +1,4 @@
-"""Tab 3 — Gene Annotation for LD Blocks."""
+"""Tab 3: Gene Annotation for LD Blocks."""
 
 import logging
 import pandas as pd

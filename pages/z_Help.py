@@ -1,4 +1,4 @@
-"""Help & Reference — TRACE.
+"""Help & Reference: TRACE.
 
 Quick-start guide, output column glossary, and citation info.
 """

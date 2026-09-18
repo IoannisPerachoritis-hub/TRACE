@@ -21,7 +21,7 @@ def main():
     out.write_text(
         "# TRACE CLI reference\n\n"
         "Auto-generated from `cli.py` by `python scripts/gen_cli_reference.py`. "
-        "Do not edit by hand — re-run the generator after changing the parser.\n\n"
+        "Do not edit by hand; re-run the generator after changing the parser.\n\n"
         "```text\n" + help_text.rstrip() + "\n```\n",
         encoding="utf-8",
     )

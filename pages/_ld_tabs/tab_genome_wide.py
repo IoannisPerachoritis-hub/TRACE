@@ -1,4 +1,4 @@
-"""Tab 6 — Peak-centric LD blocks & haplotype analysis."""
+"""Tab 6: Peak-centric LD blocks & haplotype analysis."""
 
 import logging
 import re
@@ -481,7 +481,7 @@ def render(
                         [f"{r['Chr']}:{int(r['Start (bp)'])}-{int(r['End (bp)'])}"
                          for _, r in _mb.iterrows()])
                     st.caption(
-                        "⚠ Nested LD blocks detected — this should not occur after the "
+                        "⚠ Nested LD blocks detected. This should not occur after the "
                         "disjoint-block redesign; the block set is left unchanged. "
                         "Please report (see _occupancy_select's span_idx.size==0 short-circuit).")
 
@@ -510,7 +510,7 @@ def render(
         # Show clusters if available
         if not isinstance(haplo_df_auto, pd.DataFrame) or haplo_df_auto.empty:
             st.info(
-                "No LD blocks detected — no markers pass the significance threshold. "
+                "No LD blocks detected: no markers pass the significance threshold. "
                 "Lower it, or check that the GWAS produced significant hits."
             )
         else:
@@ -614,7 +614,7 @@ def _render_haplotype_gwas(
     haplo_blocks_to_use = haplo_df_auto
 
     if haplo_blocks_to_use is None or haplo_blocks_to_use.empty:
-        st.warning("No LD blocks to test — detection above found none.")
+        st.warning("No LD blocks to test. Detection above found none.")
         return
 
     # ------------------------------------------------------------
@@ -1428,7 +1428,7 @@ def _render_tukey_and_boxplot(
     st.dataframe(tukey_df, use_container_width=True)
 
     # ------------------------------------------------------------
-    # Compact Letter Display — Piepho (2004)
+    # Compact Letter Display: Piepho (2004)
     # ------------------------------------------------------------
     st.markdown("#### Compact Letter Display (CLD)")
 
@@ -1463,7 +1463,7 @@ def _render_tukey_and_boxplot(
         )
 
     # --------------------------------------------------------
-    # Boxplot WITH CLD letters (closure — rendered via the viz toggle below)
+    # Boxplot WITH CLD letters (closure, rendered via the viz toggle below)
     # --------------------------------------------------------
     def _build_box_fig():
         fig_box2, ax2 = plt.subplots(figsize=FIGSIZE["boxplot"])
@@ -1556,7 +1556,7 @@ def _render_tukey_and_boxplot(
 
             # Half-violin: centered at i - 0.12, density on LEFT side
             # (flat edge faces the box at category center; density
-            # bulges away from the box — canonical Scherer/ggdist
+            # bulges away from the box, canonical Scherer/ggdist
             # orientation: violin's flat side adjacent to box, no overlap).
             if data.size >= 2 and np.unique(data).size >= 2:
                 parts = ax_rain.violinplot(
@@ -1581,7 +1581,7 @@ def _render_tukey_and_boxplot(
                         )
 
             # Narrow boxplot at category center (white fill, thin black
-            # outline, no outliers — dots show full distribution)
+            # outline, no outliers; dots show full distribution)
             ax_rain.boxplot(
                 [data],
                 positions=[i],
@@ -1595,7 +1595,7 @@ def _render_tukey_and_boxplot(
             )
 
             # Jittered dots AT category center (overlapping with box,
-            # haplotype-coloured, thin black outline) — the "rain"
+            # haplotype-coloured, thin black outline), the "rain"
             jitter = rng.uniform(-0.07, 0.07, size=data.size)
             ax_rain.scatter(
                 np.full(data.size, i) + jitter,
@@ -1933,7 +1933,7 @@ def _render_tukey_and_boxplot(
         )
         _ax_forest.set_xlabel(trait_label)
         _title_f = (
-            f"Haplotype Effect Sizes \u2014 \u03b7\u00b2 = {_eta2_vis:.3f}"
+            f"Haplotype Effect Sizes: \u03b7\u00b2 = {_eta2_vis:.3f}"
             if np.isfinite(_eta2_vis)
             else "Haplotype Effect Sizes"
         )

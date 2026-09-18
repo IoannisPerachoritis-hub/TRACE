@@ -1,9 +1,9 @@
-"""Tab — Significant SNPs (complete, no-omission view).
+"""Tab: Significant SNPs (complete, no-omission view).
 
 Surfaces EVERY reporting-significant SNP, each marked as belonging to an LD block
 or as *unblocked* (formed no block), with its candidate interval and Block_Status.
 A block-only view hides the unblocked SNPs;
-this tab shows all of them as data. The table is always complete — never
+this tab shows all of them as data. The table is always complete, never
 truncated. Pure glue over ``gwas.sigtable`` + ``gwas.significance``; the heavy
 work + tests live in those modules.
 """
@@ -13,7 +13,7 @@ import streamlit as st
 from . import LDContext
 
 _SIG_LABELS = [
-    "M_eff — Li & Ji (LD-aware Bonferroni)",
+    "M_eff: Li & Ji (LD-aware Bonferroni)",
     "Bonferroni (α = 0.05)",
     "FDR (q < 0.05)",
     "Custom p-value",
@@ -85,7 +85,7 @@ def render(ctx: LDContext):
               help="Significant SNPs that formed no LD block, hidden by a block-only view.")
     st.markdown(f"**Threshold applied:** {rule.label}")
 
-    # Complete table — never .head(); wide table scrolls inside the widget.
+    # Complete table: never .head(); wide table scrolls inside the widget.
     st.dataframe(sig, use_container_width=True, height=430)
     st.download_button("Download Significant_SNPs.csv", sig.to_csv(index=False),
                        file_name="Significant_SNPs.csv", mime="text/csv")

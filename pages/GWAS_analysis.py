@@ -179,7 +179,7 @@ def _compute_ld_decay_for_gwas_page(geno_key: str, chroms_tuple: tuple,
     median_decay_kb). median_decay_kb may be None if no chromosome yielded
     a valid decay curve.
 
-    Cached by geno_key + chroms + positions — stays hot across one-click
+    Cached by geno_key + chroms + positions, stays hot across one-click
     and manual Run GWAS paths within a session, and across re-runs with
     the same VCF/QC result.
     """
@@ -193,7 +193,7 @@ def _compute_ld_decay_for_gwas_page(geno_key: str, chroms_tuple: tuple,
         positions=positions_arr,
         geno_imputed=geno,
         max_snps_per_chr=1500,   # aligned to the CLI's per-chromosome subsample cap (cli.py, the `if len(pos_ch) > 1500`
-        # in the "Estimating LD decay" loop — not ld_decay's MAX_LD_SNPS safety net)
+        # in the "Estimating LD decay" loop, not ld_decay's MAX_LD_SNPS safety net)
         max_dist_kb=5000.0,
         n_bins=40,   # standardised onto the CLI ld_decay bin count (LD-decay Tier 1a)
     )
@@ -522,7 +522,7 @@ use_loco = st.sidebar.checkbox(
 )
 
 # Available models
-# MLM (FaST-MLM) is the foundational model and ALWAYS runs — its results
+# MLM (FaST-MLM) is the foundational model and ALWAYS runs, its results
 # are required by MLMM cofactor seeding, post-GWAS LD
 # blocks, and the report generator. The multiselect below only chooses
 # which *additional* multi-locus models to layer on top.
@@ -621,7 +621,7 @@ if "FarmCPU (multi-locus)" in model_choices:
 st.sidebar.subheader("Significance threshold")
 sig_rule = st.sidebar.selectbox(
     "Significance threshold",
-    ["FDR (q < 0.05)", "Bonferroni (α = 0.05)", "M_eff — Li & Ji (LD-aware Bonferroni)",
+    ["FDR (q < 0.05)", "Bonferroni (α = 0.05)", "M_eff: Li & Ji (LD-aware Bonferroni)",
      "Custom p-value"],
     index=1,
     key="sig_rule_select",
@@ -792,9 +792,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     pheno = pheno.copy()
     pheno.columns = pheno.columns.str.strip()
     # Phenotype state documentation:
-    #   pheno_raw       — original upload (for fallback/reset)
-    #   pheno_aligned   — GWAS QC-aligned subset (primary for downstream analysis)
-    #   pheno_used_for_hap — column-standardized copy for LD/haplotype pages
+    #   pheno_raw       : original upload (for fallback/reset)
+    #   pheno_aligned   : GWAS QC-aligned subset (primary for downstream analysis)
+    #   pheno_used_for_hap : column-standardized copy for LD/haplotype pages
 
     # ------------------------------------------------
     # 2b. Phenotype QC and transformation
@@ -933,10 +933,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         impute_l=impute_l,
     )
 
-    # Free VCF bytes from session state — no longer needed after parsing
+    # Free VCF bytes from session state, no longer needed after parsing
     st.session_state.pop(f"VCF_BYTES::{vcf_hash}", None)
     st.session_state["Z_grm"] = results["Z_for_pca"]
-    # Force numpy dtype — chroms_grm may be ArrowStringArray on newer pandas,
+    # Force numpy dtype: chroms_grm may be ArrowStringArray on newer pandas,
     # which Streamlit @st.cache_data cannot hash (build_loco_kernels_cached fails).
     st.session_state["chroms_grm"] = np.asarray(results["chroms_grm"], dtype=str)
     # ---- PCA computed separately, cached, then sliced ----
@@ -957,7 +957,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     results["pcs"] = pcs  # so the rest of your code works unchanged
     # ============================================================
-    # Rebuild FastLMM readers (NOT cached — required)
+    # Rebuild FastLMM readers (NOT cached, required)
     # ============================================================
 
     iid = results["iid"]
@@ -1031,7 +1031,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     )
 
     # put core objects into session_state before building LOCO cache
-    # Force numpy dtype on chroms — ArrowStringArray (newer pandas) cannot be
+    # Force numpy dtype on chroms: ArrowStringArray (newer pandas) cannot be
     # hashed by Streamlit @st.cache_data, breaking run_gwas_cached / FarmCPU /
     # MLMM / haplotype cached wrappers downstream.
     st.session_state["chroms"] = np.asarray(chroms, dtype=str)
@@ -1325,7 +1325,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         # --- Configuration panel ---
         _cfg_col1, _cfg_col2 = st.columns(2)
         with _cfg_col1:
-            # MLM (FaST-MLM) is the foundational model and always runs — see
+            # MLM (FaST-MLM) is the foundational model and always runs, see
             # the matching note on `model_choices` in the sidebar above.
             _pipe_models = st.multiselect(
                 "Additional models to include",
@@ -1376,7 +1376,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     )
             _pipe_sig_rule = st.selectbox(
                 "Significance threshold",
-                ["M_eff — Li & Ji (LD-aware Bonferroni)", "Bonferroni (α = 0.05)", "FDR (q < 0.05)"],
+                ["M_eff: Li & Ji (LD-aware Bonferroni)", "Bonferroni (α = 0.05)", "FDR (q < 0.05)"],
                 index=1,
                 key="pipe_sig_rule",
                 help=(
@@ -1427,7 +1427,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             else:
                 _pipe_genome_build = None
 
-            # Override gene files — mandatory for "Other (upload files)",
+            # Override gene files: mandatory for "Other (upload files)",
             # optional override for bundled species.
             _is_other_species = _pipe_species == "Other (upload files)"
             with st.expander(
@@ -1571,12 +1571,12 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             from gwas.reports import generate_gwas_report as _gen_report
             import time as _time_mod
 
-            # Multi-trait progress widget — sits outside the status box so
+            # Multi-trait progress widget, sits outside the status box so
             # it stays visible as each trait completes.
             _trait_progress = st.empty()
 
             with st.status("Running full analysis...", expanded=True) as _status:
-                # Per-trait accumulator — populated inside the loop.
+                # Per-trait accumulator: populated inside the loop.
                 _pipe_per_trait = {}
                 # Successful-trait durations (seconds); drives the ETA.
                 _per_trait_elapsed = []
@@ -1584,7 +1584,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     _trait_start = _time_mod.time()
                     trait_col = _ft_trait
 
-                    # Top-of-iteration progress: "Trait i/N (name) — ETA: …".
+                    # Top-of-iteration progress: "Trait i/N (name), ETA: …".
                     _n_total = len(selected_traits)
                     if _per_trait_elapsed:
                         _mean_pt = sum(_per_trait_elapsed) / len(_per_trait_elapsed)
@@ -1693,7 +1693,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     _pipe_k_mlm = min(_pipe_manual_pcs.get("MLM", n_pcs), _max_avail)
                     _pipe_k_mlmm = min(_pipe_manual_pcs.get("MLMM", _pipe_k_mlm), _max_avail)
                     _pipe_k_fc = min(_pipe_manual_pcs.get("FarmCPU", _pipe_k_mlm), _max_avail)
-                    _pc_msg = f"PCs (fixed) — MLM: {_pipe_k_mlm}"
+                    _pc_msg = f"PCs (fixed), MLM: {_pipe_k_mlm}"
                     if "MLMM (iterative cofactors)" in _pipe_models:
                         _pc_msg += f", MLMM: {_pipe_k_mlmm}"
                     if "FarmCPU (multi-locus)" in _pipe_models:
@@ -1830,7 +1830,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
                             _pipe_sig_label = f"M_eff (M={_pipe_meff:,})"
                         else:
-                            # M_eff failed — fall back to Bonferroni
+                            # M_eff failed, fall back to Bonferroni
                             _pipe_sig_thresh = 0.05 / max(_n_tested, 1)
                             _pipe_sig_lod = -np.log10(_pipe_sig_thresh)
                             _pipe_sig_label = "Bonferroni (M_eff unavailable)"
@@ -1844,7 +1844,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         _pipe_sig_label = "FDR q<0.05"
 
                     # Optional secondary threshold (Bonferroni AND M_eff
-                    # shown together) — informational only, does not change
+                    # shown together), informational only, does not change
                     # which SNPs are amplified.
                     _pipe_secondary_lod = None
                     _pipe_secondary_label = None
@@ -1865,7 +1865,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             # Primary = M_eff → secondary = Bonferroni
                             _pipe_secondary_lod = -np.log10(0.05 / max(_n_tested, 1))
                             _pipe_secondary_label = "Bonferroni α=0.05"
-                        # FDR primary: skip — FDR isn't a single −log10p line
+                        # FDR primary: skip; FDR isn't a single −log10p line
 
                     # Add significance columns for available threshold types
                     _pipe_gwas["Significant_Bonf"] = _pipe_gwas["PValue"] < (0.05 / max(_n_tested, 1))
@@ -1896,7 +1896,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         _fig_man = plot_manhattan_static(
                             _cumpos_df, active_lod=_pipe_sig_lod,
                             active_label=_pipe_sig_label,
-                            title=f"Manhattan — {trait_col} (MLM)",
+                            title=f"Manhattan (MLM): {trait_col}",
                             secondary_lod=_pipe_secondary_lod,
                             secondary_label=_pipe_secondary_label,
                         )
@@ -1910,7 +1910,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             _fig_man_int = plot_manhattan_interactive(
                                 _cumpos_df, active_lod=_pipe_sig_lod,
                                 active_label=_pipe_sig_label,
-                                title=f"Interactive Manhattan — {trait_col} (MLM)",
+                                title=f"Interactive Manhattan (MLM): {trait_col}",
                                 secondary_lod=_pipe_secondary_lod,
                                 secondary_label=_pipe_secondary_label,
                             )
@@ -1934,7 +1934,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             _fig_pca = plot_pca_scatter(
                                 pcs_full_arr[:, :_pipe_k_mlm],
                                 y=y.ravel(),
-                                title=f"PCA — {trait_col}",
+                                title=f"PCA: {trait_col}",
                                 eigenvalues=pca_eigenvalues,
                             )
                             _pipe_figures[f"PCA_{trait_col}.png"] = _fig_pca
@@ -1943,7 +1943,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             if pca_eigenvalues is not None:
                                 _fig_scree = plot_pca_scree(
                                     pca_eigenvalues, n_pcs_used=_pipe_k_mlm,
-                                    title=f"PCA Scree — {trait_col}",
+                                    title=f"PCA Scree: {trait_col}",
                                 )
                                 _pipe_figures[f"PCA_scree_{trait_col}.png"] = _fig_scree
                                 plt.close(_fig_scree)
@@ -1983,14 +1983,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             if _pipe_meff_thresh is not None:
                                 _mlmm_df["Significant_Meff"] = _mlmm_df["PValue"] < _pipe_meff_thresh
                             _pipe_extra_dfs["MLMM"] = _mlmm_df
-                            st.write(f"MLMM complete — {int(_rej_m.sum())} significant SNPs")
+                            st.write(f"MLMM complete: {int(_rej_m.sum())} significant SNPs")
                             # Manhattan + QQ for MLMM
                             try:
                                 _cumpos_m, _tp_m, _tl_m = compute_cumulative_positions(_mlmm_df)
                                 _lam_m = compute_lambda_gc(_mlmm_df["PValue"].values)
                                 _fig_man_m = plot_manhattan_static(
                                     _cumpos_m, active_lod=_pipe_sig_lod,
-                                    active_label=_pipe_sig_label, title=f"Manhattan — {trait_col} (MLMM)",
+                                    active_label=_pipe_sig_label, title=f"Manhattan (MLMM): {trait_col}",
                                     secondary_lod=_pipe_secondary_lod,
                                     secondary_label=_pipe_secondary_label,
                                 )
@@ -2003,7 +2003,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     _fig_man_m_int = plot_manhattan_interactive(
                                         _cumpos_m, active_lod=_pipe_sig_lod,
                                         active_label=_pipe_sig_label,
-                                        title=f"Interactive Manhattan — {trait_col} (MLMM)",
+                                        title=f"Interactive Manhattan (MLMM): {trait_col}",
                                         secondary_lod=_pipe_secondary_lod,
                                         secondary_label=_pipe_secondary_label,
                                     )
@@ -2052,14 +2052,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             if _pipe_meff_thresh is not None:
                                 _fc_df["Significant_Meff"] = _fc_df["PValue"] < _pipe_meff_thresh
                             _pipe_extra_dfs["FarmCPU"] = _fc_df
-                            st.write(f"FarmCPU complete — {int(_rej_fc.sum())} significant SNPs")
+                            st.write(f"FarmCPU complete: {int(_rej_fc.sum())} significant SNPs")
                             # Manhattan + QQ for FarmCPU
                             try:
                                 _cumpos_fc, _tp_fc, _tl_fc = compute_cumulative_positions(_fc_df)
                                 _lam_fc = compute_lambda_gc(_fc_df["PValue"].values)
                                 _fig_man_fc = plot_manhattan_static(
                                     _cumpos_fc, active_lod=_pipe_sig_lod,
-                                    active_label=_pipe_sig_label, title=f"Manhattan — {trait_col} (FarmCPU)",
+                                    active_label=_pipe_sig_label, title=f"Manhattan (FarmCPU): {trait_col}",
                                     secondary_lod=_pipe_secondary_lod,
                                     secondary_label=_pipe_secondary_label,
                                 )
@@ -2072,7 +2072,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     _fig_man_fc_int = plot_manhattan_interactive(
                                         _cumpos_fc, active_lod=_pipe_sig_lod,
                                         active_label=_pipe_sig_label,
-                                        title=f"Interactive Manhattan — {trait_col} (FarmCPU)",
+                                        title=f"Interactive Manhattan (FarmCPU): {trait_col}",
                                         secondary_lod=_pipe_secondary_lod,
                                         secondary_label=_pipe_secondary_label,
                                     )
@@ -2179,18 +2179,18 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                 if _summary_df is not None and "censored_r2_0.2" in _summary_df.columns:
                                     _ncc = int(_summary_df["censored_r2_0.2"].sum())
                                     if _ncc:
-                                        _cn = f" ({_ncc} chr grid-limited — upper bound)"
+                                        _cn = f" ({_ncc} chr grid-limited, upper bound)"
                                 st.write(
                                     f"LD decay (r² ≤ 0.2) ≈ {_pipe_ld_decay_kb:.0f} kb "
                                     f"→ flank = {_pipe_ld_flank} kb{_cn}"
                                 )
                             else:
                                 _pipe_ld_flank = 300
-                                st.write("Could not compute LD decay — using 300 kb flank")
+                                st.write("Could not compute LD decay; using 300 kb flank")
                         except Exception as e:
                             logging.exception("Pipeline LD decay computation failed")
                             _pipe_ld_flank = 300
-                            st.write(f"LD decay computation failed: {e} — using 300 kb flank")
+                            st.write(f"LD decay computation failed: {e}; using 300 kb flank")
                         _step += 1
 
                     # --- Load gene model + KEGG mapping once (shared across models) ---
@@ -2313,9 +2313,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                 )
                             else:
                                 if _ld_suggestive:
-                                    st.write(f"  {_model_name}: No SNPs with p < {_pipe_ld_sig_p:.1e} — skipping LD blocks.")
+                                    st.write(f"  {_model_name}: No SNPs with p < {_pipe_ld_sig_p:.1e}. Skipping LD blocks.")
                                 else:
-                                    st.write(f"  {_model_name}: No significant SNPs — skipping LD blocks.")
+                                    st.write(f"  {_model_name}: No significant SNPs. Skipping LD blocks.")
                         except Exception as e:
                             logging.exception("Pipeline LD detection failed for %s", _model_name)
                             st.write(f"  {_model_name} LD detection skipped: {e}")
@@ -2698,7 +2698,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                 _ax_bh.set_xlabel("Discovery frequency")
                                 _ax_bh.set_ylabel("Number of SNPs")
                                 _ax_bh.set_title(
-                                    f"Subsampling GWAS: SNP discovery frequency — {trait_col}"
+                                    f"Subsampling GWAS: SNP discovery frequency ({trait_col})"
                                 )
                                 _ax_bh.axvline(
                                     0.5, color=SIG_LINE_COLOR, linestyle="--",
@@ -2744,7 +2744,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                     logging.exception("Subsampling block aggregation failed")
                                     st.write("  Block aggregation skipped (error).")
                             else:
-                                st.write("  No MLM LD blocks — skipping block aggregation.")
+                                st.write("  No MLM LD blocks. Skipping block aggregation.")
 
                             # Store in session state for downstream use
                             st.session_state["subsampling_gwas_summary"] = {
@@ -2881,7 +2881,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             "ld_blocks": _pipe_ld_blocks_mlm,
                             "k_mlm": _pipe_k_mlm,
                         }
-                        # Successful trait — record its runtime so the
+                        # Successful trait, record its runtime so the
                         # next iteration's ETA reflects this run's data.
                         _per_trait_elapsed.append(_time_mod.time() - _trait_start)
                     except Exception as e:
@@ -2978,7 +2978,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         key="pipe_zip_dl",
                     )
 
-            # ── Stop here — don't run the detailed single-trait view below ──
+            # ── Stop here. Don't run the detailed single-trait view below ──
             st.stop()
 
     # ================================================================
@@ -3129,11 +3129,11 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     if sig_rule.startswith("Custom") and custom_sig_thresh is not None:
         gwas_df["Significant_Custom"] = gwas_df["PValue"] < float(custom_sig_thresh)
 
-    # M_eff (Li & Ji 2005) — computed once, cached by SNP count
+    # M_eff (Li & Ji 2005), computed once, cached by SNP count
     meff_val = None
     meff_thresh = None
     if sig_rule.startswith("M_eff"):
-        with st.spinner("Computing M_eff (Li & Ji) — eigendecomposition of SNP correlations…"):
+        with st.spinner("Computing M_eff (Li & Ji): eigendecomposition of SNP correlations…"):
             try:
                 meff_val, _meff_eigs = compute_meff_li_ji(geno_imputed)
                 st.session_state["meff_val"] = meff_val
@@ -3165,7 +3165,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     # Optional secondary threshold (show BOTH Bonferroni and M_eff
     # on the Manhattan when the user has asked for it). The line is
-    # informational — it does not change which SNPs are amplified.
+    # informational; it does not change which SNPs are amplified.
     secondary_lod = None
     secondary_label = None
     if show_secondary_threshold:
@@ -3178,7 +3178,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         elif sig_rule.startswith("M_eff"):
             secondary_lod = -np.log10(bonf_thresh)
             secondary_label = "Bonferroni α=0.05"
-        # FDR primary: skip — FDR isn't a single −log10p line
+        # FDR primary: skip; FDR isn't a single −log10p line
 
     # ============================================================
     # 2. PCA plot
@@ -3548,7 +3548,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 color="DiscoveryFreq",
                 color_continuous_scale="RdYlBu",
                 hover_data=["SNP", "Chr", "Pos", "DiscoveryFreq", "MedianPValue"],
-                title=f"Subsampling stability Manhattan — {trait_col}",
+                title=f"Subsampling stability Manhattan: {trait_col}",
                 render_mode="webgl",
             )
             fig_boot_manh.update_layout(
@@ -3677,7 +3677,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         # Static Manhattan (generated for ZIP export + download, not displayed inline)
         df_manh, tick_pos, tick_lab = compute_cumulative_positions(gwas_df)
         fig_manh = plot_manhattan_static(
-            df_manh, active_lod, active_label, f"Manhattan — {trait_col} (MLM)",
+            df_manh, active_lod, active_label, f"Manhattan (MLM): {trait_col}",
             secondary_lod=secondary_lod, secondary_label=secondary_label,
         )
         plt.figure(fig_manh.number)
@@ -3688,7 +3688,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         st.write("### Manhattan Plot (MLM)")
         df_plot, tick_pos_i, tick_lab_i = compute_cumulative_positions(gwas_df)
         fig_int = plot_manhattan_interactive(
-            df_plot, active_lod, active_label, f"Interactive Manhattan — {trait_col} (MLM)",
+            df_plot, active_lod, active_label, f"Interactive Manhattan (MLM): {trait_col}",
             secondary_lod=secondary_lod, secondary_label=secondary_label,
         )
         fig_int.update_layout(
@@ -3801,7 +3801,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             pc_k=n_pcs,
         )
 
-        # Continue to the Post-GWAS page from here — where the user finishes reading
+        # Continue to the Post-GWAS page from here, where the user finishes reading
         # their hits. A second copy remains in "Next steps" at the page bottom.
         # Guarded: st.page_link raises a url_pathname KeyError under Streamlit's
         # AppTest bare mode (no page context); catching it keeps that harness quirk
@@ -3815,7 +3815,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             pass
 
     # ============================================================
-    # 6. Genome-wide LD DECAY — accurate per-chromosome computation
+    # 6. Genome-wide LD DECAY: accurate per-chromosome computation
     # (same function as Post-GWAS Analysis > Decay tab)
     try:
         _manual_decay_df, _manual_summary_df, _manual_median = _compute_ld_decay_for_gwas_page(
@@ -3934,7 +3934,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             with st.expander("MLMM cofactors", expanded=False):
                 st.dataframe(cof_tbl)
 
-            # 7b. MLMM Manhattan (static — for export, not displayed inline)
+            # 7b. MLMM Manhattan (static, for export, not displayed inline)
             df_mlmm = gwas_mlmm.copy()
             df_mlmm["PValue"] = df_mlmm["PValue"].astype(float).clip(1e-300, 1.0)
             df_mlmm["-log10p"] = -np.log10(df_mlmm["PValue"])
@@ -3944,7 +3944,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 df_mlmm,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Manhattan — MLMM — {trait_col}",
+                title=f"Manhattan (MLMM): {trait_col}",
                 secondary_lod=secondary_lod,
                 secondary_label=secondary_label,
             )
@@ -3958,7 +3958,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 df_mlmm,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Interactive Manhattan — MLMM — {trait_col}",
+                title=f"Interactive Manhattan (MLMM): {trait_col}",
                 secondary_lod=secondary_lod,
                 secondary_label=secondary_label,
             )
@@ -4042,7 +4042,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             with st.expander("FarmCPU pseudo-QTNs", expanded=False):
                 st.dataframe(pqtn_tbl)
 
-            # FarmCPU Manhattan (static — for export)
+            # FarmCPU Manhattan (static, for export)
             df_fc = gwas_farmcpu.copy()
             df_fc["PValue"] = df_fc["PValue"].astype(float).clip(1e-300, 1.0)
             df_fc["-log10p"] = -np.log10(df_fc["PValue"])
@@ -4052,7 +4052,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 df_fc,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Manhattan — FarmCPU — {trait_col}",
+                title=f"Manhattan (FarmCPU): {trait_col}",
                 secondary_lod=secondary_lod,
                 secondary_label=secondary_label,
             )
@@ -4066,7 +4066,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 df_fc,
                 active_lod=active_lod,
                 active_label=active_label,
-                title=f"Interactive Manhattan — FarmCPU — {trait_col}",
+                title=f"Interactive Manhattan (FarmCPU): {trait_col}",
                 secondary_lod=secondary_lod,
                 secondary_label=secondary_label,
             )
@@ -4291,7 +4291,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "scan_fp": _scan_fp if "_scan_fp" in locals() else None,
     }
-    bump_data_version()  # GWAS complete — notify downstream pages
+    bump_data_version()  # GWAS complete, notify downstream pages
     # ============================================================
     # Auto-build GWAS-only ZIP (once per trait, no LD content)
     # ============================================================
@@ -4301,7 +4301,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # MLM always runs (foundational), so include it in the tag even though
     # it is no longer in the user-facing multiselect.
     _models_tag = "_".join(sorted(["MLM"] + [m.split()[0] for m in model_choices]))
-    # Fingerprint binds the cached ZIP to the current run — any change
+    # Fingerprint binds the cached ZIP to the current run, any change
     # to PCs/LOCO/QC shifts len(gwas_df) or lambda_gc and invalidates
     # the cache, so the download always matches what's on screen.
     _gwas_fp = f"n{len(gwas_df)}_lam{lambda_gc:.4f}"
@@ -4335,7 +4335,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     st.session_state["geno_imputed"] = geno_imputed
     # Store TRUE genotype sample order (CRITICAL for LD + haplotypes)
     st.session_state["geno_row_ids"] = np.asarray(geno_df.index, dtype=str).tolist()
-    # Force numpy dtype on chroms — ArrowStringArray (newer pandas) cannot be
+    # Force numpy dtype on chroms: ArrowStringArray (newer pandas) cannot be
     # hashed by Streamlit @st.cache_data, breaking downstream cached wrappers.
     st.session_state["chroms"] = np.asarray(chroms, dtype=str)
     st.session_state["positions"] = positions
@@ -4350,7 +4350,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         st.session_state["ld_block_max_dist_bp"] = int(ld_block_max_dist_bp)
 
     # ============================================================
-    # BLOCK 4 — REPRODUCIBILITY / METADATA (embedded in ZIP)
+    # BLOCK 4: REPRODUCIBILITY / METADATA (embedded in ZIP)
     # ============================================================
 
     meta = {
