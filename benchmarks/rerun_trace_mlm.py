@@ -106,7 +106,7 @@ def run_trace_mlm(run_name, trait_name):
     idx_sort = np.argsort(eigvals)[::-1]
     pcs_full = eigvecs[:, idx_sort[:10]]
 
-    # R1.4: auto-PC selector removed. This script writes the SHIPPED platform_GWAS_*.csv
+    # The auto-PC selector was removed. This script writes the SHIPPED platform_GWAS_*.csv
     # artefacts, so use the published (manuscript) PC count -- published_pc_counts = 0/0/0/2.
     # pcs_full (top-10 eigvecs) is unchanged; _run_gwas_impl slices [:, :n_pcs].
     n_pcs = resolve_k(run_name)

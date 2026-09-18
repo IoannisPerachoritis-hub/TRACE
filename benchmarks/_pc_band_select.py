@@ -2,7 +2,7 @@
 
 `auto_select_pcs` (lambda-GC band scan + parsimony + directional deflation guard) and
 `select_best_pc_from_lambdas` (its pure-arithmetic FarmCPU picker) were REMOVED from the
-shipped tool in R1.4 (deleted from gwas/models.py in commit 30f84fe). TRACE no longer
+shipped tool (deleted from gwas/models.py in commit 30f84fe). TRACE no longer
 auto-selects PCs -- it uses a fixed --n-pcs (default 0) plus the report-only diagnostics in
 gwas/pc_diagnostics.py (which never decide a PC count).
 

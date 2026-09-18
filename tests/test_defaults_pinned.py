@@ -304,7 +304,8 @@ CLI_DEFAULTS = [
     ("species", "tomato", "cli.py --species"),
     ("genome_build", "SL3", "cli.py --genome-build"),
     ("seed", 42, "cli.py:104 --seed"),
-    # guard against an accidental default flip of imputation to LD-kNNi (type c).
+    # guard against an accidental default flip of imputation to LD-kNNi, which would
+    # move published numbers.
     ("impute", "mean", "cli.py --impute"),
 ]
 

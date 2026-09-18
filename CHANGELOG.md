@@ -13,7 +13,7 @@ All notable changes to TRACE are documented in this file.
   toolchain (`build-essential`, `gcc`, `gfortran`, `libopenblas-dev`), every
   dependency installs from a wheel (numpy and scipy bundle their own OpenBLAS),
   and set file ownership during `COPY --chown` instead of a post-hoc `chown -R`.
-- **Rewrote the README**: corrected the title (R1.8) and the archive DOI, merged
+- **Rewrote the README**: corrected the title and the archive DOI, merged
   the install paths into one "Getting started" with three routes, documented
   `--covar`, regional plots, LD-kNNi imputation and the PC spectrum diagnostics,
   and refreshed the screenshots (now five).
@@ -36,7 +36,7 @@ All notable changes to TRACE are documented in this file.
   superseded by the region selector's *Detected block* mode + the Local LD tab.
 - **The λGC auto-PC selector** and its flags (`--auto-pcs`, `--pc-strategy`,
   `--max-pcs`, `--pc-band-lo/-hi`, `--pc-parsimony-tol`). TRACE now uses a fixed
-  `--n-pcs` default plus the report-only PC-selection diagnostics above (R1.4).
+  `--n-pcs` default plus the report-only PC-selection diagnostics above.
 
 ### Fixed
 - **LD blocks could bridge uncorrelated SNP clusters.** The block merge fused

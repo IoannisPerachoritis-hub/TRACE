@@ -16,14 +16,14 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
 - inputs (input.npz) unchanged; GOLDEN_LOCK recomputed.
 
 ## 2026-08-28 -- D-109: disjoint LD blocks via greedy occupancy selection (default flip iou -> occupancy)
-- reason: find_ld_clusters_genomewide processed overlapping +/-flank windows independently, emitting blocks that shared member markers (a marker tested in >1 block; the BH denominator over-counted). Greedy occupancy selection (accept candidates by best-member p-value, claim the whole span, discard overlapping candidates) makes blocks disjoint. Default ld_merge_mode flipped "iou" -> "occupancy" (iou/correlation still selectable). TYPE (c) -- published numbers move by design (D-109).
+- reason: find_ld_clusters_genomewide processed overlapping +/-flank windows independently, emitting blocks that shared member markers (a marker tested in >1 block; the BH denominator over-counted). Greedy occupancy selection (accept candidates by best-member p-value, claim the whole span, discard overlapping candidates) makes blocks disjoint. Default ld_merge_mode flipped "iou" -> "occupancy" (iou/correlation still selectable). Published numbers move by design (D-109).
 - tomato_locule: 6 overlapping blocks -> 3 disjoint (chr2 46,461,623-46,582,239 / 47,017,547-47,129,438 / 47,301,921-47,515,290); 18 candidates discarded. The published lead block 47,301,921-47,657,766 (Mean r2 0.427) resolves to the tighter 47,301,921-47,515,290 (Mean r2 0.626) -- the low-coherence tail is dropped, not merged.
 - cases regenerated: tomato_locule/{ld_blocks,haplotype_blocks,annotated_blocks}.csv + run_manifest.json (now records ld_merge_mode); varitome_locule/expected_blocks.csv; GOLDEN_LOCK recomputed.
 - Tier-A synthetic blocks_* UNCHANGED (one seed each -> already disjoint; occupancy == iou there) -- verified via test_golden_blocks, not regenerated.
 - significance: no call flipped. All 3 remaining blocks FDR_BH < 0.05 (P_perm at the 0.000999 floor); the lead-locus block stays significant (eta2 0.347). The weak 0.005994 block was one of the discarded overlapping candidates.
 - plumbing: capture_golden + test_golden_published._rebuild now thread ld_merge_mode via the manifest.
 
-## 2026-09-01 -- R2.2: missing-as-reference parse fix + MAF>=0.05 boundary alignment (TYPE c; synced from DEV)
+## 2026-09-01 -- missing-as-reference parse fix + MAF>=0.05 boundary alignment (published numbers move; synced from DEV)
 - PROVENANCE: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (commit 9e661cc) and
   CANNOT be regenerated in TRACE-release -- release ships no source VCF and no QC checkpoint (benchmarks/qc_data is
   gitignored and untracked here). They were copied byte-for-byte from DEV, and the accompanying gwas/qc.py fix was
@@ -51,7 +51,7 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   annotated 4x14, rebuilt manifest 164/43749/11/4/meff249). test_golden_lock recomputes the digest to f2733277...
 
 
-## 2026-09-03 -- LD-block detection redesign (seed-component scope + mandatory coherence + correlation-only merge). TYPE (c)
+## 2026-09-03 -- LD-block detection redesign (seed-component scope + mandatory coherence + correlation-only merge). Published numbers move.
 - reason: three defects in `gwas/ld.py` block detection were fixed together (work order v2). (1) Blocks emitted every
   connected component in a seed's window stamped with the seed as "Lead SNP" even when the seed was not a member;
   (2) within-block coherence was not required by default; (3) the merge fused overlapping candidates on interval
@@ -68,10 +68,11 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   four Tier-A cases are byte-identical. GOLDEN_LOCK f2733277... -> c768db78...
 - provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (the development tree) from the corrected
   164x43749 QC and copied byte-identical here. TRACE-release cannot regenerate them locally (its on-disk QC is the
-  stale pre-R2.2 165-sample checkpoint), so the real-data @golden/@manuscript tests skip on a clean clone and fail
-  locally only when the stale QC is present -- the same situation recorded for the R2.2 sync. No push (freeze).
+  stale 165-sample checkpoint from before the missing-as-reference parse fix), so the real-data @golden/@manuscript
+  tests skip on a clean clone and fail locally only when the stale QC is present -- the same situation recorded for
+  the parse-fix sync. No push (freeze).
 
-## 2026-09-04 -- Commit B: LD-block min_snps floor 3 -> 2 (GUI = CLI). TYPE (c)
+## 2026-09-04 -- Commit B: LD-block min_snps floor 3 -> 2 (GUI = CLI). Published numbers move.
 - reason: the LD-block detector's minimum cluster size (min_snps) 3 -> 2 at every LIVE site (gwas/ld.py
   find_ld_clusters_genomewide + find_ld_blocks_graph signature defaults, cli.py detection call + run_manifest
   "LD_min_snps", the three GUI detection call sites -- tab_genome_wide, Post_GWAS_Analysis auto-detect, GWAS_analysis
@@ -91,6 +92,6 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   meta.json record params.min_snps=2; NO Tier-A expected_*.csv moved. GOLDEN_LOCK c768db78... -> 7439a5cb... (driven
   solely by varitome_locule/expected_blocks.csv).
 - provenance: these fixtures were PRODUCED IN THE DEVELOPMENT REPOSITORY (the development tree) from the corrected
-  164x43749 QC and copied byte-identical here; TRACE-release cannot regenerate them locally (stale pre-R2.2
-  165-sample on-disk QC), so the real-data @golden/@manuscript tests skip on a clean clone and fail locally only when
-  the stale QC is present. No push (freeze).
+  164x43749 QC and copied byte-identical here; TRACE-release cannot regenerate them locally (stale 165-sample
+  on-disk QC from before the missing-as-reference parse fix), so the real-data @golden/@manuscript tests skip on a
+  clean clone and fail locally only when the stale QC is present. No push (freeze).

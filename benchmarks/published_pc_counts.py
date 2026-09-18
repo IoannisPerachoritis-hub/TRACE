@@ -24,7 +24,7 @@ Provenance of each value (why it is what it is, not a magic number):
       instead of the published 0.9145). This is the BAND value, NOT the elbow-strategy k=3
       recorded (as an old value) in benchmarks/check_pc_threshold.py.
 
-Used by benchmarks/prune_ablation.py (the R1.15 pruning ablation, both LOCO and Global
+Used by benchmarks/prune_ablation.py (the GRM LD-pruning ablation, both LOCO and Global
 conditions) and benchmarks/rerun_global_gwas.py (the Platform-Global regeneration). Both
 import resolve_k so the four numbers are documented once and never defaulted silently.
 """
