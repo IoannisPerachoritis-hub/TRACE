@@ -3,7 +3,7 @@
 The Regional Plot and Local LD tabs are two renderings of ONE window selection.
 Streamlit forbids the same keyed widget in two ``st.tabs`` bodies (DuplicateWidgetID,
 and every tab body executes on each rerun), so this selector renders **once above
-the tab bar** and both tabs consume the returned ``RegionWindow`` — a user flips
+the tab bar** and both tabs consume the returned ``RegionWindow``, a user flips
 between the two views without re-selecting.
 
 Behaviour-preserving extraction of the inline selector that used to live in
@@ -41,7 +41,7 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
     """Render the lead-SNP / snap-to-block / buffer controls once, above the tabs.
 
     Returns a ``RegionWindow``, or ``None`` when no lead SNP can be resolved (empty
-    GWAS table, or the chosen SNP is missing from it) — the caller shows the reason.
+    GWAS table, or the chosen SNP is missing from it). The caller shows the reason.
     """
     gwas_df = ctx.gwas_df
     if gwas_df is None or getattr(gwas_df, "empty", True):
@@ -129,7 +129,7 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         )
 
     # ----- Lead-SNP mode (default): SNP-centered window -----
-    # The old "Snap to LD block" checkbox is gone — the radio's "Detected block"
+    # The old "Snap to LD block" checkbox is gone; the radio's "Detected block"
     # source expresses that intent, and the Regional Plot now derives block shading
     # from whether the lead sits inside a detected block (no two controls to disagree).
     col_lead, col_buf = st.columns([2, 1])

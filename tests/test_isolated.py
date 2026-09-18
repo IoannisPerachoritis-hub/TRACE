@@ -6,10 +6,8 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from gwas.significance import rule_from_cli_args
-from gwas import isolated
 from gwas.isolated import (
     DENYLIST,
     INTERVAL_COLUMNS,

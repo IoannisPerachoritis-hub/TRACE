@@ -1,4 +1,4 @@
-"""R1.15 reproducibility pins for the LOCO / GRM-pruning cross-tool concordance (D-76).
+"""Reproducibility pins for the LOCO / GRM-pruning cross-tool concordance (D-76).
 
 Two tiers:
   * data-FREE guards (resolve_k, the k=0-bug guard, the committed CSV values) run everywhere,
@@ -23,7 +23,7 @@ QC = REPO / "benchmarks" / "qc_data"
 GAPIT = REPO / "benchmarks" / "results" / "gapit"
 RMVP = REPO / "benchmarks" / "results" / "rmvp"
 
-# The 8 published baselines the R1.15 validation gate named (Platform-{LOCO,Global} x
+# The 8 published baselines the LOCO / GRM-pruning validation gate named (Platform-{LOCO,Global} x
 # {GAPIT3,rMVP} on the two validation panels). From loco_comparison.csv rows 3-6 / 15-18.
 EXPECTED_BASELINES = {
     ("tomato_locule_number", "Platform-LOCO", "GAPIT3"): 0.6335,

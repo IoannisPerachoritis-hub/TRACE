@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Whole-pipeline peak RSS of a full cli.py run (R1.12 / R3.3) -- MEMORY point, not runtime.
+"""Whole-pipeline peak RSS of a full cli.py run -- MEMORY point, not runtime.
 
 The published ~430 MB (docs/revision/measurements/T88_scalability.md) covers ONLY the three
 post-GWAS stages (LD blocks + haplotype + annotation). This measures the WHOLE pipeline peak
@@ -128,7 +128,7 @@ def main():
         print("  (memory point -- NOT a runtime/scalability benchmark)")
         return
 
-    # R1.4: --auto-pcs was removed; the CLI uses the fixed --n-pcs default. The old
+    # --auto-pcs was removed; the CLI uses the fixed --n-pcs default. The old
     # variant B (MLM + auto-PC scan) is retired -- it now measures the same as A.
     full = ["--model", "mlm", "mlmm", "farmcpu"]
     variants = [

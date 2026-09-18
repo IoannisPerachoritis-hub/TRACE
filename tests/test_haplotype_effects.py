@@ -7,7 +7,7 @@ CI's real acceptance is the coverage check (test_eta2_ci_coverage).
 """
 import numpy as np
 import pytest
-from scipy.stats import ncf, f as fdist
+from scipy.stats import ncf
 
 from gwas.haplotype import _eta2_confint, _omega2_from_f, _lead_snp_partial_r2
 

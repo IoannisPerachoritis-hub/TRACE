@@ -1,5 +1,5 @@
 """
-Pure statistics for phenotype normality checking — no Streamlit imports.
+Pure statistics for phenotype normality checking. No Streamlit imports.
 
 Kept UI-free so it is unit-testable headlessly. Normality tests, skew/kurtosis,
 transform application and transform suggestion all live here. Transform
@@ -73,7 +73,7 @@ def run_normality_tests(x, alpha=NORMALITY_ALPHA):
 
     if float(np.std(clean)) < 1e-12:
         res["verdict"] = "Constant (no variance)"
-        res["note"] = "All values identical — normality undefined."
+        res["note"] = "All values identical; normality undefined."
         res["skew"] = 0.0
         res["kurtosis"] = 0.0
         return res
@@ -82,21 +82,21 @@ def run_normality_tests(x, alpha=NORMALITY_ALPHA):
     res["kurtosis"] = float(stats.kurtosis(clean, fisher=True))
 
     notes = []
-    # Shapiro-Wilk — most powerful for small/moderate n; unreliable above 5000.
+    # Shapiro-Wilk: most powerful for small/moderate n; unreliable above 5000.
     if n <= 5000:
         W, p = stats.shapiro(clean)
         res["shapiro_W"], res["shapiro_p"] = float(W), float(p)
     else:
         notes.append("Shapiro-Wilk skipped (n>5000; unreliable)")
 
-    # D'Agostino-Pearson K² — needs n >= 8 for the skew component.
+    # D'Agostino-Pearson K²: needs n >= 8 for the skew component.
     if n >= 8:
         k2, kp = stats.normaltest(clean)
         res["k2_stat"], res["k2_p"] = float(k2), float(kp)
     else:
         notes.append("D'Agostino K² skipped (n<8)")
 
-    # Anderson-Darling — significance_level array is [15,10,5,2.5,1]; idx 2 = 5%.
+    # Anderson-Darling: significance_level array is [15,10,5,2.5,1]; idx 2 = 5%.
     ad = stats.anderson(clean, dist="norm")
     res["ad_stat"] = float(ad.statistic)
     crit5 = float(ad.critical_values[2])
@@ -122,7 +122,7 @@ def normality_summary_table(df, cols):
     for c in cols:
         r = run_normality_tests(df[c].to_numpy())
         if r["ad_normal"] is None:
-            ad_label = "—"
+            ad_label = "n/a"
         else:
             ad_label = "Normal" if r["ad_normal"] else "Non-normal"
         rows.append({

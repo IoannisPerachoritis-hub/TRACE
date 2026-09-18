@@ -1,4 +1,4 @@
-"""Tab 1 — LD-block Heatmaps (Primary)."""
+"""Tab 1: LD-block Heatmaps (Primary)."""
 
 import numpy as np
 import streamlit as st
@@ -27,7 +27,7 @@ def render(ctx: LDContext, get_r2_cached):
         df_blocks = ctx.haplo_df_auto
 
         if df_blocks is None or df_blocks.empty:
-            st.info("No LD blocks yet — run block detection in the LD Blocks & Haplotypes tab.")
+            st.info("No LD blocks yet. Run block detection in the LD Blocks & Haplotypes tab.")
             st.caption(
                 "Go to the 'Genome-wide' tab and run automatic detection, "
                 "or rely on automatic detection at page load."
@@ -109,7 +109,7 @@ def render(ctx: LDContext, get_r2_cached):
         if (block_geno.shape[1] > 1) and (min_pairN < MIN_PAIR_N_FOR_PLOT):
             st.warning(
                 f"Low SNP overlap (min pairwise N={min_pairN}). "
-                "LD may be noisy — plotting anyway."
+                "LD may be noisy; plotting anyway."
             )
 
         min_pairN_warn = max(5, int(0.05 * block_geno.shape[0]))
@@ -120,7 +120,7 @@ def render(ctx: LDContext, get_r2_cached):
             )
 
         if block_geno.shape[1] < 2:
-            st.warning("Too few SNPs remain after QC — skipping this block.")
+            st.warning("Too few SNPs remain after QC. Skipping this block.")
             st.stop()
 
         # Ensure consistent genomic ordering BEFORE LD calculation
@@ -201,7 +201,7 @@ def render(ctx: LDContext, get_r2_cached):
         ax.set_ylabel("")
 
         ax.set_xlabel(axis_title)
-        ax.set_title(f"LD block \u2014 Chr{chr_block}:{seg_start_bp:,}\u2013{seg_end_bp:,}")
+        ax.set_title(f"LD block Chr{chr_block}:{seg_start_bp:,}\u2013{seg_end_bp:,}")
 
         st.caption("LD (r²) computed from imputed dosages; haplotype labels use hard-called genotypes.")
         st.pyplot(fig)
@@ -209,7 +209,7 @@ def render(ctx: LDContext, get_r2_cached):
         # --- Export buttons ---
         export_matplotlib(fig, f"LD_block_segment_Chr{chr_block}_{seg_start_bp}_{seg_end_bp}",
                           label_prefix="Download LD heatmap")
-        st.caption("Numeric r² export moved to the **Local LD** tab — pick this block via the "
+        st.caption("Numeric r² export moved to the **Local LD** tab. Pick this block via the "
                    "region selector's *Detected block* mode for the long + square r² CSVs.")
 
     except StopException:

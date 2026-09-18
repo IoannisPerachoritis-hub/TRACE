@@ -1,6 +1,6 @@
 # TRACE CLI reference
 
-Auto-generated from `cli.py` by `python scripts/gen_cli_reference.py`. Do not edit by hand — re-run the generator after changing the parser.
+Auto-generated from `cli.py` by `python scripts/gen_cli_reference.py`. Do not edit by hand; re-run the generator after changing the parser.
 
 ```text
 usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
@@ -36,7 +36,7 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
                   [--no-report] [--no-plots] [--export-qc]
                   [--n-chromosomes N_CHROMOSOMES] [-v] [--interactive]
 
-TRACE — Trait Resolution and Candidate Evaluation (CLI)
+TRACE: Trait Resolution and Candidate Evaluation (CLI)
 
 options:
   -h, --help            show this help message and exit
@@ -80,7 +80,7 @@ options:
                         Number of chromosomes (default: auto-detect from VCF).
                         When set, only chromosomes 1..N are kept.
   -v, --verbose         Verbose logging
-  --interactive         Interactive wizard — prompts for all options step by
+  --interactive         Interactive wizard: prompts for all options step by
                         step
 
 QC thresholds:

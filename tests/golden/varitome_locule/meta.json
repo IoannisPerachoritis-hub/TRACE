@@ -2,7 +2,7 @@
   "case": "varitome_locule",
   "tier": "B",
   "trait": "locule_number",
-  "source": "benchmarks/qc_data/tomato_locule_number (Varitome, 164x43749 after the R2.2 missing-as-reference parse fix + MAF>=0.05 boundary alignment) \u2014 genotypes NOT committed",
+  "source": "benchmarks/qc_data/tomato_locule_number (Varitome, 164x43749 after the missing-as-reference parse fix + MAF>=0.05 boundary alignment); genotypes NOT committed",
   "gwas_csv": "platform_GWAS_locule_number.csv",
   "reproduces": "the disjoint, seed-containing LD blocks on the corrected genotypes, read back from an actual run at the reproducing params -- not from the PDF. At the lowered min_snps=2 floor the region resolves to FOUR coherent blocks whose lead is always a member: the three seed-component-redesign blocks plus a new significant 2-marker block (46,799,142-46,914,856, eta2 0.196, P_perm floor) that the previous min_snps=3 floor discarded as below-size. No significance call flips; meff (249), n_sig_meff (43) and n_sig_bonf (11) are unchanged.",
   "median_decay_kb": 72.17,
@@ -23,5 +23,5 @@
   "comparison": {
     "mode": "canonical_block_table"
   },
-  "trace_commit_note": "regenerated for the LD-block min_snps floor 3 -> 2 (Commit B, TYPE c)"
+  "trace_commit_note": "regenerated for the LD-block min_snps floor 3 -> 2 (Commit B; published numbers move)"
 }

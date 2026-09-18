@@ -1,4 +1,4 @@
-"""Phase 2 — all-traits normality summary table."""
+"""Phase 2: all-traits normality summary table."""
 
 import streamlit as st
 
@@ -45,7 +45,7 @@ def render(ctx: PhenoQCContext):
             "Skew": "{:.2f}",
             "Excess kurtosis": "{:.2f}",
         },
-        na_rep="—",
+        na_rep="n/a",
     )
     st.dataframe(styled, use_container_width=True)
 

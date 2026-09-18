@@ -2,7 +2,7 @@
 
 Covers the algorithm's load-bearing properties (distance normalisation by n, the
 constant c, inverse-distance-weighted voting, N excluding target-missing samples,
-discrete output, map-independence) and the type-(b) guarantee that the default
+discrete output, map-independence) and the guarantee that the default
 mean path is byte-identical.
 """
 import numpy as np
@@ -11,7 +11,7 @@ import pytest
 from sklearn.impute import SimpleImputer
 
 from gwas.impute import (ld_knni, imputation_selfcheck, _ld_distances, _vote,
-                         _ld_rank_topl, _mode_or_zero, empty_topl_fraction)
+                         empty_topl_fraction)
 from gwas.qc import _pipeline_build_geno_matrices
 
 
@@ -127,7 +127,7 @@ def test_observed_entries_are_copied_unchanged():
     assert np.array_equal(out[obs], Gm[obs].astype(np.float32))
 
 
-# ── type-(b) guarantee: default mean path byte-identical ────────────────────
+# ── guarantee: default mean path byte-identical ─────────────────────────────
 def test_default_mean_path_bit_identical():
     rng = np.random.default_rng(7)
     G = rng.integers(0, 3, (30, 40)).astype(float)

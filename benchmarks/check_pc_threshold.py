@@ -25,7 +25,7 @@ from gwas.kinship import (
     _ld_prune_for_grm_by_chr_bp,
     _standardize_geno_for_grm,
 )
-# R1.4: auto_select_pcs was removed from the shipped tool; recovered for reproducibility.
+# auto_select_pcs was removed from the shipped tool; recovered for reproducibility.
 from benchmarks._pc_band_select import auto_select_pcs
 from annotation import canon_chr
 
