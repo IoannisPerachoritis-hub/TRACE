@@ -17,6 +17,15 @@ All notable changes to TRACE are documented in this file.
   `constraints.txt`**, the pinned set used for the manuscript benchmarks.
   Earlier images resolved from PyPI at build time and could ship newer major
   versions of numpy, scipy and statsmodels than the tested configuration.
+- **Pinned `fastlmmclib`, and corrected what `constraints.txt` claims to be.**
+  fastlmm declares `fastlmmclib>=0.0.7`, which the constraints file did not pin,
+  so CI and the published container each resolved whatever version PyPI offered
+  on the day (0.0.8 since 2026-08-07). It is now fixed at 0.0.7, the version the
+  benchmark environment has carried since 2026-02-23. The file's header no
+  longer describes itself as a bit-for-bit reproducible environment: it is
+  hand-maintained rather than generated, covers direct dependencies only, carries
+  no hashes, and its pins were transcribed from the development environment
+  rather than captured at run time.
 - **Rewrote the README**: corrected the title and the archive DOI, merged
   the install paths into one "Getting started" with three routes, documented
   `--covar`, regional plots, LD-kNNi imputation and the PC spectrum diagnostics,
