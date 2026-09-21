@@ -121,8 +121,8 @@ def _render_haplotype_pca(
     geno_iids = pd.Index(np.asarray(geno_sample_ids, dtype=str))
     if pcs_2.shape[0] != len(geno_iids):
         st.warning(
-            f"PCA panel: cached PC matrix has {pcs_2.shape[0]} rows but "
-            f"`geno_row_ids` has {len(geno_iids)} entries; alignment mismatch. "
+            f"PCA panel: cached PC matrix has {pcs_2.shape[0]} rows but the loaded "
+            f"genotype table has {len(geno_iids)} samples; alignment mismatch. "
             "Skipping PCA panel."
         )
         return
@@ -136,7 +136,7 @@ def _render_haplotype_pca(
     if len(mlg_df) > 0 and (labels != "Other").sum() == 0:
         st.warning(
             "PCA panel: 0 accessions matched between haplotype assignments "
-            f"and `geno_row_ids` ({len(mlg_df)} haplotyped samples vs "
+            f"and the loaded genotype table ({len(mlg_df)} haplotyped samples vs "
             f"{len(geno_iids)} genotype rows). Sample-ID format mismatch; "
             "cannot colour by haplotype. Skipping PCA panel."
         )
@@ -564,6 +564,41 @@ def _render_haplotype_gwas(
     run_haplotype_block_gwas_cached_fn,
 ):
     """Sub-section: Haplotype analysis parameters, execution, and visualization."""
+    # ------------------------------------------------------------------
+    # Drift guard: do the genotypes on this page belong to the run on screen?
+    # ------------------------------------------------------------------
+    # `geno_row_ids` is written ONLY by a completed GWAS run (GWAS_analysis.py, the
+    # `st.session_state["geno_row_ids"] = np.asarray(geno_df.index, dtype=str).tolist()`
+    # in the export block), while `geno_df` / `geno_imputed` are refreshed on EVERY
+    # rerun that reaches the `for key in [` results loop -- and `geno_row_ids` is not
+    # in that list. A disagreement therefore means the GWAS page rebuilt the genotype
+    # objects for a different trait without completing a run, so the blocks on screen
+    # and the genotypes no longer come from the same analysis. The previous run's
+    # matrix is gone (overwritten by that loop), so this cannot be repaired here.
+    # np.array_equal, NOT a size test: same-length/different-ids is the silently-wrong
+    # case -- extract_block_geno_for_paper() checks the mask SIZE only, so such a mask
+    # passes its guard and mis-pairs rows positionally.
+    _ids_last_run = np.asarray(st.session_state.get("geno_row_ids", []), dtype=str)
+    _ids_now = np.asarray(ctx.geno_df.index, dtype=str)
+    if _ids_last_run.size and not np.array_equal(_ids_last_run, _ids_now):
+        _run_trait = st.session_state.get("gwas_run_summary", {}).get("trait") or ctx.ld_trait
+        _sel = st.session_state.get("selected_traits_multiselect") or []
+        _loaded_trait = str(_sel[0]) if _sel else None
+        _loaded = (
+            f"`{_loaded_trait}` ({_ids_now.size} samples)" if _loaded_trait
+            else f"a different trait ({_ids_now.size} samples)"
+        )
+        st.error(
+            f"The genotype data loaded on this page was rebuilt for {_loaded}, but the "
+            f"results shown are from the GWAS on `{_run_trait}` ({_ids_last_run.size} "
+            "samples). Haplotype statistics computed now would not match that analysis."
+            f"\n\nRe-run the GWAS on `{_run_trait}`, then reopen Post-GWAS Analysis."
+        )
+        # st.stop() (NOT raise): StopException subclasses BaseException and is caught by
+        # render()'s `except StopException`, so the tab ends cleanly instead of showing
+        # a traceback.
+        st.stop()
+
     st.markdown("#### Haplotype analysis parameters")
 
     trait_col = ctx.trait_col
@@ -923,7 +958,11 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
     gdf = ctx.gwas_df
     if not isinstance(gdf, pd.DataFrame) or gdf.empty or "SNP" not in gdf.columns:
         return
-    geno_hard = st.session_state.get("ld_geno_hard")
+    # Genotype matrix, SNP axis and sample axis all come from ctx, so they cannot
+    # disagree (WO-HAPMASK-01). The SNP axis must move with the matrix: `_ci` below is
+    # a column index into it, so a stale sid/positions array would silently select the
+    # wrong marker.
+    geno_hard = ctx.geno_hard
     if geno_hard is None:
         return
 
@@ -987,7 +1026,7 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
         _pick = st.selectbox("SNP:", _labels, key="lead_gallery_snp")
         _chosen = _snp_ids[_labels.index(_pick)]
 
-        _sid_arr = np.asarray(st.session_state.get("ld_sid", ctx.sid)).astype(str)
+        _sid_arr = np.asarray(ctx.sid).astype(str)
         _idx_arr = np.where(_sid_arr == _chosen)[0]
         if not _idx_arr.size:
             st.warning("Chosen SNP is not in the QC'd genotype matrix; cannot render.")
@@ -996,7 +1035,8 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
         _dose = np.asarray(geno_hard)[:, _ci].astype(float)
 
         _ph_used = st.session_state.get("pheno_used_for_hap")
-        _geno_ids = np.asarray(st.session_state.get("geno_row_ids", []), dtype=str)
+        # sample axis of `geno_hard` above -- same source, so the two always agree
+        _geno_ids = np.asarray(ctx.geno_df.index, dtype=str)
         if _ph_used is None or _geno_ids.size == 0:
             st.warning("Phenotype/sample alignment unavailable; run haplotype analysis first.")
             return
@@ -1010,7 +1050,7 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
         _g = _dose[_ok]
         _y = _y_full[_ok]
         _samp = pd.Index(_geno_ids[_ok]).astype(str)
-        _pos = int(np.asarray(st.session_state.get("ld_positions", ctx.positions))[_ci])
+        _pos = int(np.asarray(ctx.positions)[_ci])
         _chr = str(_sig.loc[_sig["SNP"].astype(str) == _chosen, "Chr"].iloc[0])
         _n_perm = int(st.session_state.get("n_perm_hap", 1000))
 
@@ -1112,28 +1152,22 @@ def _render_block_visualization(
 
     ph_ser = pd.to_numeric(ph_used[trait_col_vis], errors="coerce")
     ph_ser.index = ph_ser.index.astype(str)
-    geno_sample_ids = np.asarray(
-        st.session_state.get("geno_row_ids", []),
-        dtype=str
-    )
+    # Sample axis of ctx.geno_hard, which is the matrix extracted from below: one
+    # source for both, so the phenotype mask can never be sized for a different
+    # sample set than the genotypes it selects (WO-HAPMASK-01). dtype=str because
+    # LDContext only types geno_df as a DataFrame -- an integer index would reindex
+    # a string-indexed phenotype to all-NaN silently.
+    geno_sample_ids = np.asarray(ctx.geno_df.index, dtype=str)
 
     if geno_sample_ids.size == 0:
         st.error(
-            "Missing genotype sample IDs (geno_row_ids).\n"
+            "The loaded genotype table has no sample IDs.\n"
             "Run the GWAS page again so LD analysis can align samples correctly."
         )
         st.stop()
 
     pheno_selected = ph_ser.reindex(geno_sample_ids)
     keep_pheno = np.isfinite(pheno_selected.values)
-
-    if keep_pheno.shape[0] != st.session_state["ld_geno_hard"].shape[0]:
-        st.warning(
-            "Phenotype/genotype mismatch detected.\n"
-            "Auto-aligning by genotype sample IDs."
-        )
-        pheno_selected = ph_ser.reindex(geno_sample_ids)
-        keep_pheno = np.isfinite(pheno_selected.values)
 
     if keep_pheno.sum() < 5:
         st.warning("Too few non-missing phenotype values for haplotype visualization.")
@@ -1143,10 +1177,10 @@ def _render_block_visualization(
     # Extract SNPs using phenotype mask
     # --------------------------------------------------------
     block_geno, _, block_sids = cached_extract_block_geno(
-        st.session_state["ld_geno_hard"],
-        st.session_state["ld_chroms"],
-        st.session_state["ld_positions"],
-        st.session_state["ld_sid"],
+        ctx.geno_hard,
+        ctx.chroms,
+        ctx.positions,
+        ctx.sid,
         block_chr,
         block_start,
         block_end,
