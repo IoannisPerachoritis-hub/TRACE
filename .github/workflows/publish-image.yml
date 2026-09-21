@@ -13,9 +13,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Derive version from tag
+      - name: Derive version and image tags from the git tag
         id: ver
-        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          img="ghcr.io/ioannisperachoritis-hub/trace"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          # A SemVer prerelease carries a hyphen in the version (1.1.0-rc2).
+          # Never move :latest for those -- the README and every launcher tell
+          # users to pull :latest, so a release candidate must not become it.
+          case "$v" in
+            *-*) latest=""; echo "prerelease $v: leaving :latest where it is" ;;
+            *)   latest="$img:latest" ;;
+          esac
+          {
+            echo "tags<<TAGS_EOF"
+            echo "$img:$v"
+            if [ -n "$latest" ]; then echo "$latest"; fi
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
@@ -27,6 +43,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/ioannisperachoritis-hub/trace:${{ steps.ver.outputs.v }}
-            ghcr.io/ioannisperachoritis-hub/trace:latest
+          tags: ${{ steps.ver.outputs.tags }}
