@@ -5,12 +5,12 @@ WORKDIR /app
 RUN useradd --create-home --uid 1000 appuser \
     && chown appuser:appuser /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 COPY --chown=appuser:appuser . .
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . -c constraints.txt
 
 USER appuser
 

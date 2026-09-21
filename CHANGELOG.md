@@ -13,6 +13,10 @@ All notable changes to TRACE are documented in this file.
   toolchain (`build-essential`, `gcc`, `gfortran`, `libopenblas-dev`), every
   dependency installs from a wheel (numpy and scipy bundle their own OpenBLAS),
   and set file ownership during `COPY --chown` instead of a post-hoc `chown -R`.
+- **The published container image now installs its dependencies against
+  `constraints.txt`**, the pinned set used for the manuscript benchmarks.
+  Earlier images resolved from PyPI at build time and could ship newer major
+  versions of numpy, scipy and statsmodels than the tested configuration.
 - **Rewrote the README**: corrected the title and the archive DOI, merged
   the install paths into one "Getting started" with three routes, documented
   `--covar`, regional plots, LD-kNNi imputation and the PC spectrum diagnostics,
