@@ -6,7 +6,6 @@ also update ``GOLDEN_LOCK`` (i.e. any edit not made through the guarded
 ``regenerate.py``) fails this test, so a deliberate regeneration always shows up
 as a one-line diff on a file whose only purpose is to be noticed in review.
 """
-from pathlib import Path
 
 from tests.golden._canon import GOLDEN_DIR, golden_lock_digest
 

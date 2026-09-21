@@ -1,6 +1,6 @@
 """Tests for gwas.pc_diagnostics -- REPORT the genotype-PCA eigenvalue spectrum ONLY; never select, never recommend.
 
-R1.4: the conventional-criteria table (Kaiser / Marchenko-Pastur / broken-stick / parallel-analysis / Tracy-Widom)
+The conventional-criteria table (Kaiser / Marchenko-Pastur / broken-stick / parallel-analysis / Tracy-Widom)
 was removed; ``compute_pc_diagnostics`` returns only {"spectrum", "meta"}. These pin that the module reports a
 spectrum, carries no selector/criteria machinery, and emits NO PC count.
 """
@@ -19,7 +19,7 @@ class TestNeverSelects:
         assert not hasattr(pcd, "select_best_pc_from_lambdas")
 
     def test_module_has_no_criteria_functions(self):
-        # R1.4: the criteria table + its helpers (Kaiser/MP/broken-stick/parallel-analysis) were removed.
+        # The criteria table + its helpers (Kaiser/MP/broken-stick/parallel-analysis) were removed.
         assert not hasattr(pcd, "pc_criteria_table")
         assert not hasattr(pcd, "parallel_analysis_k")
         assert not hasattr(pcd, "_broken_stick_k")

@@ -17,27 +17,27 @@ diversity panels, it works with any diploid VCF.
 
 ## Screenshots
 
-**GWAS Analysis** — one-click pipeline with QC, Manhattan/QQ plots, subsampling stability, and cross-model
+**GWAS Analysis**: one-click pipeline with QC, Manhattan/QQ plots, subsampling stability, and cross-model
 consensus:
 
 ![GWAS Analysis](docs/screenshot_gwas.png)
 
-**TRACE-FarmCPU** — multi-locus scan with REML-optimised pseudo-QTN selection and a fixed-effect final test:
+**TRACE-FarmCPU**: multi-locus scan with REML-optimised pseudo-QTN selection and a fixed-effect final test:
 
 ![TRACE-FarmCPU](docs/screenshot_farmcpu.png)
 
-**Post-GWAS Analysis** — peak-centric LD block detection, haplotype effect testing (Tukey HSD + compact
+**Post-GWAS Analysis**: peak-centric LD block detection, haplotype effect testing (Tukey HSD + compact
 letter display, raincloud, forest plot), and haplotype-coloured PCA:
 
 ![Post-GWAS Analysis](docs/screenshot_ld.png)
 
-**Regional association plot** — physical position against association statistic, coloured by r² to the lead
+**Regional association plot**: physical position against association statistic, coloured by r² to the lead
 marker computed from the analysed genotypes; the detected LD block is shaded, with an overlapping gene track
 beneath:
 
 ![Regional association](docs/screenshot_regional.png)
 
-**Local LD heatmap** — lead-SNP-centric heatmap with a configurable buffer; pick a detected block via the
+**Local LD heatmap**: lead-SNP-centric heatmap with a configurable buffer; pick a detected block via the
 region selector:
 
 ![Local LD](docs/screenshot_local_ld.png)
@@ -48,14 +48,14 @@ region selector:
 
 Three routes. **Pick the one whose requirement you already meet.**
 
-### Run it without installing anything — needs only Docker
+### Run it without installing anything (needs only Docker)
 
 ```bash
 docker run -p 8501:8501 ghcr.io/ioannisperachoritis-hub/trace:latest
 ```
 
 Open <http://localhost:8501>, upload a VCF and a phenotype table, and download the results archive before
-closing the container — nothing persists between sessions. No Python, no compiler, no clone.
+closing the container. Nothing persists between sessions. No Python, no compiler, no clone.
 
 Once pulled, `docker run` uses the local copy and never checks for a newer release, so update explicitly:
 
@@ -72,7 +72,7 @@ docker run --rm -v "$(pwd)/data:/data" --entrypoint trace-gwas \
     --trait MyTrait --output /data/results/
 ```
 
-### Install without administrator rights — needs only [uv](https://docs.astral.sh/uv/)
+### Install without administrator rights (needs only [uv](https://docs.astral.sh/uv/))
 
 uv is a single binary that installs into your home directory and fetches Python itself, so this route works
 on a managed machine where you cannot install Docker.
@@ -85,13 +85,13 @@ uv pip install -e .
 streamlit run app.py
 ```
 
-### Install with pip — if you already have Python 3.11+
+### Install with pip (Python 3.11+ already installed)
 
 See [Installation](#installation) below. This is the documented installation route.
 
 ### Then try the bundled example
 
-50 samples, 510 SNPs, three chromosomes — enough to see every stage run in under a minute.
+50 samples, 510 SNPs, three chromosomes, enough to see every stage run in under a minute.
 
 ```bash
 bash examples/run_example.sh
@@ -123,16 +123,16 @@ VCF + Phenotypes → QC → GWAS (LOCO-MLM / MLMM / FarmCPU) → LD blocks → G
 
 - **Mixed linear model (MLM)** via [FaST-LMM](https://github.com/fastlmm/FaST-LMM), with **LOCO**
   (leave-one-chromosome-out) kinship to avoid proximal contamination
-- **MLMM** (multi-locus mixed model) and **TRACE-FarmCPU** — a FarmCPU (Liu et al., 2016) implementation in
+- **MLMM** (multi-locus mixed model) and **TRACE-FarmCPU**: a FarmCPU (Liu et al., 2016) implementation in
   which pseudo-QTNs are selected by REML-optimised bin selection at the published bound and the final scan is
   a classical fixed-effect (OLS) test with no kinship fitted
 - **Cross-model consensus table** when two or more models are requested
 - **User-supplied covariates** (`--covar`, or upload in the web app) combined with any principal components
   into a single fixed-effect design matrix, retained at every forward-selection iteration
-- **Principal-component spectrum diagnostics** — the eigenvalue spectrum and each component's correlation
+- **Principal-component spectrum diagnostics**: the eigenvalue spectrum and each component's correlation
   with the trait are reported to inform the analyst's choice; the count is specified, never selected
   automatically
-- **User-selectable significance threshold** — Bonferroni (default), M_eff (Li & Ji, 2005, LD-aware), FDR, or
+- **User-selectable significance threshold**: Bonferroni (default), M_eff (Li & Ji, 2005, LD-aware), FDR, or
   an explicit p-value
 - **OLS effect sizes** (beta, SE, t), **rank-based inverse normal transform** for skewed traits, Manhattan and
   QQ plots, and the genomic inflation factor λGC
@@ -140,9 +140,9 @@ VCF + Phenotypes → QC → GWAS (LOCO-MLM / MLMM / FarmCPU) → LD blocks → G
 ### Quality control and missing data
 
 - MAF, MAC, per-variant and per-sample missingness, with adjustable thresholds
-- **Imputation quality awareness** — INFO / DR2 / R2 / AR2 fields are detected automatically in imputed VCFs
+- **Imputation quality awareness**: INFO / DR2 / R2 / AR2 fields are detected automatically in imputed VCFs
   and can be filtered on
-- **Two imputation options** — mean imputation, or **LD-kNNi** (LD-weighted k-nearest-neighbour) for
+- **Two imputation options**: mean imputation, or **LD-kNNi** (LD-weighted k-nearest-neighbour) for
   missing calls
 - A quality-control report with heterozygosity, F_IS and trait distributions
 
@@ -195,7 +195,7 @@ runs produce the same artifacts as the interface.
 | Plots (Manhattan / QQ / heatmaps)       | GWAS, LD pages           | enabled by default; suppress with `--no-plots`            |
 | Export QC matrices for cross-tool runs  | (not in UI)              | `--export-qc`                                             |
 
-Deep-dive interactive features — per-block LD heatmaps, decay curves, the regional plot — live in the
+Deep-dive interactive features (per-block LD heatmaps, decay curves, the regional plot) live in the
 Post-GWAS Analysis page and have no CLI counterpart by design; the CLI emits the underlying CSVs so the same
 plots can be regenerated externally.
 
@@ -203,13 +203,13 @@ plots can be regenerated externally.
 
 ## Documentation
 
-- **[Quick-Start Tutorial](docs/tutorial.md)** — a walkthrough of both the CLI and the web app on the bundled
+- **[Quick-Start Tutorial](docs/tutorial.md)**: a walkthrough of both the CLI and the web app on the bundled
   example dataset.
-- **[CLI Reference](docs/cli_reference.md)** — every command-line flag, generated from the parser.
-- **[Output Files](docs/outputs.md)** — the post-GWAS CSVs written by the LD, haplotype and regional-plot
+- **[CLI Reference](docs/cli_reference.md)**: every command-line flag, generated from the parser.
+- **[Output Files](docs/outputs.md)**: the post-GWAS CSVs written by the LD, haplotype and regional-plot
   tabs. The GWAS, LD-block, haplotype, subsampling and consensus columns are documented in the **CSV Column
   Glossary** on the app's **Help & Reference** page.
-- **[Gene-Model Upload](docs/gene_model_upload.md)** — the format for supplying your own gene annotation.
+- **[Gene-Model Upload](docs/gene_model_upload.md)**: the format for supplying your own gene annotation.
 
 ---
 
@@ -300,7 +300,7 @@ TRACE/
 - **VCF** (`.vcf` or `.vcf.gz`), biallelic SNPs recommended
 - Genotypes are stored as alternate-allele counts (0, 1, 2 for a diploid); missing calls are filled by mean
   imputation or by LD-kNNi, and LD is computed pairwise-complete
-- Imputed VCFs supported — INFO / DR2 / R2 / AR2 quality fields are auto-detected and optionally filtered
+- Imputed VCFs supported: INFO / DR2 / R2 / AR2 quality fields are auto-detected and optionally filtered
 
 ### Phenotypes
 
@@ -316,7 +316,7 @@ TRACE/
 | Tomato (*S. lycopersicum*) | ITAG4.0 (SL4 option) | SL4.0 | Sol Genomics Network |
 
 SL3.1 matches Varitome / SL2.5 VCF coordinates; SL4 matches ITAG4.0 assemblies. **Gene models and variant
-coordinates must share an assembly build** — annotation against a mismatched build is positional rather than
+coordinates must share an assembly build**. Annotation against a mismatched build is positional rather than
 coordinate-exact.
 
 **Other species:** TRACE works with any diploid VCF. Supply a tab-delimited gene coordinate file with
@@ -335,9 +335,9 @@ resolve is mapped to `"ALT"` and dropped from LOCO kernels and LD pruning. Imple
 
 Upload a VCF and a phenotype CSV, set QC thresholds, and select models. Two modes:
 
-- **Manual** — set the PC count, run the GWAS, then work through the results section by section, each with
+- **Manual**: set the PC count, run the GWAS, then work through the results section by section, each with
   its own downloads.
-- **One-Click Full Analysis** — pick the models (default MLM + FarmCPU) and a significance threshold, then
+- **One-Click Full Analysis**: pick the models (default MLM + FarmCPU) and a significance threshold, then
   run. The pipeline goes MLM → MLMM/FarmCPU → Manhattan and QQ plots → LD blocks → HTML report → ZIP, at the
   PC count you set (default 0; TRACE does not select principal components automatically, but the report
   includes the eigenvalue spectrum). The ZIP contains `tables/` (GWAS results with `Significant_Bonf` and
@@ -424,7 +424,7 @@ If you use TRACE in your research, please cite:
 
 > To be filled after acceptance.
 >
-> Software archive: [10.5281/zenodo.19678860](https://doi.org/10.5281/zenodo.19678860) — concept DOI,
+> Software archive: [10.5281/zenodo.19678860](https://doi.org/10.5281/zenodo.19678860), concept DOI,
 > resolving to the latest archived version. Each release also carries its own version DOI.
 >
 > See [CITATION.cff](CITATION.cff) for citation metadata.
@@ -439,7 +439,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- **European Regional Development Fund** — Program "Research Innovation and Digitalisation for Smart
+- **European Regional Development Fund**: Program "Research Innovation and Digitalisation for Smart
   Transformation" 2021-2027, Grant No. BG16RFPR002-1.014-0003-C01
-- **NATGENCROP Project** — HORIZON-WIDERA-2022-TALENTS-01, No. 101087091
+- **NATGENCROP Project**: HORIZON-WIDERA-2022-TALENTS-01, No. 101087091
 - **Center of Plant Systems Biology and Biotechnology (CPSBB)**, Plovdiv, Bulgaria

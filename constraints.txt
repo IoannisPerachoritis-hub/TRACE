@@ -1,4 +1,4 @@
-# Reproducibility constraints for TRACE v1.0.0
+# Reproducibility constraints for TRACE v1.1.0
 #
 # These are the exact dependency versions used for the TRACE manuscript
 # benchmarks (Solanaceae GWAS, n=150-350) and CI test runs.

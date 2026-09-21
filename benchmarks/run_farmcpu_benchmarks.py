@@ -7,6 +7,7 @@ Orchestrates:
 4. Generating p-value scatter plots
 5. Saving comparison table
 """
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +28,10 @@ apply_matplotlib_theme()
 QC_DIR = ROOT / "benchmarks" / "qc_data"
 GAPIT_FARMCPU_DIR = ROOT / "benchmarks" / "results" / "gapit_farmcpu"
 
-RSCRIPT = r"C:\Program Files\R\R-4.5.2\bin\Rscript.exe"
+RSCRIPT = (
+    shutil.which("Rscript")
+    or r"C:\Program Files\R\R-4.5.2\bin\Rscript.exe"
+)
 
 RUNS = {
     "pepper_FWe": {"trait": "FWe", "species": "Pepper"},

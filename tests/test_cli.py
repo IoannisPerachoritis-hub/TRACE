@@ -34,7 +34,7 @@ class TestCLIArgParsing:
         assert args.mac == 5
         assert args.ind_miss == 0.20
         assert args.info_thresh == 0.0
-        assert args.n_pcs == 0  # R1.4: auto-PC selector removed; fixed default is 0 PCs
+        assert args.n_pcs == 0  # auto-PC selector removed; fixed default is 0 PCs
         assert args.model == ["mlm"]
         assert args.no_report is False
         assert args.no_plots is False
@@ -105,7 +105,7 @@ class TestCLIArgParsing:
         assert args.export_qc is False
 
     def test_auto_pc_flags_removed(self):
-        # R1.4: the lambda-GC auto-PC selector was removed; its flags no longer
+        # The lambda-GC auto-PC selector was removed; its flags no longer
         # parse and the fixed default is 0 PCs (no auto-selection).
         parser = _build_parser()
         args = parser.parse_args([

@@ -1,4 +1,4 @@
-"""Tab 2 — Local LD heatmap around a lead SNP."""
+"""Tab 2: Local LD heatmap around a lead SNP."""
 
 import numpy as np
 import pandas as pd
@@ -207,7 +207,7 @@ def render(ctx: LDContext, get_r2_cached, window):
         )
 
         # ---- Numeric export: the r² numbers behind the heatmap ----
-        # Serialisation only — r² is already computed and cached. Two shapes so a
+        # Serialisation only: r² is already computed and cached. Two shapes so a
         # user can table TRACE's numbers instead of reading them off the figure.
         _n = int(r2.shape[0])
         _ld_stem = f"Chr{chr_sel}_{int(start_bp)}_{int(end_bp)}_{_n}snps"

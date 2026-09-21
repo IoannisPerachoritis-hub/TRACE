@@ -34,7 +34,7 @@ def test_tab_build_path_complete_and_projects_unblocked():
                          "Beta_OLS": 0.3, "SE_OLS": 0.1, "Significant_Meff": pvals < 1e-6})
     geno = rng.integers(0, 3, size=(20, n)).astype(float)
 
-    rule = rule_from_streamlit("M_eff — Li & Ji (LD-aware Bonferroni)", n, n)
+    rule = rule_from_streamlit("M_eff: Li & Ji (LD-aware Bonferroni)", n, n)
     sig = build_significant_snp_table(
         gwas, pd.DataFrame(), rule, chroms, positions, sid,
         geno_dosage_raw=geno, genes=None, seed_p_used=1e-5, top_n_used=0,

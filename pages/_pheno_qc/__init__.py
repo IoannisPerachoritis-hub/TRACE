@@ -8,7 +8,7 @@ transforms the GWAS pipeline uses (log10, Yeo-Johnson, rank-INT).
 
 Each submodule exports a ``render(...)`` function that receives the shared
 ``PhenoQCContext`` dataclass, following the same pattern as ``pages/_vnn/``
-and ``pages/_ld_tabs/``. This page is fully standalone — it does NOT write
+and ``pages/_ld_tabs/``. This page is fully standalone. It does NOT write
 into GWAS session state and has no upstream data-version dependency.
 """
 
@@ -16,7 +16,7 @@ import dataclasses
 
 import pandas as pd
 
-# Sample/accession ID column names recognised on upload — kept identical to
+# Sample/accession ID column names recognised on upload, kept identical to
 # the GWAS page loader (pages/GWAS_analysis.py) so behaviour matches.
 _ID_COL_CANDIDATES = {
     "accessions", "accession", "sample", "samples",

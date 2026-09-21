@@ -15,7 +15,7 @@ numeric branch of `--sig-thresh`.
 
 **What it contains.** Every SNP that passes the **reporting** threshold
 (`--sig-thresh` / the rule chosen on the GWAS page), one row each. The table is
-always complete — never truncated, and it uses the *reporting* threshold, not the
+always complete, never truncated, and it uses the *reporting* threshold, not the
 lower block-seeding threshold. Each SNP is marked as belonging to an LD block or
 as *unblocked*, with its candidate interval, gene count, and gene-evidence label.
 
@@ -45,13 +45,13 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 | 13 | `Sig_Rule` | str | Reporting rule applied: `meff` / `bonferroni` / `fdr` / `custom`. |
 | 14 | `Sig_Threshold` | float | The p-value cutoff for the rule; blank for `fdr` (a q-value decision, not a fixed p). |
 | 15 | `Seed_Threshold` | float | The block-**seeding** p-value (`--ld-seed-p`, default 1e-5). |
-| 16 | `Passes_Seed_Threshold` | bool | `PValue < Seed_Threshold` — i.e. this SNP was eligible to seed a block. |
+| 16 | `Passes_Seed_Threshold` | bool | `PValue < Seed_Threshold`, i.e. this SNP was eligible to seed a block. |
 | 17 | `Passes_Meff` | bool | Significant under M_eff (blank if that column was not computed). |
 | 18 | `Passes_Bonf` | bool | Significant under Bonferroni. |
 | 19 | `Passes_FDR` | bool | Significant under FDR (q < 0.05). |
 | 20 | `FDR` | float | Benjamini–Hochberg q-value; blank if not computed. |
 | 21 | `Block_ID` | str | `chr:start-end` of the containing LD block, or empty when unblocked. |
-| 22 | `Block_Status` | str | One of five values — see below. |
+| 22 | `Block_Status` | str | One of five values (see below). |
 | 23 | `r2_to_block_lead` | float | r² of this SNP to the block's lead SNP. Populated in the GUI display layer; **blank in the CLI export**. |
 | 24 | `N_SNPs_in_Block` | int | Member SNPs in the containing block; blank (`<NA>`) when unblocked. |
 | 25 | `Max_r2_in_Window` | float | Max r² to any neighbour in the window (GUI display layer; blank in the CLI export). |
@@ -62,7 +62,7 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 | 30 | `Interval_Start_bp` | int | Candidate-interval start: the block bounds when `in_block`, else the flanking-marker interval. Blank if none. |
 | 31 | `Interval_End_bp` | int | Candidate-interval end. |
 | 32 | `Interval_Bounded_By` | str | `typed_snps` / `chromosome_start` / `chromosome_end` / `chromosome_both`. |
-| 33 | `N_Genes_Interval` | int | Genes in the interval; blank (`<NA>`) when no gene annotation is loaded — **not `0`**. |
+| 33 | `N_Genes_Interval` | int | Genes in the interval; blank (`<NA>`) when no gene annotation is loaded, **not `0`**. |
 | 34 | `Candidate_Genes` | str | `;`-joined gene IDs (overlapping + up to two flanking each side). |
 | 35 | `Gene_Evidence` | str | `no_annotation_loaded` / `no_gene_within_interval` / `overlapping_interval` / `flanking_within_500kb` / `custom_gene_model`. |
 | 36 | `Genome_Build` | str | Gene-model build used for annotation (e.g. `SL3`), or `custom`. |
@@ -71,14 +71,14 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 
 **`Block_Status` values.**
 
-- `in_block` — positionally inside an emitted LD block (`Start ≤ Pos ≤ End`).
-- `unblocked_not_seeded` — significant by the reporting rule but `PValue ≥ Seed_Threshold`,
+- `in_block`: positionally inside an emitted LD block (`Start ≤ Pos ≤ End`).
+- `unblocked_not_seeded`: significant by the reporting rule but `PValue ≥ Seed_Threshold`,
   so the block detector never even considered it as a seed. **These are the SNPs a
   block-only view silently drops** (see the `--ld-seed-p` note under
   `Unblocked_SNPs.csv`).
-- `unblocked_isolated` — seeded, but no typed neighbour within the flank window.
-- `unblocked_monomorphic_window` — seeded, but the neighbours have no genotype variance.
-- `unblocked_low_ld` — seeded with polymorphic neighbours, but none reached the LD
+- `unblocked_isolated`: seeded, but no typed neighbour within the flank window.
+- `unblocked_monomorphic_window`: seeded, but the neighbours have no genotype variance.
+- `unblocked_low_ld`: seeded with polymorphic neighbours, but none reached the LD
   threshold to form a block. This is an *inference* from the emitted block table; the
   detector is never re-run.
 
@@ -87,7 +87,7 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 ## `Unblocked_SNPs.csv`
 
 **What it contains.** Exactly the rows of `Significant_SNPs.csv` where
-`Block_Status ≠ in_block` — the significant SNPs that formed no LD block — restricted
+`Block_Status ≠ in_block`, the significant SNPs that formed no LD block, restricted
 to the 22 columns relevant to an unblocked SNP:
 
 `SNP, Chr, Pos, PValue, -log10p, Sig_Rule, Sig_Threshold, Seed_Threshold,
@@ -97,19 +97,19 @@ Interval_Start_bp, Interval_End_bp, Interval_Bounded_By, N_Genes_Interval,
 Candidate_Genes, Gene_Evidence, Genome_Build`.
 
 **One row per** unblocked significant SNP. It is a strict projection of
-`Significant_SNPs.csv` — no SNP appears here that is not also in that table.
+`Significant_SNPs.csv`. No SNP appears here that is not also in that table.
 
 **When it's emitted.** GUI Significant SNPs tab ("Download Unblocked_SNPs.csv"); CLI
 ZIP as `Unblocked_SNPs_<model>.csv`.
 
-**Why a significant SNP can be "unblocked" — the reporting vs seeding threshold.**
+**Why a significant SNP can be "unblocked": the reporting vs seeding threshold.**
 TRACE uses **two different p-value thresholds**. The *reporting* threshold
 (`--sig-thresh`) decides which SNPs are significant. The lower, separate *block-seeding*
 threshold (`--ld-seed-p`, default 1e-5) decides which SNPs the LD-block detector starts
 from. A SNP can be significant by the reporting rule yet have a p-value **weaker than
 `--ld-seed-p`**, so it is never used as a block seed and forms no block
-(`Block_Status = unblocked_not_seeded`). That is expected behaviour, not a failure —
-this table exists precisely so those SNPs are visible as data rather than dropped by a
+(`Block_Status = unblocked_not_seeded`). That is expected behaviour, not a failure.
+This table exists precisely so those SNPs are visible as data rather than dropped by a
 block-only view. The `Interval_Start_bp`/`Interval_End_bp` columns give each such SNP a
 flanking-marker candidate interval whose width reflects marker density, not association
 strength.
@@ -122,7 +122,7 @@ strength.
 so exports from different windows are distinguishable by filename.
 
 **What it contains.** The pairwise LD (r²) numbers behind the **Local LD** heatmap, in
-tidy long format — one row per unordered SNP pair (the upper triangle).
+tidy long format: one row per unordered SNP pair (the upper triangle).
 
 **One row per** SNP pair (i < j) in the Local LD window.
 
@@ -132,10 +132,10 @@ tidy long format — one row per unordered SNP pair (the upper triangle).
 | `SNP_B` | str | Second SNP of the pair. |
 | `r2` | float | Linkage disequilibrium r² (0–1), pairwise-complete Pearson, from the imputed dosages. |
 
-**When it's emitted.** GUI **Post-GWAS Analysis → Local LD** tab. (No CLI counterpart —
+**When it's emitted.** GUI **Post-GWAS Analysis → Local LD** tab. (No CLI counterpart:
 the CLI emits the block-level LD tables instead.)
 
-**Relation to neighbours.** The long form of `LD_r2_matrix_<stem>.csv` — the same r²
+**Relation to neighbours.** The long form of `LD_r2_matrix_<stem>.csv`, the same r²
 values, one pair per row instead of a square matrix.
 
 ---
@@ -160,8 +160,8 @@ between its row and column SNP (diagonal = 1).
 
 Filename carries the chromosome, window start/end, and lead SNP.
 
-**What it contains.** The per-SNP numbers behind the **Regional Plot** — position,
-p-value, r² to the lead SNP, and LD-block membership — so the plotted values can go into
+**What it contains.** The per-SNP numbers behind the **Regional Plot**, position,
+p-value, r² to the lead SNP, and LD-block membership, so the plotted values can go into
 a table instead of being read off a figure.
 
 **One row per** scanned SNP (with a p-value) inside the regional window.
@@ -171,14 +171,14 @@ a table instead of being read off a figure.
 | `SNP` | str | SNP identifier. |
 | `Chr` | str | Chromosome. |
 | `Pos` | int | Position, base pairs. |
-| `PValue` | float | Association p-value (unchanged — the regional plot never recomputes p-values). |
+| `PValue` | float | Association p-value (unchanged, the regional plot never recomputes p-values). |
 | `r2_to_lead` | float | r² to the lead SNP (0–1); blank where it is not computable (e.g. a single typed marker). |
 | `block_member` | bool | Whether the SNP is a member (`SNP_IDs`) of the shaded LD block. |
 
 **When it's emitted.** GUI **Post-GWAS Analysis → Regional Plot** tab.
 
 **`block_member` and the lead SNP.** A block's reported **lead is the block's *seed*
-SNP** — the significant SNP the detector started from — and it need **not** be a member
+SNP**, the significant SNP the detector started from, and it need **not** be a member
 of the block's LD-connected `SNP_IDs`. So `block_member = False` for the lead SNP is
 **expected behaviour, not a bug**: the seed frequently sits just outside the LD-connected
 span it nucleated. (This is the same seed-vs-member distinction visible on the plot,

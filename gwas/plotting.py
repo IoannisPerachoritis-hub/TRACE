@@ -149,7 +149,7 @@ def plot_manhattan_static(
 
     if has_threshold or has_secondary:
         _leg = plt.legend(loc="upper right", fontsize=9)
-        # R1.4: dashed frame so the legend's marker glyphs read as a key, not data points
+        # dashed frame so the legend's marker glyphs read as a key, not data points
         _leg.get_frame().set_linestyle("--")
         _leg.get_frame().set_edgecolor("0.35")
         _leg.get_frame().set_linewidth(0.8)
@@ -258,7 +258,7 @@ def plot_qq(p_values, lambda_gc_used=None):
     plt.scatter(exp, obs, s=4, alpha=0.45, color=PALETTE["blue"], zorder=2)
 
     if lambda_gc_used is not None:
-        plt.title(f"QQ Plot \u2014 \u03BBGC = {lambda_gc_used:.2f}")
+        plt.title(f"QQ Plot: \u03BBGC = {lambda_gc_used:.2f}")
     else:
         plt.title("QQ Plot")
 
@@ -876,7 +876,7 @@ def plot_regional_association_static(
         ax.legend(handles=marker_handles, fontsize=7, loc="upper left", framealpha=0.9)
 
     ax.set_ylabel(r"$-\log_{10}(p)$")
-    ax.set_title(f"Regional association — lead {lead_snp}")
+    ax.set_title(f"Regional association: lead {lead_snp}")
 
     if has_genes:
         _draw_gene_track(axg, genes, label=gene_labels)
@@ -943,7 +943,7 @@ def plot_regional_association_interactive(
     if sig_threshold is not None:
         fig.add_hline(y=-np.log10(float(sig_threshold)), line_dash="dash",
                       line_color=SIG_LINE_COLOR)
-    fig.update_layout(title=f"Regional association — lead {lead_snp}",
+    fig.update_layout(title=f"Regional association: lead {lead_snp}",
                       xaxis_title="Position (Mb)", yaxis_title="-log10(p)",
                       height=480, showlegend=False, uirevision=uirevision)
     return fig

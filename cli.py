@@ -33,7 +33,7 @@ def _sig_thresh_type(s):
 
 def _build_parser():
     parser = argparse.ArgumentParser(
-        description="TRACE — Trait Resolution and Candidate Evaluation (CLI)",
+        description="TRACE: Trait Resolution and Candidate Evaluation (CLI)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
@@ -218,7 +218,7 @@ def _build_parser():
                               "When set, only chromosomes 1..N are kept.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("--interactive", action="store_true",
-                         help="Interactive wizard — prompts for all options step by step")
+                         help="Interactive wizard: prompts for all options step by step")
 
     return parser
 
@@ -673,8 +673,8 @@ def run_pipeline(args):
     n_pcs_mlmm = min(args.n_pcs_mlmm if args.n_pcs_mlmm is not None else n_pcs_mlm, _max_avail)
     n_pcs_fc = min(args.n_pcs_farmcpu if args.n_pcs_farmcpu is not None else n_pcs, _max_avail)
 
-    # ── PC-selection diagnostics (report-only; R1.4 -- REPORTS, never selects) ──
-    # The lambda-GC auto-PC selector was removed (D-R1.4-FINAL): TRACE uses the fixed
+    # ── PC-selection diagnostics (report-only; REPORTS, never selects) ──
+    # The lambda-GC auto-PC selector was removed (D-FINAL): TRACE uses the fixed
     # --n-pcs default and reports the genotype-PCA eigenvalue spectrum so the user can
     # judge the choice.  No criterion, no recommended k; one eigendecomposition, no model fits.
     _pc_diag = None
@@ -989,7 +989,7 @@ def run_pipeline(args):
                 log.info("  No seed SNPs at p < %.1e; using top-%d seeding.",
                          _ld_seed_thresh, _ld_seed_top_n)
             else:
-                log.info("  No seed SNPs (p < %.1e) and no top-N seeding — no LD blocks "
+                log.info("  No seed SNPs (p < %.1e) and no top-N seeding; no LD blocks "
                          "(isolated-SNP rescue still runs).", _ld_seed_thresh)
 
         try:
@@ -1303,7 +1303,7 @@ def run_pipeline(args):
                     _ax_bh.set_xlabel("Discovery frequency")
                     _ax_bh.set_ylabel("Number of SNPs")
                     _ax_bh.set_title(
-                        f"Subsampling GWAS: SNP discovery frequency — {args.trait}"
+                        f"Subsampling GWAS: SNP discovery frequency ({args.trait})"
                     )
                     _ax_bh.axvline(0.5, color="red", linestyle="--", label="50% threshold")
                     _ax_bh.legend()
@@ -1330,7 +1330,7 @@ def run_pipeline(args):
         _man_lod = -np.log10(primary_thresh) if primary_thresh is not None else None
         fig_man = plot_manhattan_static(df_plot, _man_lod,
                                         _thresh_labels.get(sig_rule, sig_rule),
-                                        f"Manhattan — MLM — {args.trait}")
+                                        f"Manhattan (MLM): {args.trait}")
         plt.figure(fig_man.number)
         plt.xticks(tick_pos, tick_lab, fontsize=8)
         figures["Manhattan_MLM.png"] = fig_man
@@ -1347,7 +1347,7 @@ def run_pipeline(args):
                 _fig_m = plot_manhattan_static(
                     _mdf_plot, _man_lod,
                     _thresh_labels.get(sig_rule, sig_rule),
-                    f"Manhattan — {_m_name} — {args.trait}",
+                    f"Manhattan ({_m_name}): {args.trait}",
                 )
                 plt.figure(_fig_m.number)
                 plt.xticks(_mtp, _mtl, fontsize=8)
@@ -1363,7 +1363,7 @@ def run_pipeline(args):
             from gwas.plotting import plot_pca_scatter
             fig_pca = plot_pca_scatter(
                 pcs_full[:, :n_pcs_mlm], y=y.ravel(),
-                title=f"PCA — {args.trait}",
+                title=f"PCA: {args.trait}",
                 eigenvalues=pca_eigenvalues,
             )
             figures["PCA_scatter.png"] = fig_pca

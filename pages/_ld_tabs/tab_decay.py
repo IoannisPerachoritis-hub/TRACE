@@ -1,4 +1,4 @@
-"""Tab 4 — LD Decay by Chromosome."""
+"""Tab 4: LD Decay by Chromosome."""
 
 import numpy as np
 import pandas as pd

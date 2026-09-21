@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""R1.15 pruning ablation -- regenerate the Platform-{LOCO,Global}-unpruned rows.
+"""GRM LD-pruning ablation -- regenerate the Platform-{LOCO,Global}-unpruned rows.
 
 Isolates GRM LD pruning from LOCO in the cross-tool concordance (decisions.md D-76).
 GAPIT3 and rMVP build their GRM on ALL markers; TRACE LD-prunes (shipped default

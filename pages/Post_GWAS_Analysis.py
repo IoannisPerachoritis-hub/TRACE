@@ -215,7 +215,7 @@ def compute_block_qc_effects(
     trait_col_qc = resolve_trait_column(trait_col, pheno_for_hap)
 
     # -------------------------------------------------
-    # FIX — enforce genotype sample order alignment
+    # FIX: enforce genotype sample order alignment
     # prevents genotype–phenotype mismatches
     # -------------------------------------------------
     ph_aligned, y_vec, keep_mask = align_pheno_to_geno(
@@ -346,7 +346,7 @@ def ld_analysis_page():
     check_data_version("ld_analysis")
 
     # Page-scoped controls (mega-block filter, haplotype permutations) are rendered
-    # in the page body / their tabs, not the sidebar — see the "Block table filter"
+    # in the page body / their tabs, not the sidebar; see the "Block table filter"
     # row above the tabs and the LD Blocks & Haplotypes tab.
 
     required_keys = ["geno_dosage_raw", "geno_imputed", "chroms", "positions", "sid", "geno_df"]
@@ -445,7 +445,7 @@ def ld_analysis_page():
         geno_df,
         ld_trait,
     )
-    _geno_ld_aligned = None  # lazy — built after geno_ld is ready
+    _geno_ld_aligned = None  # lazy, built after geno_ld is ready
     # -------------------------------------------------
     # Canonical genotype matrices (SIMPLIFIED)
     # -------------------------------------------------
@@ -632,7 +632,7 @@ def ld_analysis_page():
                 [f"{r['Chr']}:{int(r['Start (bp)'])}-{int(r['End (bp)'])}"
                  for _, r in _mb.iterrows()])
             st.caption(
-                "⚠ Nested LD blocks detected — this should not occur after the "
+                "⚠ Nested LD blocks detected. This should not occur after the "
                 "disjoint-block redesign; the block set is left unchanged. Please report "
                 "(see _occupancy_select's span_idx.size==0 short-circuit).")
 
@@ -673,7 +673,7 @@ def ld_analysis_page():
     # ============================================================
     # Tabs
     # ============================================================
-    # Shared window selector — rendered ONCE above the tab bar so the Regional
+    # Shared window selector, rendered ONCE above the tab bar so the Regional
     # Plot and Local LD tabs consume ONE selection. Streamlit forbids the same
     # keyed widget in two st.tabs bodies (DuplicateWidgetID), and every tab body
     # executes on each rerun, so the selector cannot live inside either tab.

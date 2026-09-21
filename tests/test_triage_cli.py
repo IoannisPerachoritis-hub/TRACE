@@ -40,8 +40,8 @@ def test_triage_additive_and_escape_hatch(tmp_path):
 
 
 def test_hap_and_triage_flag_defaults_pinned():
-    """--hap-min-count/--hap-min-group-size default 5/3: a typo here IS type-c
-    (repartitions MLGs -> moves eta2/F/p in Table S8)."""
+    """--hap-min-count/--hap-min-group-size default 5/3: a typo here
+    repartitions MLGs -> moves eta2/F/p in Table S8."""
     a = _build_parser().parse_args(["--vcf", "x", "--pheno", "y", "--trait", "t", "--output", "o"])
     assert a.hap_min_count == 5 and a.hap_min_group_size == 3
     assert a.triage_lead_r2_frac == 0.5 and a.triage_r2_coherent is None

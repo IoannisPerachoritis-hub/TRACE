@@ -125,7 +125,7 @@ div[data-testid="stTextInput"] input {
 # ==========================================================
 # Welcome
 # ==========================================================
-st.title("TRACE — Trait Resolution and Candidate Evaluation")
+st.title("TRACE: Trait Resolution and Candidate Evaluation")
 
 st.markdown("""
 Integrated GWAS, LD analysis, haplotype mapping, and gene annotation
@@ -135,7 +135,7 @@ for **tomato and other crop** breeding panels.
 def _safe_page_link(page, label, icon=None):
     """Render an in-app nav link. st.page_link needs a first-run page context;
     under Streamlit's AppTest bare mode it raises a url_pathname KeyError. Guard
-    it so a harness quirk never blanks the landing page — it renders normally in
+    it so a harness quirk never blanks the landing page. It renders normally in
     the real multipage app."""
     try:
         st.page_link(page, label=label, icon=icon)
@@ -146,11 +146,11 @@ def _safe_page_link(page, label, icon=None):
 # --- Workflow map: three steps with real in-app links (not just sidebar prose) ---
 st.markdown("#### Workflow")
 _safe_page_link("pages/GWAS_analysis.py",
-                "1 · Run a GWAS — upload data and run the full pipeline")
+                "1 · Run a GWAS: upload data and run the full pipeline")
 _safe_page_link("pages/Post_GWAS_Analysis.py",
-                "2 · Explore the hits — LD structure and haplotype effects")
+                "2 · Explore the hits: LD structure and haplotype effects")
 _safe_page_link("pages/z_Help.py",
-                "3 · Reference — output format, column glossary, methods")
+                "3 · Reference: output format, column glossary, methods")
 
 # --- If a GWAS run is already in this session, point back to it (read-only check;
 #     the landing page never mutates session state) ---
@@ -166,6 +166,6 @@ st.info(
 st.markdown("""
 ---
 <div style="color: #666666; font-size: 0.85em;">
-    © 2026 TRACE · Built for the NatGenCrop Project · v1.0
+    © 2026 TRACE · Built for the NATGENCROP Project
 </div>
 """, unsafe_allow_html=True)

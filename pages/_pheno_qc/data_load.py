@@ -1,4 +1,4 @@
-"""Phase 1 — load a phenotype table and build the PhenoQCContext."""
+"""Phase 1: load a phenotype table and build the PhenoQCContext."""
 
 import numpy as np
 import streamlit as st

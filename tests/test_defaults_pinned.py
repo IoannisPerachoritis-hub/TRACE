@@ -8,7 +8,7 @@ golden can be masked by a compensating change; a pinned constant cannot.
 
 Every assertion names the ``file:line`` it protects, so a failure tells the
 reader exactly where to look. The line numbers are against the
-``Solanaceae-gwas`` tree at the time of writing (branch ``revision/round1``).
+development tree at the time of writing.
 They are advisory — each assertion checks the *value*, never the line — but are
 kept current so the failure message is useful. If a line has drifted, correct
 the message; if a *value* has changed, that is the regression this file exists
@@ -304,7 +304,8 @@ CLI_DEFAULTS = [
     ("species", "tomato", "cli.py --species"),
     ("genome_build", "SL3", "cli.py --genome-build"),
     ("seed", 42, "cli.py:104 --seed"),
-    # guard against an accidental default flip of imputation to LD-kNNi (type c).
+    # guard against an accidental default flip of imputation to LD-kNNi, which would
+    # move published numbers.
     ("impute", "mean", "cli.py --impute"),
 ]
 

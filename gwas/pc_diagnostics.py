@@ -1,6 +1,6 @@
 """PC-selection diagnostics -- REPORT the genotype-PCA eigenvalue spectrum; NEVER select.
 
-R1.4 (D-R1.4-FINAL): the lambda-GC auto-PC selector was removed, and the conventional-criteria table
+(D-FINAL): the lambda-GC auto-PC selector was removed, and the conventional-criteria table
 (Kaiser / Marchenko-Pastur edge / cumulative variance / broken-stick / Horn's parallel analysis /
 Tracy-Widom) was removed as well -- on genotype data those counts are not usable as covariate counts and
 read as decision support they are not. TRACE ships one documented fixed default (``--n-pcs``) plus this

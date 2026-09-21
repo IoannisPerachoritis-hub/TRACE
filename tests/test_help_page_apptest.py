@@ -1,8 +1,8 @@
 """AppTest coverage for the Help page split (GUI brief, Task 4a).
 
 Task 4a trims z_Help.py: Quick Start becomes a pointer to the README (one source
-of truth), Output Format is condensed, and the high-value "Interpreting Results
-for Breeding" section is kept in full. The CSV Column Glossary is ALSO kept — the
+of truth), Output Format is condensed, and the interpretation section
+("Interpreting Results") is kept. The CSV Column Glossary is ALSO kept — the
 brief proposed replacing it with a link to docs/outputs.md, but that file
 explicitly delegates the v1.0.1 GWAS/LD/haplotype/subsampling/consensus columns
 back to this glossary, so deleting it would lose documentation and create a
@@ -26,7 +26,7 @@ def test_help_page_keeps_interpretation_and_glossary():
     assert not at.exception
     headers = [h.value for h in at.header]
     # the highest-value text is kept in full
-    assert "Interpreting Results for Breeding" in headers
+    assert "Interpreting Results" in headers
     # the column glossary is kept (docs/outputs.md points back to it)
     assert "CSV Column Glossary" in headers
 
