@@ -406,13 +406,13 @@ perfect LD (r² = 1) and intergenic SNPs.
 | Subsampling stability | 25 | bootstrap subsampling and stability metrics |
 | HTML report | 24 | run-report assembly and section rendering |
 | Command-line interface | 32 | CLI parsing, end-to-end runs, doc-to-parser flag parity |
-| Web UI (Streamlit) | 15 | app-test coverage of the GWAS, Post-GWAS, help and landing pages |
+| Web UI (Streamlit) | 22 | app-test coverage of the GWAS, Post-GWAS, help and landing pages |
 | Pipeline integration | 30 | end-to-end GWAS pipeline and stage wiring |
 | Golden regression & pinned defaults | 103 | byte-stable golden fixtures, the golden lock, and pinned signatures/defaults |
 | Calibration & reproducibility | 8 | null-phenotype calibration and LOCO reproducibility |
 | Utilities | 11 | shared helpers |
 
-_Total: 739 tests. Line coverage: 75% (gwas + utils)._
+_Total: 746 tests. Line coverage: 76% (gwas + utils)._
 
 <!-- END GENERATED: test-table -->
 

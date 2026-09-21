@@ -41,7 +41,7 @@ jobs:
         run: pytest tests/test_null_calibration.py -v --tb=short
 
       - name: Coverage report
-        # Gate at 50% as a regression floor; current total is 75% (gwas + utils) and
+        # Gate at 50% as a regression floor; current total is 76% (gwas + utils) and
         # novelty-module coverage (haplotype, ld, plotting) is a v1.1
         # target. The report is printed on every run so reviewers can
         # read the per-module breakdown.
