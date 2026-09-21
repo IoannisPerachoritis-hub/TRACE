@@ -238,5 +238,5 @@ st.header("Getting Help")
 st.markdown("""
 - **Bug reports & feature requests**: [GitHub Issues](https://github.com/IoannisPerachoritis-hub/TRACE/issues)
 - **Documentation**: [README.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md)
-- **Example data**: run `bash examples/run_example.sh`; it generates a small synthetic dataset (~50 samples, ~510 SNPs) and runs the pipeline end-to-end in under 30 s. (The example VCF is also shipped as `examples/example.vcf.gz`.)
+- **Example data**: run `bash examples/run_example.sh`; it generates a small synthetic dataset (~50 samples, ~510 SNPs) and runs the pipeline end-to-end in under 30 s. (A ready-made copy, `examples/example.vcf.gz`, is in the repository; it is not part of the installed package.)
 """)

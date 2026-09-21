@@ -402,7 +402,7 @@ perfect LD (r² = 1) and intergenic SNPs.
 | LD triage | 28 | coherence/haplotype triage layers, router and eta-squared comparability |
 | Isolated-SNP rescue & significant-SNP table | 33 | unblocked-SNP intervals and the significant-SNP table |
 | Regional & per-SNP visualisation | 47 | regional association plots, per-SNP boxplots, plotting stats, sample views |
-| Gene annotation | 42 | LD-block gene annotation and gene-model summaries |
+| Gene annotation | 50 | LD-block gene annotation, gene-model summaries and resolution |
 | Subsampling stability | 25 | bootstrap subsampling and stability metrics |
 | HTML report | 24 | run-report assembly and section rendering |
 | Command-line interface | 32 | CLI parsing, end-to-end runs, doc-to-parser flag parity |
@@ -412,7 +412,7 @@ perfect LD (r² = 1) and intergenic SNPs.
 | Calibration & reproducibility | 8 | null-phenotype calibration and LOCO reproducibility |
 | Utilities | 11 | shared helpers |
 
-_Total: 746 tests. Line coverage: 76% (gwas + utils)._
+_Total: 754 tests. Line coverage: 76% (gwas + utils)._
 
 <!-- END GENERATED: test-table -->
 

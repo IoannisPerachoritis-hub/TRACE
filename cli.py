@@ -923,27 +923,37 @@ def run_pipeline(args):
                        if getattr(args, "isolated_low_res_kb", None) else None)
     _iso_ld_decay_bp = int(ld_decay_kb * 1000) if ld_decay_kb else None
     _iso_counts = {}
+
+    # ── Gene model: resolved ONCE and loaded ONCE, for every consumer — the
+    #    isolated-SNP rescue, the per-model block annotation, and the run
+    #    manifest. One answer is what makes it structurally impossible for
+    #    run_metadata.json to name a gene model that annotation never used.
+    #    Gated on --no-annotation alone: opting out of the isolated rescue must
+    #    not silently disable block annotation as well.
+    from annotation import resolve_gene_model as _resolve_gm
+    _gm_res = _resolve_gm(
+        args.species,
+        genome_build=getattr(args, "genome_build", "SL3"),
+        override=args.gene_model,
+    )
+    _gm_status = "disabled (--no-annotation)" if args.no_annotation else _gm_res.status
     _iso_genes_df = None
-    if _do_rescue and not args.no_annotation:
-        try:
-            from annotation import load_gene_annotation as _iso_load_genes
-            _iso_data_dir = Path(__file__).resolve().parent / "data"
-            _iso_build = getattr(args, "genome_build", "SL3")
-            _iso_sp = {
-                "tomato": {
-                    "gm": (_iso_data_dir / "Sol_genes_SL3.csv" if _iso_build == "SL3"
-                           else _iso_data_dir / "Sol_genes.csv"),
-                    "desc": (_iso_data_dir / "SL3.1_descriptions.txt" if _iso_build == "SL3"
-                             else _iso_data_dir / "ITAG4.0_annotation.txt"),
-                },
-            }.get(args.species, {})
-            _iso_gm = Path(args.gene_model) if args.gene_model else _iso_sp.get("gm")
-            _iso_desc = _iso_sp.get("desc")
-            if _iso_gm and _iso_gm.exists():
+    if not args.no_annotation:
+        if not _gm_res.found:
+            log.warning(
+                "  Gene model unavailable (%s). Candidate-gene annotation is SKIPPED: "
+                "no Isolated_SNP_candidate_genes_*.csv will be written and the LD-block "
+                "tables will carry no gene columns.", _gm_res.status)
+        else:
+            try:
+                from annotation import load_gene_annotation as _iso_load_genes
                 _iso_genes_df = _iso_load_genes(
-                    str(_iso_gm), str(_iso_desc) if _iso_desc and _iso_desc.exists() else None)
-        except Exception as e:
-            log.warning("Isolated rescue: gene model load failed (%s); intervals will lack genes.", e)
+                    str(_gm_res.gene_model),
+                    str(_gm_res.descriptions) if _gm_res.descriptions else None)
+            except Exception as e:
+                log.warning("  Gene model load failed (%s: %s); candidate-gene annotation "
+                            "is SKIPPED.", _gm_res.gene_model, e)
+                _gm_status = f"load failed: {_gm_res.gene_model} ({e})"
 
     # ── Post-GWAS frames captured for the HTML report (T-80) ─────────────
     # The report previously omitted every post-GWAS table (defect 0.2). Capture
@@ -1137,43 +1147,15 @@ def run_pipeline(args):
         except Exception as e:
             log.warning("  Haplotype testing failed for %s: %s", model_name, e)
 
-        # Gene annotation
-        if not args.no_annotation:
+        # Gene annotation. The gene frame was resolved and loaded once above the
+        # loop; when it is None the reason was already reported there, loudly.
+        if not args.no_annotation and _iso_genes_df is not None:
             try:
-                from annotation import (
-                    load_gene_annotation, annotate_ld_blocks,
+                from annotation import annotate_ld_blocks
+
+                m_ld_annotated = annotate_ld_blocks(
+                    m_ld_blocks, _iso_genes_df, n_flank=2, max_flank_dist_bp=500_000,
                 )
-
-                # Species file mapping
-                _data_dir = Path(__file__).resolve().parent / "data"
-                _build = getattr(args, "genome_build", "SL3")
-                _sp_files = {
-                    "tomato": {
-                        "gene_model": (
-                            _data_dir / "Sol_genes_SL3.csv" if _build == "SL3"
-                            else _data_dir / "Sol_genes.csv"
-                        ),
-                        "gene_desc": (
-                            _data_dir / "SL3.1_descriptions.txt" if _build == "SL3"
-                            else _data_dir / "ITAG4.0_annotation.txt"
-                        ),
-                    },
-                }.get(args.species, {})
-
-                gm_path = Path(args.gene_model) if args.gene_model else _sp_files.get("gene_model")
-                desc_path = _sp_files.get("gene_desc")
-
-                if gm_path and gm_path.exists():
-                    genes_df = load_gene_annotation(
-                        str(gm_path),
-                        str(desc_path) if desc_path and desc_path.exists() else None,
-                    )
-
-                    m_ld_annotated = annotate_ld_blocks(
-                        m_ld_blocks, genes_df, n_flank=2, max_flank_dist_bp=500_000,
-                    )
-                else:
-                    log.info("  Gene model not found for species '%s'; skipping annotation.", args.species)
             except Exception as e:
                 log.warning("  Annotation failed for %s: %s", model_name, e)
 
@@ -1425,12 +1407,15 @@ def run_pipeline(args):
     # ── Build HTML report (in-memory) ────────────────────
     # ── Run provenance (built ALWAYS; feeds the HTML report AND run_metadata.json) ──
     _gb_meta = getattr(args, "genome_build", "SL3")
-    if args.gene_model:
+    # Record what the run ACTUALLY used, not what the flags asked for. The gene
+    # frame either loaded above or it did not; the manifest follows that fact, so
+    # it can no longer assert a gene model that produced no candidate-gene output.
+    if _iso_genes_df is None:
+        _gm_meta = None
+    elif args.gene_model:
         _gm_meta = str(args.gene_model)
-    elif args.species == "tomato":
-        _gm_meta = "Sol_genes_SL3.csv" if _gb_meta == "SL3" else "Sol_genes.csv"
     else:
-        _gm_meta = "none"
+        _gm_meta = _gm_res.gene_model.name
 
     # Addition B: block-detection provenance. Effective detection seed/top-N (P14) +
     # the find_ld_clusters_genomewide defaults for the params the call inherits.
@@ -1446,6 +1431,7 @@ def run_pipeline(args):
         "Species": args.species,
         "Genome build": _gb_meta,
         "Gene model": _gm_meta,
+        "Gene model status": _gm_status,
         "Covariate file (--covar)": str(args.covar) if getattr(args, "covar", None) else None,
         "Covariate columns": ", ".join(_cov_names) if getattr(args, "covar", None) else None,
         "Covariate samples dropped": _n_drop if getattr(args, "covar", None) else 0,

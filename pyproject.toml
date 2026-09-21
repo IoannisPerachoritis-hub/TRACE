@@ -87,7 +87,16 @@ ignore = [
 "utils/mapping_methods.py" = ["F401", "F811"]
 
 [tool.setuptools.packages.find]
-include = ["gwas*", "utils*", "pages*"]
+# "data*" ships the bundled gene models (Sol_genes*.csv, *_annotation.txt,
+# SL3.1_descriptions.txt) so an installed TRACE can annotate. It works the same
+# way "pages*" does: neither directory has an __init__.py, and `find` discovers
+# __init__.py-free directories because `namespaces = false` is not set. The
+# package-data globs below carry the payload.
+#
+# HAZARD if this line is ever ported to the development tree: data/ there also
+# holds multi-megabyte VCFs, and the "*.vcf" glob below would sweep them into
+# the wheel. Narrow the globs before porting.
+include = ["gwas*", "utils*", "pages*", "data*"]
 
 [tool.setuptools]
 py-modules = ["cli", "annotation", "app"]

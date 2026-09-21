@@ -34,6 +34,20 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
 
+      - name: Packaged-data guard (build, install, resolve)
+        # The gene models must still be reachable from an INSTALL, not just from
+        # a source checkout. A "are the files in the wheel" check is not enough:
+        # ship data/ under a name the resolver never looks at and that check goes
+        # green with the bug intact. So build the wheel, install it somewhere
+        # else, and ask the resolver itself -- from a directory outside the
+        # checkout, so an accidental source-tree import cannot mask a failure.
+        run: |
+          pip install build
+          python -m build --wheel
+          python -m pip install --no-deps --target "$RUNNER_TEMP/wheel-install" dist/*.whl
+          cd "$RUNNER_TEMP"
+          PYTHONPATH="$RUNNER_TEMP/wheel-install" python "$GITHUB_WORKSPACE/scripts/check_packaged_data.py"
+
       - name: End-to-end null calibration
         # Runs LOCO MLM on a simulated null phenotype and asserts
         # lambda_GC in [0.85, 1.15] with zero genome-wide hits.

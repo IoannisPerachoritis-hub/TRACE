@@ -8,6 +8,9 @@ import numpy as np
 import pandas as pd
 import re
 
+from dataclasses import dataclass
+from pathlib import Path
+
 
 
 # ============================================================
@@ -125,6 +128,104 @@ def load_gene_annotation(gene_model_path, description_path=None) -> pd.DataFrame
         genes["Description"] = ""
 
     return genes
+
+
+# ============================================================
+# 1b. BUNDLED GENE-MODEL RESOLUTION
+# ============================================================
+# One resolver, read once per run, consumed by the isolated-SNP rescue, the
+# block annotation AND the run manifest. Keeping them on one answer is what
+# makes it structurally impossible for run_metadata.json to name a gene model
+# that annotation never loaded.
+
+# Where the wheel ships the gene models (see pyproject.toml packages.find).
+# Module-level so a test can point it at an empty directory and exercise the
+# not-found path without touching the real install.
+_BUNDLED_DATA_DIR = Path(__file__).resolve().parent / "data"
+
+# species -> genome build -> (gene model filename, gene description filename)
+_BUNDLED_GENE_FILES = {
+    "tomato": {
+        "SL3": ("Sol_genes_SL3.csv", "SL3.1_descriptions.txt"),
+        "SL4": ("Sol_genes.csv", "ITAG4.0_annotation.txt"),
+    },
+}
+
+
+@dataclass(frozen=True)
+class GeneModelResolution:
+    """What a run resolved its gene model to, and whether it is actually there.
+
+    Attributes
+    ----------
+    gene_model : Path or None
+        The gene table to load; None when nothing usable was found.
+    descriptions : Path or None
+        Matching description file, or None when there is none on disk.
+    searched : Path or None
+        The path that was looked for. None when the species has no bundled
+        default and no override was given, so nothing was searched for.
+    found : bool
+        True iff ``gene_model`` exists on disk. The single fact callers branch on.
+    status : str
+        Human-readable provenance for the run manifest and the log.
+    """
+
+    gene_model: "Path | None"
+    descriptions: "Path | None"
+    searched: "Path | None"
+    found: bool
+    status: str
+
+
+def resolve_gene_model(species, genome_build="SL3", override=None, data_dir=None):
+    """Resolve the gene model for a run, reporting whether it is present.
+
+    Parameters
+    ----------
+    species : str
+        Species key, e.g. "tomato". Species with no bundled table resolve to
+        "nothing found" unless ``override`` is given.
+    genome_build : str
+        Build key, e.g. "SL3" or "SL4". Unknown builds fall back to "SL3",
+        matching the CLI's own default.
+    override : str or Path or None
+        An explicit ``--gene-model`` path. Takes precedence over the bundled
+        table. Descriptions still come from the species defaults, so
+        ``--species tomato --gene-model mine.csv`` keeps the tomato descriptions.
+    data_dir : str or Path or None
+        Directory holding the bundled tables. Defaults to the shipped
+        ``_BUNDLED_DATA_DIR``.
+
+    Returns
+    -------
+    GeneModelResolution
+    """
+    root = Path(data_dir) if data_dir is not None else _BUNDLED_DATA_DIR
+    build = genome_build if genome_build in _BUNDLED_GENE_FILES.get(species, {}) else "SL3"
+    names = _BUNDLED_GENE_FILES.get(species, {}).get(build)
+
+    default_gm = root / names[0] if names else None
+    desc = root / names[1] if names else None
+    if desc is not None and not desc.exists():
+        desc = None
+
+    gene_model = Path(override) if override else default_gm
+
+    if gene_model is None:
+        return GeneModelResolution(
+            gene_model=None, descriptions=None, searched=None, found=False,
+            status=f"none (species='{species}', no --gene-model)",
+        )
+    if not gene_model.exists():
+        return GeneModelResolution(
+            gene_model=None, descriptions=None, searched=gene_model, found=False,
+            status=f"not found: searched {gene_model}",
+        )
+    return GeneModelResolution(
+        gene_model=gene_model, descriptions=desc, searched=gene_model, found=True,
+        status=f"used: {gene_model}",
+    )
 
 
 # ============================================================
