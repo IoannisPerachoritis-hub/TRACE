@@ -2,7 +2,7 @@
 
 All notable changes to TRACE are documented in this file.
 
-## [1.1.0] - 2026-09-18
+## [1.1.0] - 2026-09-21
 
 ### Changed
 - **Renamed the "LD Analysis" page to "Post-GWAS Analysis"** (sidebar shows
