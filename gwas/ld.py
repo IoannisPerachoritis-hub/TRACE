@@ -1821,9 +1821,23 @@ def meff_li_ji_from_corr(r_matrix):
     """Li & Ji (2005) effective number of independent variables from a SIGNED
     correlation matrix (uncached counterpart of gwas.plotting.compute_meff_li_ji,
     for per-block use). Returns (meff_unrounded, status). status is one of
-    "ok" | "nonfinite_r" | "too_few_snps". Terms match compute_meff_li_ji
-    (gwas/plotting.py) term-for-term but the result is NOT ceil-rounded (rounding
-    is inappropriate for m of order 3-30)."""
+    "ok" | "nonfinite_r" | "too_few_snps". The result is NOT ceil-rounded
+    (rounding is inappropriate for m of order 3-30).
+
+    DELIBERATE DIVERGENCE from compute_meff_li_ji (gwas/plotting.py), pending a
+    decision -- NOT an oversight. The Li & Ji term `1.0 + (lam % 1.0)` is
+    discontinuous at every integer eigenvalue, and a perfectly correlated
+    m-marker block has lam_max = m EXACTLY, i.e. sitting on that discontinuity:
+    LAPACK returning m - 1 ulp instead of m flips the term by ~1.0, so the same
+    block scored 1.0 or 2.0 depending on the BLAS build. The eigenvalue snap
+    below removes that knife edge for the per-block statistic.
+
+    The same snap is NOT applied in compute_meff_li_ji because the genome-wide
+    sum is forced to within ~1e-13 of an integer by trace(D) = m (per-column
+    standardisation), and that function then applies int(np.ceil(...)) -- so
+    snapping there would move published M_eff values (measured: tomato 242 -> 241,
+    pepper 526 -> 525). That is a separate, type-(c) decision; see the
+    genome-wide M_eff work order."""
     R = np.asarray(r_matrix, dtype=np.float64)
     if R.ndim != 2 or R.shape[0] != R.shape[1] or R.shape[0] < 2:
         return np.nan, "too_few_snps"
@@ -1837,8 +1851,14 @@ def meff_li_ji_from_corr(r_matrix):
         eigs = np.linalg.eigvalsh(R)
     except np.linalg.LinAlgError:
         return np.nan, "nonfinite_r"
+    # Snap eigenvalues that are within float noise of an integer (see docstring):
+    # `1.0 + (lam % 1.0)` jumps by ~1.0 across an integer, and a rank-1 block's
+    # lam_max IS an integer in exact arithmetic, so the unsnapped term is
+    # BLAS-dependent.
+    _near = np.round(eigs)
+    eigs = np.where(np.abs(eigs - _near) < 1e-9, _near, eigs)
     meff = 0.0
-    for lam in eigs:                       # term-for-term with compute_meff_li_ji
+    for lam in eigs:
         if lam >= 1.0:
             meff += 1.0 + (lam % 1.0)
         elif lam > 0:

@@ -7,11 +7,15 @@ from gwas.ld import compute_block_ld_quality, meff_li_ji_from_corr
 
 # ---- meff_li_ji_from_corr (acceptance 2/3/4) ----
 def test_meff_from_corr_branches():
-    m = 5
-    meff, st = meff_li_ji_from_corr(np.ones((m, m)))          # perfectly correlated
-    assert st == "ok" and abs(meff - 1.0) < 1e-6
-    meff, st = meff_li_ji_from_corr(np.eye(m))                # independent
-    assert st == "ok" and abs(meff - m) < 1e-6
+    # A perfectly correlated block has lam_max = m EXACTLY, which sits on the
+    # discontinuity of Li & Ji's `1.0 + (lam % 1.0)` term. Sweep m so the test
+    # cannot pass by the accident of one m landing on the right side of it:
+    # unsnapped, m=3 and m=4 return 2.0 instead of 1.0.
+    for m in range(2, 9):
+        meff, st = meff_li_ji_from_corr(np.ones((m, m)))      # perfectly correlated
+        assert st == "ok" and abs(meff - 1.0) < 1e-6, f"m={m} gave meff={meff}"
+        meff, st = meff_li_ji_from_corr(np.eye(m))            # independent
+        assert st == "ok" and abs(meff - m) < 1e-6, f"m={m} gave meff={meff}"
     R = np.eye(3); R[0, 1] = R[1, 0] = np.nan                 # non-finite off-diagonal
     meff, st = meff_li_ji_from_corr(R)
     assert st == "nonfinite_r" and np.isnan(meff)
