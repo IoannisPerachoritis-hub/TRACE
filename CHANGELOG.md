@@ -47,6 +47,30 @@ All notable changes to TRACE are documented in this file.
   `--ld-merge-r2`: a block is split (following its seed) until its members reach
   that mean r², and two overlapping blocks fuse only when their cross-seam AND
   union mean r² both reach it.
+- **Haplotype visualisation could crash, or align the wrong samples, after
+  returning to the GWAS page.** The LD/haplotype tab read its genotype matrix
+  from a session copy refreshed on every Post-GWAS page load, but its sample-ID
+  axis — and so the phenotype mask built from it — from a list written only by a
+  completed GWAS run. Analysing a trait that is not the phenotype file's first
+  column, then revisiting the GWAS page, rebuilt the first without the second and
+  the tab died with a sample-mask mismatch; the lead-SNP gallery hit the same
+  desync one step earlier. Both panels now take the genotype matrix, the SNP axis
+  and the sample axis from the same source, so the mask always belongs to the
+  analysed trait. Haplotype visualisation requires the genotype objects from the
+  analysed trait's own run: where the loaded genotypes were rebuilt for a
+  different trait, the tab now names both traits and both sample counts and asks
+  for a re-run rather than reporting statistics that would not match that
+  analysis.
+- **One-Click Full Analysis returned the first trait's results for every other
+  trait.** The per-trait loop resolved its genotype matrix and phenotype reader
+  through session keys registered once above the loop from the first selected
+  trait, and the scan regresses the resolved reader rather than the phenotype
+  vector passed alongside it, so traits after the first were scanned against the
+  first trait's data and reported under their own names — with no error, and with
+  each trait's own OLS effect sizes beside another trait's p-values. The pipeline
+  now runs **one trait per run** and refuses to start on a multi-trait selection,
+  naming the CLI batch route (`cli.py --trait`); per-trait key registration is a
+  follow-up.
 
 ## [1.0.0] - 2026-04-21
 

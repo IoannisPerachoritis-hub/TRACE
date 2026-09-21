@@ -862,16 +862,21 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             st.session_state[_trait_key] = []
 
     selected_traits = st.multiselect(
-        "Select one or more numeric traits for GWAS:",
+        "Select the numeric trait for GWAS (one per run):",
         numeric_traits,
         key=_trait_key,
         help=(
-            "Select one or more traits. Each trait runs sequentially and "
-            "gets its own results tab + ZIP download in the one-click "
-            "pipeline. For production batches of many traits, prefer the "
-            "CLI (`cli.py`)."
+            "One-Click Full Analysis runs a single trait per run, and the "
+            "detailed view below analyses the first selected trait. To run "
+            "several traits, use the CLI (`cli.py --trait`)."
         ),
     )
+    if len(selected_traits) > 1:
+        st.caption(
+            f"{len(selected_traits)} traits selected. One-Click Full Analysis "
+            "runs one trait per run; the detailed view below analyses "
+            f"**{selected_traits[0]}**. Use `cli.py --trait` to run several."
+        )
     if len(selected_traits) > 10:
         st.warning(
             "More than 10 traits; consider the CLI batch workflow "
@@ -1568,6 +1573,22 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 _pipe_boot_loco = False
 
         if st.button("Run Full Analysis", key="run_full_pipeline", type="primary"):
+            # One trait per run. The per-trait loop below resolves its heavy inputs
+            # through session keys registered ONCE above it from selected_traits[0]
+            # (y_key / geno_key / K0_key / pheno_reader_key), and run_gwas_cached
+            # regresses the phenotype reader those keys resolve to -- not its `y`
+            # argument, which _run_gwas_impl casts and never reads again. Every trait
+            # after the first was therefore scanned against the first trait's
+            # phenotype and genotypes, then reported under its own name. Refuse
+            # rather than compute; a single-trait run is correct by construction.
+            if len(selected_traits) > 1:
+                st.error(
+                    f"One-Click Full Analysis runs one trait at a time; "
+                    f"{len(selected_traits)} are selected. Select a single trait, "
+                    "or use the CLI batch workflow (`cli.py --trait`) to run several."
+                )
+                st.stop()
+
             from gwas.reports import generate_gwas_report as _gen_report
             import time as _time_mod
 
