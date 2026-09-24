@@ -1425,8 +1425,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     ["SL3", "SL4"],
                     key="pipe_genome_build",
                     help=(
-                        "SL3 matches Varitome / SL2.5 SNP coordinates (recommended for most tomato panels). "
-                        "SL4 uses ITAG4.0/SL4 coordinates."
+                        "SL3 uses the default SL3.1 gene models; SL4 uses ITAG4.0/SL4 coordinates. "
+                        "Choose the build of your VCF; for other builds, "
+                        "such as Varitome's SL2.5, annotation is positional."
                     ),
                 )
             else:
