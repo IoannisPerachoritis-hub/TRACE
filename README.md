@@ -315,9 +315,8 @@ TRACE/
 | Tomato (*S. lycopersicum*) | SL3.1 (default) | GCF_000188115.5 | NCBI RefSeq |
 | Tomato (*S. lycopersicum*) | ITAG4.0 (SL4 option) | SL4.0 | Sol Genomics Network |
 
-SL3.1 matches Varitome / SL2.5 VCF coordinates; SL4 matches ITAG4.0 assemblies. **Gene models and variant
-coordinates must share an assembly build**. Annotation against a mismatched build is positional rather than
-coordinate-exact.
+**Gene models and variant coordinates must share an assembly build.** The Varitome VCF uses SL2.5 coordinates,
+which match neither bundled gene model, so its annotation is positional rather than coordinate-exact.
 
 **Other species:** TRACE works with any diploid VCF. Supply a tab-delimited gene coordinate file with
 columns `chr`, `start`, `end`, `gene_id`, `description` via the Gene Annotation upload or `--gene-model`.
