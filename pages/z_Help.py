@@ -127,7 +127,8 @@ documented in full (every column, type, and when it's emitted) in
   (`Block_Status = unblocked_not_seeded`), which is why it shows up here.
   (CLI runs emit these as `Significant_SNPs_<model>.csv` / `Unblocked_SNPs_<model>.csv`.)
 - **`LD_r2_long_*.csv`** / **`LD_r2_matrix_*.csv`**: the r² numbers behind the Local LD
-  heatmap (long-format pairs, and the square matrix).
+  heatmap (long-format pairs, and the square matrix). For a detected block they cover the
+  block's member SNPs; the heatmap also shows the block's neighbouring SNPs.
 - **`Regional_data_*.csv`**: per-SNP p-value, r²-to-lead, and block membership behind the
   regional plot. A block's `lead_snp` is its **most significant seeding SNP** (the smallest
   GWAS p-value among the significant SNPs that formed the block); it may not be a member, so

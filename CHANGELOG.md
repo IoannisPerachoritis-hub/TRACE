@@ -4,6 +4,19 @@ All notable changes to TRACE are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **LD-block heatmaps now show the block's neighbouring SNPs.** Each heatmap in
+  the CLI and One-Click ZIPs, and the Post-GWAS Local LD view of a detected
+  block, shows the block plus the SNPs immediately on each side, so a reader can
+  see whether LD drops at the block edges. The block is at most half of the
+  SNPs shown and at least 20 SNPs are shown (unless the chromosome has fewer),
+  and windows above 200 SNPs are thinned evenly. The block's span is outlined,
+  its lead SNP's tick is marked, and ticks are positions in Mb. One function
+  draws all three (`gwas.plotting.plot_ld_block_heatmap`), and every LD heatmap
+  PNG in the ZIPs has the same size (1050 x 900 px). File names, the blocks that
+  get a heatmap, and every table are unchanged; the Local LD r² downloads for a
+  detected block still cover its member SNPs.
+
 ### Fixed
 - **Fresh installs could not run a GWAS: `six` is now a declared dependency.**
   pysnptools 0.5.14 imports `six` without declaring it, and python-dateutil

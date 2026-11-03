@@ -122,9 +122,12 @@ strength.
 so exports from different windows are distinguishable by filename.
 
 **What it contains.** The pairwise LD (r²) numbers behind the **Local LD** heatmap, in
-tidy long format: one row per unordered SNP pair (the upper triangle).
+tidy long format: one row per unordered SNP pair (the upper triangle). In **Detected block**
+mode it covers the block's member SNPs; the heatmap there also shows the block's
+neighbouring SNPs.
 
-**One row per** SNP pair (i < j) in the Local LD window.
+**One row per** SNP pair (i < j) in the Local LD window (for a detected block, among its
+member SNPs).
 
 | column | type | meaning |
 |--------|------|---------|
@@ -144,11 +147,11 @@ values, one pair per row instead of a square matrix.
 
 Same `<stem>` convention as the long file.
 
-**What it contains.** The full square r² matrix for the Local LD window: the first
-(unnamed) column and the header row are both the SNP IDs, and each cell is the r²
-between its row and column SNP (diagonal = 1).
+**What it contains.** The full square r² matrix for the Local LD window (for a detected
+block, its member SNPs): the first (unnamed) column and the header row are both the SNP
+IDs, and each cell is the r² between its row and column SNP (diagonal = 1).
 
-**One row per** SNP in the window (and one column per SNP).
+**One row per** SNP in the window, or block member (and one column per SNP).
 
 **When it's emitted.** GUI Local LD tab.
 

@@ -1,6 +1,7 @@
 
 import plotly.express as px
 import matplotlib.pyplot as plt
+from matplotlib.transforms import Bbox
 from io import BytesIO
 import zipfile
 from datetime import datetime
@@ -12,7 +13,7 @@ except ImportError:
 from scipy.stats import chi2, beta as beta_dist
 from utils.pub_theme import (
     PALETTE, PALETTE_CYCLE, MANHATTAN_COLORS, SIG_LINE_COLOR, FIGSIZE,  # noqa: F401 (PALETTE_CYCLE re-exported)
-    export_matplotlib, export_plotly,
+    LD_HEATMAP_CMAP, export_matplotlib, export_plotly,
 )
 from annotation import canon_chr
 
@@ -382,7 +383,12 @@ def _build_gwas_results_zip(
                 if hasattr(fig, "savefig"):
                     fig_buf = BytesIO()
                     _dpi = 150 if fname.startswith("LD_heatmap_") else 600
-                    fig.savefig(fig_buf, format="png", dpi=_dpi, bbox_inches="tight")
+                    # LD heatmaps are laid out on a fixed canvas (plot_ld_block_heatmap):
+                    # save that canvas whole, so every LD_heatmap PNG has the same pixel
+                    # size whatever its labels and title. Other figures keep the tight crop.
+                    _bbox = (Bbox([[0, 0], fig.get_size_inches()])
+                             if fname.startswith("LD_heatmap_") else "tight")
+                    fig.savefig(fig_buf, format="png", dpi=_dpi, bbox_inches=_bbox)
                     zf.writestr(f"figures/{fname}", fig_buf.getvalue())
                     del fig_buf
                     plt.close(fig)
@@ -960,3 +966,327 @@ def ld_pairs_long(matrix, labels):
     labs = np.asarray(labels).astype(str)
     iu, ju = np.triu_indices(M.shape[0], k=1)
     return pd.DataFrame({"SNP_A": labs[iu], "SNP_B": labs[ju], "r2": M[iu, ju]})
+
+
+# ---------------------------------------------------------------------------
+# LD-block heatmap with neighbouring SNPs (reviewer point 2-INT.3)
+# ---------------------------------------------------------------------------
+# One drawing for every LD-block heatmap (CLI ZIP, One-Click ZIP, and the
+# Post-GWAS Local LD tab in "Detected block" mode), so a reader can see whether
+# LD drops at the block edges. Window rule, per block:
+#   1. B = SNPs on the block chromosome with start <= pos <= end, by position.
+#   2. Target N = max(ceil(|B| / LD_HEATMAP_BLOCK_MAX_FRAC), LD_HEATMAP_MIN_WINDOW).
+#      Flank budget F = N - |B|: F // 2 SNPs immediately left of B, the rest
+#      immediately right, on the same chromosome. A side that runs out gives its
+#      shortfall to the other side; if both run out, everything available is
+#      shown and the title states the block's share.
+#   3. Above LD_HEATMAP_MAX_DISPLAY SNPs the window is thinned evenly at one rate
+#      across block and flanks, always keeping the first and last block SNP, the
+#      lead SNP and the nearest flank SNP on each side.
+#   4. r2 on the shown SNPs with gwas.ld.pairwise_r2 (min_pair_n=20, as before).
+# The constants are deliberately not GUI or CLI options.
+LD_HEATMAP_BLOCK_MAX_FRAC = 0.5
+LD_HEATMAP_MIN_WINDOW = 20
+LD_HEATMAP_MAX_DISPLAY = 200
+LD_HEATMAP_MAX_LABELS = 10
+
+
+def _even_pick(n, k):
+    """``k`` evenly spaced indices into ``range(n)``, ascending, including both ends
+    when ``k >= 2``; all of them when ``k >= n``."""
+    if k >= n:
+        return np.arange(n)
+    if k <= 0:
+        return np.empty(0, dtype=int)
+    if k == 1:
+        return np.array([0])
+    return np.unique(np.floor(np.linspace(0, n - 1, k) + 0.5).astype(int))
+
+
+def _pick_keeping(n, k, protect, extra=None):
+    """``k`` evenly spaced indices into ``range(n)`` that always include the indices
+    in ``protect`` and ``extra``. Each one missing from the even picks replaces the
+    nearest unprotected pick, so the count stays ``k`` (or the number protected)."""
+    must = {int(i) for i in protect if 0 <= int(i) < n}
+    if extra is not None and 0 <= int(extra) < n:
+        must.add(int(extra))
+    if k >= n:
+        return np.arange(n)
+    picks = {int(i) for i in _even_pick(n, max(int(k), len(must)))}
+    for m in sorted(must):
+        if m in picks:
+            continue
+        free = [p for p in picks if p not in must]
+        if free:
+            picks.discard(min(free, key=lambda p: (abs(p - m), p)))
+        picks.add(m)
+    return np.array(sorted(picks), dtype=int)
+
+
+def _thinning_quota(sizes, k, need):
+    """Split ``k`` picks across the segments ``sizes`` (left flank, block, right
+    flank) at one rate: floor of each segment's exact share, then the remainder
+    to the flanks first, so thinning never raises the block's share. Each segment
+    gets at least ``need[i]`` and at most ``sizes[i]``."""
+    total = float(sum(sizes))
+    exact = [s * k / total for s in sizes]
+    quota = [min(s, max(nd, int(np.floor(e)))) for s, nd, e in zip(sizes, need, exact)]
+    order = sorted(range(len(sizes)), key=lambda i: (i == 1, -(exact[i] - np.floor(exact[i])), i))
+    while sum(quota) < k and any(quota[i] < sizes[i] for i in range(len(sizes))):
+        for i in order:
+            if sum(quota) < k and quota[i] < sizes[i]:
+                quota[i] += 1
+    while sum(quota) > k:  # only when the minimums alone exceed k
+        over = [i for i in range(len(sizes)) if quota[i] > need[i]]
+        if not over:
+            break
+        quota[max(over, key=lambda i: quota[i])] -= 1
+    return quota
+
+
+def select_ld_heatmap_window(chroms, positions, block_chr, block_start, block_end,
+                             lead_pos=None,
+                             block_max_frac=LD_HEATMAP_BLOCK_MAX_FRAC,
+                             min_window=LD_HEATMAP_MIN_WINDOW,
+                             max_display=LD_HEATMAP_MAX_DISPLAY):
+    """Which SNPs an LD-block heatmap shows (rule in the section comment above).
+
+    ``chroms``/``positions`` are per-SNP arrays (any order; chromosome labels are
+    canonicalised). Returns a dict: ``indices`` (into the caller's arrays, in
+    position order) and ``in_block`` (per shown SNP); the pre-thinning counts
+    ``n_block``, ``n_left``, ``n_right``, ``n_window`` and the target ``n_target``;
+    what is drawn, ``n_shown``, ``n_block_shown``, ``block_share``; the flags
+    ``thinned`` and ``exhausted`` (both sides ran out before the target);
+    ``window_start``/``window_end`` (bp); and ``lead_index``, the lead SNP's index
+    when it is shown, else None.
+    """
+    import math
+
+    # canonicalise each distinct label once (a genome-wide array has few of them)
+    uniq, inv = np.unique(np.asarray(chroms).astype(str), return_inverse=True)
+    chroms_c = np.array([canon_chr(u) for u in uniq], dtype=object)[inv.ravel()]
+    pos = np.asarray(positions).astype(np.int64)
+    bchr = canon_chr(str(block_chr))
+    block_start, block_end = int(block_start), int(block_end)
+
+    on_chr = np.flatnonzero(chroms_c == bchr)
+    order = on_chr[np.argsort(pos[on_chr], kind="stable")]
+    p = pos[order]
+    i0 = int(np.searchsorted(p, block_start, side="left"))
+    i1 = int(np.searchsorted(p, block_end, side="right"))
+    n_block = max(0, i1 - i0)
+    avail_left, avail_right = i0, int(order.size) - i1
+
+    n_target = max(int(math.ceil(round(n_block / float(block_max_frac), 9))), int(min_window))
+    budget = max(0, n_target - n_block) if n_block else 0
+    n_left = min(budget // 2, avail_left)
+    n_right = min(budget - budget // 2, avail_right)
+    spare = budget - n_left - n_right
+    give = min(spare, avail_left - n_left)
+    n_left, spare = n_left + give, spare - give
+    give = min(spare, avail_right - n_right)
+    n_right, spare = n_right + give, spare - give
+
+    window = order[i0 - n_left:i1 + n_right] if n_block else order[:0]
+    n_window = int(window.size)
+
+    lead_local = None
+    if lead_pos is not None and n_window:
+        hit = np.flatnonzero(pos[window] == int(lead_pos))
+        if hit.size:
+            lead_local = int(hit[0])
+
+    thinned = n_window > int(max_display)
+    if thinned:
+        sizes = [n_left, n_block, n_right]
+        starts = [0, n_left, n_left + n_block]
+        protect = [[n_left - 1], [0, n_block - 1], [0]]   # nearest flank SNPs, block ends
+        need = [min(sizes[s], len(protect[s])) if sizes[s] else 0 for s in range(3)]
+        lead_seg = None
+        if lead_local is not None:
+            lead_seg = int(np.searchsorted(starts, lead_local, side="right") - 1)
+            if lead_local - starts[lead_seg] not in protect[lead_seg]:
+                need[lead_seg] = min(sizes[lead_seg], need[lead_seg] + 1)
+        quota = _thinning_quota(sizes, int(max_display), need)
+        parts = []
+        for s in range(3):
+            if sizes[s] and quota[s]:
+                extra = lead_local - starts[s] if lead_seg == s else None
+                parts.append(starts[s] + _pick_keeping(sizes[s], quota[s], protect[s], extra))
+        local = np.concatenate(parts) if parts else np.empty(0, dtype=int)
+    else:
+        local = np.arange(n_window)
+
+    shown = window[local]
+    in_block = (local >= n_left) & (local < n_left + n_block)
+    n_shown, n_block_shown = int(shown.size), int(in_block.sum())
+    lead_index = None
+    if lead_local is not None and np.any(local == lead_local):
+        lead_index = int(window[lead_local])
+    return {
+        "indices": shown,
+        "in_block": in_block,
+        "positions": pos[shown],
+        "block_chr": bchr,
+        "block_start": block_start,
+        "block_end": block_end,
+        "n_block": int(n_block),
+        "n_left": int(n_left),
+        "n_right": int(n_right),
+        "n_window": n_window,
+        "n_target": int(n_target),
+        "n_shown": n_shown,
+        "n_block_shown": n_block_shown,
+        "block_share": (n_block_shown / n_shown) if n_shown else float("nan"),
+        "thinned": bool(thinned),
+        "exhausted": bool(n_block and spare > 0),
+        "window_start": int(pos[shown[0]]) if n_shown else None,
+        "window_end": int(pos[shown[-1]]) if n_shown else None,
+        "lead_pos": None if lead_pos is None else int(lead_pos),
+        "lead_index": lead_index,
+    }
+
+
+def lead_snp_position(lead_snp, sid, chroms, positions, block_chr):
+    """Position (bp) of SNP ``lead_snp`` on ``block_chr``, or None if it is absent."""
+    lead = str(lead_snp or "").strip()
+    if not lead or sid is None:
+        return None
+    hits = np.flatnonzero(np.asarray(sid).astype(str) == lead)
+    bchr = canon_chr(str(block_chr))
+    chroms = np.asarray(chroms)
+    for h in hits:
+        if canon_chr(str(chroms[h])) == bchr:
+            return int(np.asarray(positions)[h])
+    return None
+
+
+def _mb_labels(pos_bp):
+    """Positions in Mb with just enough decimals (3 to 6) to tell them apart."""
+    for d in range(3, 7):
+        labels = [f"{p / 1e6:.{d}f}" for p in pos_bp]
+        if len(set(labels)) == len(labels):
+            break
+    return labels
+
+
+def plot_ld_block_heatmap(geno, chroms, positions, block_chr, block_start, block_end,
+                          lead_pos=None,
+                          block_max_frac=LD_HEATMAP_BLOCK_MAX_FRAC,
+                          min_window=LD_HEATMAP_MIN_WINDOW,
+                          max_display=LD_HEATMAP_MAX_DISPLAY,
+                          label_mode="position", sid=None, min_pair_n=20, lead_star=False):
+    """r2 heatmap of an LD block and its neighbouring SNPs; returns ``(fig, info)``.
+
+    ``geno`` is samples x SNPs (the imputed dosages the block finder used), its
+    columns aligned with ``chroms``, ``positions`` and, for ``label_mode="snp_id"``,
+    ``sid``. The SNPs shown follow select_ld_heatmap_window(); ``info`` is that
+    dict plus ``r2`` (the matrix drawn) and ``title``. The figure is a fixed
+    FIGSIZE["heatmap"] canvas with a fixed layout (no tight_layout), so every LD
+    heatmap has the same size; _build_gwas_results_zip saves LD_heatmap_ files on
+    that canvas. Lower triangle; the block's span is outlined, the lead SNP's tick
+    is red, ticks are positions in Mb (or SNP IDs), at most LD_HEATMAP_MAX_LABELS
+    of them. ``lead_star`` adds the Local LD tab's gold star on the lead's cell.
+    """
+    import textwrap
+
+    from matplotlib.patches import Polygon
+
+    from gwas.ld import pairwise_r2
+
+    info = select_ld_heatmap_window(
+        chroms, positions, block_chr, block_start, block_end, lead_pos=lead_pos,
+        block_max_frac=block_max_frac, min_window=min_window, max_display=max_display)
+    idx = info["indices"]
+    if idx.size < 2:
+        raise ValueError(
+            f"LD heatmap needs at least 2 SNPs; Chr{info['block_chr']} "
+            f"{info['block_start']}-{info['block_end']} has {idx.size}")
+    r2 = pairwise_r2(np.asarray(geno)[:, idx], min_pair_n=min_pair_n)
+    info["r2"] = r2
+    m = int(idx.size)
+
+    lead_i = None
+    if info["lead_index"] is not None:
+        lead_i = int(np.flatnonzero(idx == info["lead_index"])[0])
+    ticks = _pick_keeping(m, min(LD_HEATMAP_MAX_LABELS, m), [0, m - 1], extra=lead_i)
+    if lead_i is not None:  # keep the lead's label clear of its neighbours' labels
+        gap = max(1, m // 25)
+        ticks = np.array([t for t in ticks if t == lead_i or abs(t - lead_i) >= gap], dtype=int)
+
+    use_ids = label_mode == "snp_id" and sid is not None
+    if use_ids:
+        labels = [s if len(s) <= 28 else s[:27] + "…" for s in (str(v) for v in np.asarray(sid)[idx[ticks]])]
+    else:
+        labels = _mb_labels(info["positions"][ticks])
+    fs = 6 if use_ids else 7
+    label_in = 0.6 * fs / 72 * max(len(s) for s in labels)   # longest tick label, inches
+
+    fig = plt.figure(figsize=FIGSIZE["heatmap"])
+    W, H = (float(v) for v in fig.get_size_inches())
+    top_in, right_in = 0.8, 1.0
+    left_in, bottom_in = 0.35 + label_in, 0.66 + label_in
+    side = min(W - left_in - right_in, H - bottom_in - top_in)
+    ax = fig.add_axes([left_in / W, bottom_in / H, side / W, side / H])
+    cax = fig.add_axes([(left_in + side + 0.15) / W, bottom_in / H, 0.18 / W, side / H])
+
+    shown = np.tril(np.ones((m, m), dtype=bool), k=-1)
+    data = np.ma.masked_where(~shown | ~np.isfinite(r2), r2)
+    im = ax.imshow(data, cmap=LD_HEATMAP_CMAP, vmin=0.0, vmax=1.0,
+                   interpolation="nearest", aspect="equal")
+    ax.set_xlim(-0.5, m - 0.5)
+    ax.set_ylim(m - 0.5, -0.5)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label("r²", fontsize=9)
+    cbar.ax.tick_params(labelsize=8)
+
+    blk = np.flatnonzero(info["in_block"])
+    if blk.size >= 2:
+        b0, b1 = int(blk[0]), int(blk[-1])
+        verts = [(b0 - 0.5, b0 + 0.5)]
+        for i in range(b0 + 1, b1 + 1):
+            verts += [(i - 0.5, i - 0.5), (i - 0.5, i + 0.5)]
+        verts.append((b0 - 0.5, b1 + 0.5))
+        ax.add_patch(Polygon(verts, closed=True, fill=False, edgecolor="black",
+                             linewidth=1.4 if m <= 60 else (1.0 if m <= 120 else 0.8),
+                             joinstyle="miter", zorder=4, clip_on=False))
+    if lead_star and lead_i is not None:
+        ax.scatter(lead_i, lead_i, marker="*", s=220, color="#F0E442",
+                   edgecolor="#333333", linewidth=0.6, zorder=6, clip_on=False)
+
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=90, fontsize=fs)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(labels, fontsize=fs)
+    ax.tick_params(length=3, width=0.6)
+    if lead_i is not None:
+        k = int(np.flatnonzero(ticks == lead_i)[0])
+        for axis, tls in ((ax.xaxis, ax.get_xticklabels()), (ax.yaxis, ax.get_yticklabels())):
+            tls[k].set_color("#C00000")
+            tls[k].set_fontweight("bold")
+            tick = axis.get_major_ticks()[k]
+            tick.tick1line.set_color("#C00000")
+            tick.tick1line.set_markersize(6)
+            tick.tick1line.set_markeredgewidth(1.4)
+    ax.set_xlabel("SNP" if use_ids else f"Position on Chr{info['block_chr']} (Mb)", fontsize=9)
+
+    c = info["block_chr"]
+    head = (f"LD heatmap: Chr{c} block {info['block_start']:,}-{info['block_end']:,} "
+            f"(block = {info['n_block_shown']} of {info['n_shown']} SNPs shown)")
+    span = f"window {info['window_start']:,}-{info['window_end']:,}"
+    if info["exhausted"]:
+        span += f", all of Chr{c} ({info['n_window']} SNPs)"
+    tail = [span]
+    if info["thinned"]:
+        tail.append(f"thinned to {info['n_shown']} of {info['n_window']}")
+    if info["exhausted"]:
+        tail.append(f"block share {info['block_share']:.0%}")
+    title = "\n".join(textwrap.wrap(head, 90) + textwrap.wrap("; ".join(tail), 90))
+    info["title"] = title
+    fig.text(0.5, 1 - 0.12 / H, title, ha="center", va="top", fontsize=9.5)
+    note = ("Black outline: the block's span (start to end)."
+            + (" Red tick: lead SNP." if lead_i is not None else ""))
+    fig.text(0.1 / W, 0.08 / H, note, ha="left", va="bottom", fontsize=7, color="#444444")
+    return fig, info

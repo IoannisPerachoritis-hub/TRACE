@@ -1512,8 +1512,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 value=True,
                 key="pipe_generate_ld_heatmaps",
                 help=(
-                    "Render an r² heatmap PNG for each significant LD block "
-                    "and include them in the ZIP. Useful for visualising "
+                    "Render an r² heatmap PNG for each significant LD block, "
+                    "showing the block with its neighbouring SNPs, and include "
+                    "them in the ZIP. Useful for visualising "
                     "haplotype structure but adds one PNG per block per "
                     "trait; turn off for batch runs over many traits "
                     "(e.g. metabolomics with hundreds-thousands of "
@@ -2544,7 +2545,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                             and not _m_ld_blocks.empty
                         ):
                             try:
-                                import seaborn as sns
+                                # Each heatmap shows the block and its neighbouring SNPs
+                                # (gwas.plotting.plot_ld_block_heatmap, shared with the CLI
+                                # and the Post-GWAS Local LD tab).
+                                from gwas.plotting import lead_snp_position, plot_ld_block_heatmap
                                 _m_sig_snps_set = set(_model_df.loc[_model_df[_sig_col], "SNP"].astype(str))
                                 _sig_blocks = []
                                 for _, _blk in _m_ld_blocks.iterrows():
@@ -2568,34 +2572,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                                             & (_pos_arr >= _bstart)
                                             & (_pos_arr <= _bend)
                                         )
-                                        _block_idx = np.where(_in_block)[0]
-                                        if len(_block_idx) < 2:
+                                        if np.count_nonzero(_in_block) < 2:
                                             continue
-                                        _block_geno = _geno_float[:, _block_idx]
-                                        _block_r2 = ld.pairwise_r2(_block_geno)
-                                        _block_snp_labels = [
-                                            f"{_chr_arr[i]}_{_pos_arr[i]}" for i in _block_idx
-                                        ]
-                                        _fig_hm, _ax_hm = plt.subplots(
-                                            figsize=(max(4, len(_block_idx) * 0.3 + 1),
-                                                     max(3, len(_block_idx) * 0.25 + 1))
+                                        _fig_hm, _ = plot_ld_block_heatmap(
+                                            _geno_float, _chr_arr, _pos_arr, _bchr, _bstart, _bend,
+                                            lead_pos=lead_snp_position(
+                                                str(_brow.get("lead_snp", "")), _sid_arr,
+                                                _chr_arr, _pos_arr, _bchr),
                                         )
-                                        _mask_upper = np.triu(np.ones_like(_block_r2, dtype=bool))
-                                        sns.heatmap(
-                                            _block_r2, mask=_mask_upper,
-                                            cmap="YlOrBr", vmin=0, vmax=1,
-                                            square=True, linewidths=0.5,
-                                            xticklabels=_block_snp_labels,
-                                            yticklabels=_block_snp_labels,
-                                            cbar_kws={"label": "r²"},
-                                            ax=_ax_hm,
-                                        )
-                                        _ax_hm.set_title(
-                                            f"LD heatmap: Chr{_bchr} {_bstart:,}–{_bend:,}",
-                                            fontsize=10,
-                                        )
-                                        _ax_hm.tick_params(labelsize=8)
-                                        _fig_hm.tight_layout()
                                         _pipe_figures[f"LD_heatmap_Chr{_bchr}_{_bstart}_{_bend}.png"] = _fig_hm
                                         _n_heatmaps += 1
                                         plt.close(_fig_hm)

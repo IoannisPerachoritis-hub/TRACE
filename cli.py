@@ -1121,11 +1121,12 @@ def run_pipeline(args):
         if m_ld_blocks.empty:
             continue
 
-        # LD heatmaps for blocks with significant lead SNPs
+        # LD heatmaps for blocks with significant lead SNPs. Each shows the block and
+        # its neighbouring SNPs (gwas.plotting.plot_ld_block_heatmap, shared with the
+        # One-Click ZIP and the Post-GWAS Local LD tab).
         if not args.no_plots:
             try:
-                import seaborn as sns
-                import matplotlib.pyplot as plt
+                from gwas.plotting import lead_snp_position, plot_ld_block_heatmap
                 _sig_col_name = (
                     "Significant_Custom" if _sig_is_numeric
                     else "Significant_Meff" if sig_rule == "meff"
@@ -1147,25 +1148,12 @@ def run_pipeline(args):
                         continue
                     _heatmap_done.add(_block_key)
                     _in_block = (chroms_canon == _bchr) & (positions >= _bstart) & (positions <= _bend)
-                    _block_idx = np.where(_in_block)[0]
-                    if len(_block_idx) < 2:
+                    if np.count_nonzero(_in_block) < 2:
                         continue
-                    _block_r2 = ld.pairwise_r2(_geno_float[:, _block_idx])
-                    _labels = [f"{_bchr}_{positions[i]}" for i in _block_idx]
-                    _fig_hm, _ax_hm = plt.subplots(
-                        figsize=(max(4, len(_block_idx) * 0.3 + 1),
-                                 max(3, len(_block_idx) * 0.25 + 1))
+                    _fig_hm, _ = plot_ld_block_heatmap(
+                        _geno_float, chroms_canon, positions, _bchr, _bstart, _bend,
+                        lead_pos=lead_snp_position(_lead, sid, chroms_canon, positions, _bchr),
                     )
-                    _mask = np.triu(np.ones_like(_block_r2, dtype=bool))
-                    sns.heatmap(
-                        _block_r2, mask=_mask, cmap="YlOrBr", vmin=0, vmax=1,
-                        square=True, linewidths=0.5,
-                        xticklabels=_labels, yticklabels=_labels,
-                        cbar_kws={"label": "r^2"}, ax=_ax_hm,
-                    )
-                    _ax_hm.set_title(f"LD heatmap: Chr{_bchr} {_bstart:,}-{_bend:,}", fontsize=10)
-                    _ax_hm.tick_params(labelsize=6)
-                    _fig_hm.tight_layout()
                     figures[f"LD_heatmap_Chr{_bchr}_{_bstart}_{_bend}.png"] = _fig_hm
                     _n_hm += 1
                 if _n_hm:

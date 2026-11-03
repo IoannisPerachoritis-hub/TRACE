@@ -34,7 +34,9 @@ class RegionWindow:
     lead_pos: int
     buffer_kb: int
     block_snp_ids: str = ""  # raw comma-joined SNP_IDs when a detected block is picked;
-                             # lets Local LD extract members by ID (reproduces Block Heatmaps)
+                             # Local LD's r² exports extract the members by ID
+    block_lead_snp: str = ""  # the block table's own lead SNP (detected-block mode); the
+                              # Local LD block heatmap marks it, as the CLI / One-Click ZIPs do
 
 
 def select_window(ctx: LDContext) -> "RegionWindow | None":
@@ -66,7 +68,7 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
             "Region source", ["Lead SNP", "Detected block"], horizontal=True,
             key="ld_window_source",
             help="A window around a top SNP, or snap directly to a detected LD block "
-                 "(Local LD then reproduces the Block Heatmaps view for that block).",
+                 "(Local LD then shows the block's LD heatmap with its neighbouring SNPs).",
         )
     else:
         region_source = "Lead SNP"
@@ -82,7 +84,9 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         return st.slider(
             "Buffer (kb)", min_value=10, max_value=5000, step=10,
             key="ld_window_buffer_kb",
-            help="Extends the window this many kb on each side of the block (or SNP if no block).",
+            help="Extends the window this many kb on each side of the SNP, or of the block "
+                 "for the Regional Plot (the Local LD block heatmap shows the block with its "
+                 "neighbouring SNPs instead).",
         )
 
     # ----- Detected-block mode: snap to a chosen block, member-aware -----
@@ -108,7 +112,8 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         block_snp_ids = str(row.get("SNP_IDs", "") or "")
         member_ids = [s.strip() for s in block_snp_ids.split(",") if s.strip()]
         # Lead for the Regional plot = top-p member (in-block, a real association lead).
-        # It does not affect Local LD, whose extraction is by SNP_IDs (member-aware).
+        # The Local LD block heatmap marks the block table's own lead instead.
+        block_lead = str(row.get(lead_col, "") or "").strip()
         sub = gwas_df[gwas_df["SNP"].astype(str).isin(member_ids)].sort_values("PValue")
         if not sub.empty:
             lead_snp = str(sub.iloc[0]["SNP"])
@@ -126,6 +131,7 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
             lead_snp=lead_snp, chr=chr_sel, start_bp=int(start_bp), end_bp=int(end_bp),
             core_start=core_start, core_end=core_end, use_block=True, label=label,
             lead_pos=int(lead_pos), buffer_kb=int(buffer_kb), block_snp_ids=block_snp_ids,
+            block_lead_snp=block_lead,
         )
 
     # ----- Lead-SNP mode (default): SNP-centered window -----

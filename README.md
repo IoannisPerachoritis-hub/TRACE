@@ -38,7 +38,7 @@ beneath:
 ![Regional association](docs/screenshot_regional.png)
 
 **Local LD heatmap**: lead-SNP-centric heatmap with a configurable buffer; pick a detected block via the
-region selector:
+region selector to see the block with its neighbouring SNPs:
 
 ![Local LD](docs/screenshot_local_ld.png)
 
@@ -208,9 +208,11 @@ runs produce the same artifacts as the interface.
 | Plots (Manhattan / QQ / heatmaps)       | GWAS, LD pages           | enabled by default; suppress with `--no-plots`            |
 | Export QC matrices for cross-tool runs  | (not in UI)              | `--export-qc`                                             |
 
-Deep-dive interactive features (per-block LD heatmaps, decay curves, the regional plot) live in the
+Deep-dive interactive features (Local LD for any window, decay curves, the regional plot) live in the
 Post-GWAS Analysis page and have no CLI counterpart by design; the CLI emits the underlying CSVs so the same
-plots can be regenerated externally.
+plots can be regenerated externally. LD-block heatmaps are the exception: the CLI and One-Click ZIPs (for
+significant blocks) and the Local LD "Detected block" view (for any detected block) draw them with one
+function, each block shown with its neighbouring SNPs.
 
 ---
 
