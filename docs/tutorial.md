@@ -143,6 +143,10 @@ TRACE has been validated on:
 ## Docker
 
 ```bash
-docker build -t trace-gwas .
-docker run -p 8501:8501 -v $(pwd)/data:/app/data trace-gwas
+docker build -t trace .
+docker run -p 8501:8501 trace
 ```
+
+The web interface reads your files through the browser upload, so it needs no mount. Do not mount a folder over
+`/app` or `/app/data`: that hides the application or its bundled gene models. For a headless CLI run, see
+[Getting started](../README.md#getting-started) in the README.

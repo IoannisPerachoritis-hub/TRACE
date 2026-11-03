@@ -2,6 +2,25 @@
 
 All notable changes to TRACE are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Fresh installs could not run a GWAS: `six` is now a declared dependency.**
+  pysnptools 0.5.14 imports `six` without declaring it, and python-dateutil
+  4.0.0, which used to bring it in, no longer does. A new environment or
+  container image therefore failed on `import fastlmm.association` before any
+  analysis ran. TRACE now requires `six` directly (1.17.0 in `constraints.txt`).
+- **The Docker CLI example now runs the container as your own user.** The
+  README command passes `--user "$(id -u):$(id -g)"` to docker and mounts the
+  working folder at `/data`, and the image sets `HOME=/tmp` so matplotlib can
+  write its cache under any uid. The README used to say the results belonged to
+  your user, which did not hold for a folder that uid 1000 could not write.
+- **`trace-gwas` checks that the `--output` folder is writable before it
+  starts.** An unwritable folder (typically a Docker mount owned by another uid)
+  used to fail with a traceback when the results ZIP was written, after the
+  whole analysis. The run now stops within seconds with a message that names
+  the folder, the uid and the Docker fix.
+
 ## [1.1.0] - 2026-09-21
 
 ### Changed

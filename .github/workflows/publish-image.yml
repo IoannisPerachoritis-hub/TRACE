@@ -33,6 +33,45 @@ jobs:
             echo "TAGS_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Build the image locally for the smoke test (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: trace:smoke
+
+      - name: Smoke-test the CLI as a non-default user
+        # The README tells CLI users to run with --user "$(id -u):$(id -g)" so the
+        # container can write into their bind mount. Prove that path works for a
+        # uid other than the image's appuser (1000): run the bundled example as
+        # 12345:12345 into a mounted folder owned by 12345, and require the ZIP to
+        # exist and to belong to that uid. A uid with no passwd entry gets HOME=/
+        # unless the image sets HOME, and matplotlib then warns and falls back to a
+        # throwaway cache, so the step also fails on that warning (Dockerfile ENV
+        # HOME). Runs before the push, so a broken image never reaches the registry.
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/trace-smoke"
+          log="$RUNNER_TEMP/trace-smoke.log"
+          mkdir -p "$out"
+          sudo chown 12345:12345 "$out"
+          docker run --rm --user 12345:12345 \
+            -v "$out:/data" --entrypoint trace-gwas trace:smoke \
+            --vcf /app/examples/example.vcf.gz --pheno /app/examples/example_pheno.csv \
+            --trait Trait1 --output /data/results/ 2>&1 | tee "$log"
+          if grep -E "mkdir -p failed|created a temporary cache directory|No writable cache directories" "$log"; then
+            echo "FAIL: a library could not write its config or cache directory as uid 12345" >&2; exit 1
+          fi
+          ls -ln "$out/results"
+          zip="$(find "$out/results" -maxdepth 1 -name 'GWAS_*.zip' | head -n 1)"
+          if [ -z "$zip" ]; then echo "FAIL: no results ZIP in $out/results" >&2; exit 1; fi
+          owner="$(stat -c '%u:%g' "$zip")"
+          if [ "$owner" != "12345:12345" ]; then
+            echo "FAIL: $zip is owned by $owner, expected 12345:12345" >&2; exit 1
+          fi
+          echo "OK: $zip written and owned by $owner"
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

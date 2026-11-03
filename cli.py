@@ -9,6 +9,7 @@ Usage:
 """
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -449,6 +450,48 @@ def _interactive_wizard(parser):
     return args
 
 
+def _ensure_writable_output_dir(output_dir):
+    """Create ``output_dir`` and prove it is writable before any analysis runs.
+
+    ``mkdir(exist_ok=True)`` on an existing folder never tests writability, and the
+    results ZIP is the only write into ``--output`` -- so without this probe an
+    unwritable mount (typically a Docker bind mount owned by a different uid) failed
+    with a PermissionError traceback only after the whole analysis had run.
+
+    The probe is a single exclusive create of a uniquely named file (pid + random
+    hex), so concurrent runs sharing one output folder never touch each other's
+    probe. It is deliberately not ``tempfile.mkstemp``: on Windows, mkstemp takes a
+    PermissionError for a name clash and retries up to TMP_MAX (2**31 - 1) names, so
+    a folder that denies file creation would spin for hours instead of failing here.
+    Only the create decides writability: a folder that accepts new files but refuses
+    deletes can still receive the ZIP, so a probe that cannot be removed is logged
+    and the run continues.
+    """
+    import uuid
+
+    probe = output_dir / f".trace_write_test_{os.getpid()}_{uuid.uuid4().hex}"
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except OSError as exc:
+        _uid = getattr(os, "getuid", lambda: None)()
+        sys.exit(
+            f"Error: cannot write to output directory {output_dir} "
+            f"({exc.strerror or exc}). "
+            + (f"TRACE is running as uid {_uid}. " if _uid is not None else "")
+            + 'If you run TRACE in Docker, add --user "$(id -u):$(id -g)" and mount a '
+            "writable folder at /data (README, Getting started)."
+        )
+    try:
+        os.close(fd)
+        os.remove(probe)
+    except OSError as exc:
+        logging.getLogger("cli").warning(
+            "Could not remove the write-test file %s (%s); the run continues. "
+            "The file is empty and safe to delete.", probe, exc.strerror or exc,
+        )
+
+
 def run_pipeline(args):
     """Execute the full GWAS pipeline using pure computation functions."""
     import numpy as np
@@ -480,7 +523,7 @@ def run_pipeline(args):
     if not pheno_path.exists():
         sys.exit(f"Error: Phenotype file not found: {pheno_path}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_writable_output_dir(output_dir)
     log.info("Output directory: %s", output_dir)
 
     # ── Load data ────────────────────────────────────────

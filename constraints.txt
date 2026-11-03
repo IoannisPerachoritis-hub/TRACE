@@ -41,6 +41,14 @@ fastlmm==0.6.12
 # so the two lines move together.
 fastlmmclib==0.0.7
 pysnptools==0.5.14
+# six: pysnptools 0.5.14 imports it (util/mapreduce1/runner/localmultithread.py,
+# reached from `import fastlmm.association`) but does not declare it. It used to
+# arrive transitively through python-dateutil 2.x; python-dateutil 4.0.0 dropped
+# that dependency, so a fresh install resolved no six and every GWAS run failed on
+# import. TRACE now declares six directly (requirements.txt, pyproject.toml); this
+# is the version the development environment carries. Added 2026-11-03, after the
+# benchmark runs; it pins an import shim, not a numerical component.
+six==1.17.0
 scikit-allel==1.3.13
 bed-reader==1.0.6
 

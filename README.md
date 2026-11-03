@@ -63,14 +63,27 @@ Once pulled, `docker run` uses the local copy and never checks for a newer relea
 docker pull ghcr.io/ioannisperachoritis-hub/trace:latest
 ```
 
-For a headless CLI run, mount a working directory. Files written there belong to your user, not root:
+For a headless CLI run, mount a working folder at `/data` and run the container as your own user,
+so the container can write there and the results belong to you:
 
 ```bash
-docker run --rm -v "$(pwd)/data:/data" --entrypoint trace-gwas \
+mkdir -p data/results
+docker run --rm --user "$(id -u):$(id -g)" --entrypoint trace-gwas \
+    -v "$(pwd)/data:/data" \
     ghcr.io/ioannisperachoritis-hub/trace:latest \
     --vcf /data/my_genotypes.vcf.gz --pheno /data/my_pheno.csv \
     --trait MyTrait --output /data/results/
 ```
+
+On Docker Desktop for Windows, `--user` is not needed: the container can write to a mounted Windows folder,
+and the results belong to your Windows account. PowerShell has no `id` and no `\` line continuation, so run
+the command on one line:
+
+```powershell
+docker run --rm -v "${PWD}\data:/data" --entrypoint trace-gwas ghcr.io/ioannisperachoritis-hub/trace:latest --vcf /data/my_genotypes.vcf.gz --pheno /data/my_pheno.csv --trait MyTrait --output /data/results/
+```
+
+Mount your data at `/data`, not `/app`: `/app` holds the application itself.
 
 ### Install without administrator rights (needs only [uv](https://docs.astral.sh/uv/))
 
@@ -231,7 +244,7 @@ pip install -r requirements.txt
 Verify it:
 
 ```bash
-python -c "import streamlit, fastlmm; print('TRACE dependencies OK')"
+python -c "import streamlit, fastlmm.association; print('TRACE dependencies OK')"
 ```
 
 Then launch the web interface:

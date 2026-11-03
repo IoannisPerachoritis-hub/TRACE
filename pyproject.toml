@@ -49,6 +49,9 @@ dependencies = [
     "tqdm>=4.60,<5",
     "click>=8.0,<9",
     "colorama>=0.4,<1",
+    # pysnptools imports six but does not declare it; python-dateutil 4 no longer
+    # pulls it in transitively, so without this line `import fastlmm.association` fails.
+    "six>=1.16,<2",
 ]
 
 [project.urls]
