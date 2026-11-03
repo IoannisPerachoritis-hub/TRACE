@@ -5,6 +5,26 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Several traits in one run, in the CLI and in One-Click Full Analysis.**
+  `--trait` now takes one or more names, and One-Click runs every selected
+  trait. Each trait goes through the same per-trait code
+  (`gwas.pipeline.run_trait_pipeline`) on its own phenotyped samples: QC,
+  imputation, kinship, LOCO kernels, PCs, every model, LD blocks, haplotype
+  tests, figures and the report are rebuilt for each trait, and only the parsed
+  VCF and the gene models are shared. Each trait gets its own ZIP, and a combined
+  ZIP holds them all. A trait that fails is reported (`failed_traits.txt` in the
+  combined ZIP) and the others still run; the CLI then exits non-zero. A
+  single-trait CLI run is unchanged, byte for byte.
+- **One-Click Full Analysis now runs the CLI's per-trait pipeline**, so its ZIP
+  has the CLI's layout: file names such as `Manhattan_MLM.png`, the CLI's report
+  and `run_metadata.json`, and the QC tables. MLMM and FarmCPU tables no longer
+  carry One-Click's own significance columns, so, as in the CLI, their blocks get
+  no LD heatmap, and the ZIP has no interactive Manhattan HTML (the single-trait
+  detailed view still writes it). As in the detailed view, a trait whose samples
+  lack covariate values stops with its own error rather than dropping them; the
+  phenotype QC panel's transform still applies to the one trait chosen there, and
+  that trait's `run_metadata.json` now records it. The detailed view below
+  One-Click uses the first selected trait that passes phenotype QC.
 - **LD-block heatmaps now show the block's neighbouring SNPs.** Each heatmap in
   the CLI and One-Click ZIPs, and the Post-GWAS Local LD view of a detected
   block, shows the block plus the SNPs immediately on each side, so a reader can
@@ -18,6 +38,16 @@ All notable changes to TRACE are documented in this file.
   detected block still cover its member SNPs.
 
 ### Fixed
+- **One-Click multi-trait runs used the first trait's data for every trait.**
+  The loop resolved genotypes and the phenotype reader through session keys
+  registered once, from the first selected trait; 1.1.0 refused multi-trait runs
+  instead. Each trait now runs on its own data (see above), and a trait whose
+  samples differ from the others' no longer aborts the batch.
+- **One-Click applied uploaded covariates only to the haplotype test.** They now
+  enter every model, as in the CLI.
+- **One-Click MLMM ignored a changed PC count within a session** (its cached
+  covariate reader was keyed without the PC count). One-Click no longer caches
+  per-trait results across runs.
 - **Fresh installs could not run a GWAS: `six` is now a declared dependency.**
   pysnptools 0.5.14 imports `six` without declaring it, and python-dateutil
   4.0.0, which used to bring it in, no longer does. A new environment or

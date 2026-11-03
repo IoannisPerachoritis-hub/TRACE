@@ -49,7 +49,8 @@ def test_hap_and_triage_flag_defaults_pinned():
 
 
 def test_cli_threads_hap_flags_into_haplotype_call():
-    tree = ast.parse(pathlib.Path("cli.py").read_text(encoding="utf-8"))
+    # the CLI's per-trait code lives in gwas/pipeline.py (shared with One-Click)
+    tree = ast.parse(pathlib.Path("gwas/pipeline.py").read_text(encoding="utf-8"))
     found = False
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):

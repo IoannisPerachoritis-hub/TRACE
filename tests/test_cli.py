@@ -21,7 +21,7 @@ class TestCLIArgParsing:
         ])
         assert args.vcf == "test.vcf"
         assert args.pheno == "pheno.csv"
-        assert args.trait == "Yield"
+        assert args.trait == ["Yield"]  # nargs="+": one or more traits
         assert args.output == "results/"
 
     def test_default_values(self):

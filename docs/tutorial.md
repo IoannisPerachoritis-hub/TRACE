@@ -54,7 +54,7 @@ If you have not installed the package (`pip install -e .`), use
 |------|-------------|---------|
 | `--vcf` | Input VCF (bgzipped or plain) | Required |
 | `--pheno` | Phenotype CSV (SampleID + trait columns) | Required |
-| `--trait` | Trait column name | Required |
+| `--trait` | Trait column name(s); several run one after another | Required |
 | `--output` | Output directory | Required |
 | `--model` | Model(s) to run, space-separated (`mlm`, `mlmm`, `farmcpu`) | `mlm` |
 | `--n-pcs` | Number of principal components (fixed; the run report includes PC-selection diagnostics) | 0 |

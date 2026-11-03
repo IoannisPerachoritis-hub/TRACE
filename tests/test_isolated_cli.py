@@ -87,9 +87,10 @@ def test_ld_py_has_no_rescue_code():
 
 
 # ---- AC-N8 (reinforce here too): the CLI passes min_snps=2 to detection ----
+# The CLI's per-trait code lives in gwas/pipeline.py (shared with One-Click).
 def test_cli_still_passes_min_snps_2():
     import ast
-    tree = ast.parse(pathlib.Path("cli.py").read_text(encoding="utf-8"))
+    tree = ast.parse(pathlib.Path("gwas/pipeline.py").read_text(encoding="utf-8"))
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):

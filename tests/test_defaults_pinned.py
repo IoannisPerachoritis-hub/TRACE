@@ -321,12 +321,13 @@ def test_hardcoded_pipeline_determinism_seed():
     paper repo exposes a real ``--seed`` flag (``cli.py:104``, default 42, pinned
     in ``CLI_DEFAULTS`` above). The subsampling stage forwards it, so the pin here
     is that the determinism seed still reaches that stage as ``seed=args.seed``
-    rather than being replaced by a divergent literal."""
-    src, tree = _load("cli.py")
+    rather than being replaced by a divergent literal. The CLI's per-trait code
+    lives in gwas/pipeline.py (shared with One-Click)."""
+    src, tree = _load("gwas/pipeline.py")
     val = _call_kwarg_src(src, tree, "subsample_gwas_resampling", "seed")
     assert val == "args.seed", (
         f"subsampling stage no longer forwards the --seed flag (got {val!r}); "
-        f"determinism reproducibility at risk — cli.py:104"
+        f"determinism reproducibility at risk — gwas/pipeline.py (cli.py --seed)"
     )
 
 
@@ -409,7 +410,8 @@ def test_adj_r2_min_call_site_literals():
 
 def test_cli_hardcoded_min_snps_at_block_detection():
     """The CLI exposes no ``--ld-min-snps`` flag, so this hard-coded literal is
-    the only thing standing between a published block table and a re-partition."""
-    src, tree = _load("cli.py")
+    the only thing standing between a published block table and a re-partition.
+    The CLI's per-trait code lives in gwas/pipeline.py (shared with One-Click)."""
+    src, tree = _load("gwas/pipeline.py")
     val = _call_kwarg_src(src, tree, "find_ld_clusters_genomewide", "min_snps")
-    assert val == "2", f"CLI block-detection min_snps literal changed to {val!r} — cli.py:1070"
+    assert val == "2", f"CLI block-detection min_snps literal changed to {val!r} — gwas/pipeline.py"

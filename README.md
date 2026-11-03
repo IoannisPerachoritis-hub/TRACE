@@ -111,7 +111,7 @@ bash examples/run_example.sh
 ```
 
 Or upload `examples/example.vcf.gz` and `examples/example_pheno.csv` in the web app, select trait
-`Trait1`, and choose **One-Click Full Analysis**. The equivalent CLI call:
+`Trait1`, and choose **One-Click Full Analysis**. From the command line:
 
 ```bash
 trace-gwas --vcf examples/example.vcf.gz --pheno examples/example_pheno.csv \
@@ -193,6 +193,7 @@ runs produce the same artifacts as the interface.
 | Capability                              | Web UI page              | CLI flag(s)                                               |
 |-----------------------------------------|--------------------------|-----------------------------------------------------------|
 | MLM (LOCO) GWAS                         | GWAS Analysis            | `--model mlm` (default), `--no-loco` to disable           |
+| Several traits in one run               | GWAS Analysis (One-Click) | `--trait A B C` (one ZIP per trait plus a combined ZIP)  |
 | MLMM                                    | GWAS Analysis            | `--model mlm mlmm`                                        |
 | TRACE-FarmCPU                           | GWAS Analysis            | `--model mlm farmcpu`                                     |
 | Cross-model consensus                   | GWAS Analysis            | automatic when ≥ 2 models requested (`CrossModel_Consensus.csv`) |
@@ -211,8 +212,8 @@ runs produce the same artifacts as the interface.
 Deep-dive interactive features (Local LD for any window, decay curves, the regional plot) live in the
 Post-GWAS Analysis page and have no CLI counterpart by design; the CLI emits the underlying CSVs so the same
 plots can be regenerated externally. LD-block heatmaps are the exception: the CLI and One-Click ZIPs (for
-significant blocks) and the Local LD "Detected block" view (for any detected block) draw them with one
-function, each block shown with its neighbouring SNPs.
+blocks whose lead SNP is significant in the MLM scan) and the Local LD "Detected block" view (for any
+detected block) draw them with one function, each block shown with its neighbouring SNPs.
 
 ---
 
@@ -380,7 +381,16 @@ signals survive sample perturbation. Per-iteration LOCO kinship is optional.
 
 ```bash
 trace-gwas --vcf data.vcf.gz --pheno pheno.csv --trait Yield --output results/
+trace-gwas --vcf data.vcf.gz --pheno pheno.csv --trait Yield Height FruitWeight --output results/
 ```
+
+With several traits, each one runs in turn through the same per-trait pipeline as a single-trait run, on its
+own phenotyped samples: QC, kinship, PCs, every model, LD blocks and haplotype tests are rebuilt for each
+trait. Each trait writes its own ZIP, exactly as a single-trait run would, and a combined ZIP holds them all,
+one folder per trait. A trait that fails (for example a constant phenotype) is logged and listed in
+`failed_traits.txt` inside the combined ZIP; the other traits still complete, and the run exits with a
+non-zero code. One-Click Full Analysis in the web interface runs several selected traits the same way and
+offers the combined ZIP for download.
 
 `trace-gwas --help` lists every argument. Use `python cli.py` if the package is not installed.
 

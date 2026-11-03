@@ -411,7 +411,7 @@ def _build_gwas_results_zip(
     return zip_name, buf
 
 
-def _combine_gwas_zips(per_trait_zips, pheno_label=None):
+def _combine_gwas_zips(per_trait_zips, pheno_label=None, extra_members=None):
     """
     Merge per-trait ZIPs (bytes) into a single archive with `{trait}/` prefixes.
 
@@ -419,6 +419,9 @@ def _combine_gwas_zips(per_trait_zips, pheno_label=None):
     ----------
     per_trait_zips : dict {trait_name: bytes}
     pheno_label    : str or None
+    extra_members  : dict {file name: str or bytes} or None
+        Written at the archive root after the traits (e.g. a multi-trait run's
+        ``failed_traits.txt``). None leaves the archive exactly as before.
     """
     buf = BytesIO()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -435,6 +438,8 @@ def _combine_gwas_zips(per_trait_zips, pheno_label=None):
                         f"{trait_name}/{info.filename}",
                         in_zf.read(info.filename),
                     )
+        for member_name, content in (extra_members or {}).items():
+            out_zf.writestr(member_name, content)
     buf.seek(0)
     return zip_name, buf
 

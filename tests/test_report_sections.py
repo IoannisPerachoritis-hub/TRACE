@@ -88,8 +88,9 @@ def test_every_render_kwarg_is_referenced_in_template():
 
 def test_cli_passes_post_gwas_frames_to_report():
     """T-80 wiring guard: the CLI's generate_gwas_report call must forward the
-    post-GWAS + significant-SNP frames (defect 0.2 was that it omitted them)."""
-    src = (_REPO / "cli.py").read_text(encoding="utf-8")
+    post-GWAS + significant-SNP frames (defect 0.2 was that it omitted them).
+    The CLI's per-trait code lives in gwas/pipeline.py (shared with One-Click)."""
+    src = (_REPO / "gwas" / "pipeline.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     call_kwargs = None
     for node in ast.walk(tree):
@@ -97,9 +98,9 @@ def test_cli_passes_post_gwas_frames_to_report():
                 and getattr(node.func, "id", None) == "generate_gwas_report"):
             call_kwargs = {kw.arg for kw in node.keywords if kw.arg}
             break
-    assert call_kwargs is not None, "generate_gwas_report call not found in cli.py"
+    assert call_kwargs is not None, "generate_gwas_report call not found in gwas/pipeline.py"
     required = {"ld_blocks_df", "ld_blocks_annotated_df", "haplotype_gwas_df",
                 "per_model_post_gwas", "significant_snps_df", "unblocked_snps_df",
                 "isolated_intervals_df", "sig_label", "n_significant_override"}
     missing = required - call_kwargs
-    assert not missing, f"cli.py generate_gwas_report omits post-GWAS frames: {missing}"
+    assert not missing, f"gwas/pipeline.py generate_gwas_report omits post-GWAS frames: {missing}"

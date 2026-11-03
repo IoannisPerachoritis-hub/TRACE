@@ -29,14 +29,17 @@ every page offers a ZIP download.
 # ============================================================
 st.header("Output Format")
 st.markdown("""
-The One-Click Pipeline and the single-trait download both produce a **ZIP**:
+The One-Click Pipeline and the single-trait download both produce a **ZIP**. With several
+traits, One-Click's download is one **combined ZIP** with a folder per trait (plus
+`failed_traits.txt` when a trait failed); each trait runs on its own phenotyped samples,
+through the same per-trait pipeline as `trace-gwas --trait A B C`.
 
 | Folder / File | Contents |
 |--------------|----------|
 | `tables/*.csv` | GWAS hits, LD blocks, haplotype tests, gene annotations, subsampling stability, cross-model consensus |
-| `figures/*.png` · `*.html` | Manhattan, QQ, LD heatmaps (static + interactive Plotly) |
+| `figures/*.png` · `*.html` | Manhattan, QQ, LD heatmaps (the single-trait download also has interactive Plotly HTML) |
 | `report.html` | Self-contained offline report (summary, per-model sections, figures) |
-| `MANIFEST_*.json` | Full analysis parameters, for reproducibility |
+| `run_metadata.json` | Full analysis parameters, for reproducibility |
 """)
 
 # ============================================================

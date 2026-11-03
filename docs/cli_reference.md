@@ -3,7 +3,7 @@
 Auto-generated from `cli.py` by `python scripts/gen_cli_reference.py`. Do not edit by hand; re-run the generator after changing the parser.
 
 ```text
-usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT]
+usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT [TRAIT ...]]
                   [--output OUTPUT] [--maf MAF] [--miss MISS] [--mac MAC]
                   [--ind-miss IND_MISS] [--info-thresh INFO_THRESH]
                   [--impute {mean,ldknni}] [--impute-k IMPUTE_K]
@@ -42,7 +42,10 @@ options:
   -h, --help            show this help message and exit
   --vcf VCF             Path to VCF file (.vcf or .vcf.gz)
   --pheno PHENO         Path to phenotype CSV/TSV
-  --trait TRAIT         Trait column name in phenotype file
+  --trait TRAIT [TRAIT ...]
+                        Trait column name(s) in phenotype file. Several names
+                        run one after another, each on its own phenotyped
+                        samples: one ZIP per trait plus a combined ZIP
   --output OUTPUT       Output directory
   --norm {none,zscore,log,yeojohnson,int}
                         Phenotype normalisation slug: 'int' (rank-based
@@ -200,4 +203,5 @@ LD & post-GWAS:
 
 Examples:
   python cli.py --vcf data.vcf.gz --pheno pheno.csv --trait Yield --output results/
+  python cli.py --vcf data.vcf.gz --pheno pheno.csv --trait Yield Height --output results/
 ```
