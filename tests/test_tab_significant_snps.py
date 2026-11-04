@@ -44,3 +44,24 @@ def test_tab_build_path_complete_and_projects_unblocked():
     assert (sig["Block_Status"] != "in_block").all()       # no blocks -> every row unblocked
     unb = project_unblocked(sig)
     assert set(unb["SNP"].astype(str)) == {"s3", "s7"}     # unblocked projection = the sig set
+
+
+def test_tabs_judge_their_own_custom_threshold_on_the_pvalues():
+    """Both Post-GWAS consumers of a tab-chosen rule pass the table through
+    gwas.significance.frame_for_rule first, so a stored Significant_Custom (MLMM and
+    FarmCPU tables carry the run's) cannot override the tab's own custom p-value."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "pages" / "_ld_tabs"
+    sites = {"tab_significant_snps.py": "build_significant_snp_table",
+             "tab_genome_wide.py": "significant_mask"}
+    for fname, callee in sites.items():
+        tree = ast.parse((root / fname).read_text(encoding="utf-8"))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and (getattr(n.func, "id", None) == callee or getattr(n.func, "attr", None) == callee)]
+        assert calls, (fname, callee)
+        for c in calls:
+            first = c.args[0] if c.args else None
+            assert isinstance(first, ast.Call) and getattr(first.func, "id", None) == "frame_for_rule", (
+                f"{fname}: {callee} is not given frame_for_rule(...)")

@@ -65,6 +65,7 @@ def generate_gwas_report(
     per_model_post_gwas=None,
     sig_label=None,
     n_significant_override=None,
+    n_significant_by_model=None,
     significant_snps_df=None,
     unblocked_snps_df=None,
     isolated_intervals_df=None,
@@ -87,6 +88,9 @@ def generate_gwas_report(
     n_samples    : int (optional)
     n_snps       : int (optional)
     info_field   : str or None, name of INFO quality field detected
+    n_significant_by_model : dict {model: count} (optional). With more than one model,
+                   the summary shows one significant-SNP count per model, labelled
+                   with the model, in place of the single count.
 
     Returns
     -------
@@ -127,6 +131,10 @@ def generate_gwas_report(
 
     # Significance label for report template
     _sig_label = sig_label or "FDR<0.05"
+    # One count per model when several ran (each from that model's own column)
+    significant_by_model = (
+        [{"model": str(m), "n": int(n)} for m, n in n_significant_by_model.items()]
+        if n_significant_by_model and len(n_significant_by_model) > 1 else None)
 
     # Multi-model summaries
     mlmm_summary = _df_to_html(mlmm_df)
@@ -193,6 +201,7 @@ def generate_gwas_report(
         model_sections=model_sections,
         metadata_json=metadata_json,
         sig_label=_sig_label,
+        significant_by_model=significant_by_model,
         significant_snps_html=significant_snps_html,
         isolated_intervals_html=isolated_intervals_html,
         snp_plots=snp_plots,

@@ -735,16 +735,17 @@ def _render_haplotype_gwas(
     # ------------------------------------------------------------
     from statsmodels.stats.multitest import multipletests
 
-    pvals = hap_gwas_df["PValue"].astype(float).values
-    _, qvals, _, _ = multipletests(pvals, method="fdr_bh")
-    hap_gwas_df["FDR_qvalue"] = qvals
-
+    # checked before the FDR step: multipletests raises on an empty table
     if hap_gwas_df is None or hap_gwas_df.empty:
         st.info(
             "No haplotype blocks had enough variation "
             "for association testing."
         )
         return
+
+    pvals = hap_gwas_df["PValue"].astype(float).values
+    _, qvals, _, _ = multipletests(pvals, method="fdr_bh")
+    hap_gwas_df["FDR_qvalue"] = qvals
 
     # T-34 (§2.8 fix): enrich BEFORE display so η²/Frac_other/Block_length_kb/MAF
     # reach the on-screen table, not only the downloaded CSV/ZIP.
@@ -966,7 +967,7 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
     if geno_hard is None:
         return
 
-    from gwas.significance import rule_from_streamlit
+    from gwas.significance import frame_for_rule, rule_from_streamlit
     from .tab_significant_snps import _SIG_LABELS
 
     st.markdown("### Lead SNP genotype effect")
@@ -990,7 +991,8 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
             format="%.1e", key="lead_gallery_custom",
         )
     _rule = rule_from_streamlit(_rule_label, int(len(gdf)), ctx.meff_val, custom_thresh=_custom)
-    _sig = gdf.loc[_rule.significant_mask(gdf)].copy()
+    # frame_for_rule: this gallery's own custom p-value, not a stored Significant_Custom
+    _sig = gdf.loc[_rule.significant_mask(frame_for_rule(gdf, _rule))].copy()
     if _sig.empty:
         st.info("No SNPs pass the selected significance rule.")
         return

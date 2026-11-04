@@ -2,12 +2,56 @@
 
 This page documents the tabular outputs added to TRACE **after the v1.0.1
 release**: the complete significant-SNP tables, the LD r² exports behind the
-Local LD heatmap, and the per-SNP data behind the regional plot. The GWAS,
+Local LD heatmap, and the per-SNP data behind the regional plot. It starts with
+the significance columns of the per-model GWAS tables: MLM's shipped in v1.0.1
+(`Significant_Custom` in 1.1.0, with the numeric `--sig-thresh` described at the
+end), and MLMM and FarmCPU now carry the same ones under the same rule. The GWAS,
 LD-block, haplotype, subsampling and consensus CSVs that shipped in v1.0.1 are
 documented in the in-app **Help & Reference** page ("CSV Column Glossary").
 
 Two related command-line options are covered at the end: `--covar` (new) and the
 numeric branch of `--sig-thresh`.
+
+---
+
+## Significance columns of `GWAS_<trait>.csv`, `GWAS_MLMM_<trait>.csv` and `GWAS_FarmCPU_<trait>.csv`
+
+**What they contain.** The MLM table and, when those models run, the MLMM and
+FarmCPU tables carry the same significance columns. One function writes them
+(`gwas.significance.add_significance_columns`), in the CLI, in One-Click Full
+Analysis and in the GWAS page's single-trait run. The CLI and One-Click write
+`Significant_Meff` for every model; the single-trait run writes it, for every
+model, when the M_eff rule is chosen.
+
+| column | type | meaning |
+|--------|------|---------|
+| `FDR` | float | Benjamini–Hochberg q-value, computed within this model's own p-values. |
+| `Significant_FDR` | bool | The Benjamini–Hochberg decision at 0.05 within this model (`FDR` ≤ 0.05). |
+| `Significant_Bonf` | bool | `PValue < 0.05 / m`, where m is the number of SNPs tested (MLM's Bonferroni threshold). |
+| `Significant_Meff` | bool | `PValue < 0.05 / M_eff` (MLM's M_eff threshold, Li & Ji). |
+| `Significant_Custom` | bool | `PValue < t` for a numeric threshold t (`--sig-thresh 5e-8`, or the single-trait run's Custom p-value); written only when one is set. |
+
+**The rule.** The p-value thresholds are MLM's, the same numbers for every model,
+so a SNP with a given p-value is judged the same whichever model produced it.
+FDR is the one per-model quantity: Benjamini–Hochberg counts the tests of that
+model only. A SNP without a p-value is never significant (its `FDR` is blank),
+and Benjamini–Hochberg counts only the SNPs that have one.
+
+**What uses them.** The column for the analysis rule (`--sig-thresh`) selects
+the SNPs of each model's `Significant_SNPs_<model>.csv`, the report's per-model
+count of significant SNPs, and the blocks that get an LD heatmap.
+
+**LD heatmaps.** A heatmap (`figures/LD_heatmap_Chr<c>_<start>_<end>.png`) is
+drawn for each LD block whose lead SNP is significant in its model. A block is
+its chromosome, start and end: a block that several models report with the same
+bounds is drawn once, marking the lead SNP of the first model (in the order MLM,
+MLMM, FarmCPU) whose block with these bounds has a significant lead. The
+title names every model whose own block with these bounds has a significant
+lead, or in which the marked lead SNP is significant (for example "significant
+in MLM, FarmCPU"); a model that lists the block with a lead that is not
+significant is not named. When the list is MLM alone, the title has none, as
+before. Models often delimit one signal with slightly different bounds; those
+are separate blocks, each with its own heatmap and its own list.
 
 ---
 
@@ -48,7 +92,7 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 | 16 | `Passes_Seed_Threshold` | bool | `PValue < Seed_Threshold`, i.e. this SNP was eligible to seed a block. |
 | 17 | `Passes_Meff` | bool | Significant under M_eff (blank if that column was not computed). |
 | 18 | `Passes_Bonf` | bool | Significant under Bonferroni. |
-| 19 | `Passes_FDR` | bool | Significant under FDR (q < 0.05). |
+| 19 | `Passes_FDR` | bool | Significant under FDR (q ≤ 0.05). |
 | 20 | `FDR` | float | Benjamini–Hochberg q-value; blank if not computed. |
 | 21 | `Block_ID` | str | `chr:start-end` of the containing LD block, or empty when unblocked. |
 | 22 | `Block_Status` | str | One of five values (see below). |

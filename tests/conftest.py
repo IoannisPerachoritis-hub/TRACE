@@ -4,8 +4,32 @@ Shared fixtures for the GWAS platform test suite.
 All synthetic data uses np.random.default_rng(42) for reproducibility.
 No external data files are required.
 """
+import importlib
+
 import numpy as np
 import pytest
+
+# Functions that AppTest scripts in this suite stub on the shared Post-GWAS tab modules.
+# AppTest runs page scripts in the pytest process, so a stub would otherwise stay in
+# place for every later test.
+_TAB_STUBBED = {
+    "pages._ld_tabs.tab_genome_wide": ("find_ld_clusters_genomewide", "_render_block_visualization",
+                                        "_render_lead_snp_gallery"),
+    "pages._ld_tabs.tab_local_ld": ("extract_block_geno_for_paper",),
+}
+
+
+@pytest.fixture(autouse=True)
+def _restore_stubbed_tab_functions():
+    """Put back any of those functions a test replaced."""
+    saved = []
+    for mod_name, names in _TAB_STUBBED.items():
+        mod = importlib.import_module(mod_name)
+        saved.append((mod, {n: getattr(mod, n) for n in names}))
+    yield
+    for mod, attrs in saved:
+        for name, fn in attrs.items():
+            setattr(mod, name, fn)
 
 
 @pytest.fixture

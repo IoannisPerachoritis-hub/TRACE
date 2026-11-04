@@ -9,9 +9,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The suite runs twice (tests, then coverage). The multi-trait and same-window
-    # AppTests (One-Click and Post-GWAS run for real) add a few minutes to each pass.
-    timeout-minutes: 40
+    # The suite runs twice (tests, then coverage). The multi-trait, same-window and
+    # significance-parity AppTests (One-Click, the single-trait view and Post-GWAS run
+    # for real) add a few minutes to each pass.
+    timeout-minutes: 60
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]

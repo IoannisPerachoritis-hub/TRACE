@@ -60,14 +60,19 @@ st.markdown("""
 | **SE_MLM** | Standard error of the MLM effect estimate |
 | **Beta_OLS** | Marginal effect size from ordinary least squares (ignoring kinship) |
 | **SE_OLS** | Standard error of the OLS effect estimate |
-| **FDR** | False discovery rate-adjusted p-value (Benjamini-Hochberg). Values < 0.05 are significant after multiple testing correction. |
-| **Significant_FDR** | True if FDR < 0.05 |
-| **Significant_Bonf** | True if p-value < Bonferroni threshold |
-| **Significant_Meff** | True if p-value < M_eff threshold (when M_eff is selected) |
+| **FDR** | False discovery rate-adjusted p-value (Benjamini-Hochberg), computed within this model's own p-values. Values ≤ 0.05 are significant after multiple testing correction. |
+| **Significant_FDR** | True if the SNP passes Benjamini-Hochberg at 0.05 (FDR ≤ 0.05) |
+| **Significant_Bonf** | True if p-value < Bonferroni threshold (0.05 / number of tested SNPs) |
+| **Significant_Meff** | True if p-value < M_eff threshold (always in the CLI and One-Click; in the single-trait run when M_eff is selected) |
+| **Significant_Custom** | True if p-value < the custom p-value threshold, when one is set |
 | **Model** | Which GWAS model produced this result (MLM, MLMM, FarmCPU) |
 | **Nullh2** | Null-model heritability estimate (internal parameter) |
 | **Mixing** | Mixing parameter from FaST-LMM (internal) |
 | **ImputationRate** | Fraction of non-missing genotypes at this SNP |
+
+The MLM, MLMM and FarmCPU tables carry the same significance columns, judged against MLM's
+thresholds (Bonferroni, M_eff, custom); FDR is computed within each model's own p-values. A SNP
+without a p-value is never significant.
 """)
 
 st.subheader("LD Block Annotations")

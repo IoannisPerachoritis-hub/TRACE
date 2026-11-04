@@ -128,3 +128,15 @@ def test_block_tables_render_with_new_labels():
     # LD-coherence (Change 2) — the block-coherence popover renders next to the table
     assert any("member-pair" in m.value for m in at.markdown), \
         "LD-block coherence popover missing"
+
+
+def test_no_testable_haplotype_block_shows_the_info_message():
+    """A haplotype table with no rows (no block had enough variation) shows the tab's
+    message; the block-level FDR step used to raise on it and crash the page."""
+    script = _SCRIPT.replace("__ROOT__", str(_ROOT).replace("\\", "/")).replace(
+        "return _fake_hap.copy(), {}", "return _fake_hap.iloc[0:0].copy(), {}")
+    assert "_fake_hap.iloc[0:0]" in script
+    at = AppTest.from_string(script, default_timeout=120)
+    at.run()
+    assert not at.exception or _only_harness_error(at), [e.value for e in at.exception]
+    assert any("No haplotype blocks had enough variation" in i.value for i in at.info)

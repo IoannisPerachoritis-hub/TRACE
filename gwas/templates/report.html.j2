@@ -125,10 +125,14 @@
     <div class="label">&lambda;<sub>GC</sub></div>
   </div>
   {% endif %}
-  <div class="summary-card">
+  {% if significant_by_model %}{% for s in significant_by_model %}<div class="summary-card">
+    <div class="value">{{ s.n }}</div>
+    <div class="label">Significant in {{ s.model }} ({{ sig_label }})</div>
+  </div>{% if not loop.last %}
+  {% endif %}{% endfor %}{% else %}<div class="summary-card">
     <div class="value">{{ n_significant }}</div>
     <div class="label">Significant ({{ sig_label }})</div>
-  </div>
+  </div>{% endif %}
 </div>
 
 <!-- ── QC Summary ────────────────────────────────── -->
@@ -168,10 +172,10 @@
 
 <!-- ── Significant SNPs (complete; T-20) ─────────────── -->
 {% if significant_snps_html %}
-<h2>Significant SNPs</h2>
+<h2>Significant SNPs{% if significant_by_model %} ({{ significant_by_model[0].model }}){% endif %}</h2>
 <p>Every SNP passing the analysis significance threshold ({{ sig_label }}). Each row is
 marked as belonging to an LD block or as <strong>unblocked</strong>, with its candidate
-interval and gene evidence. This table is complete &mdash; no significant SNP is omitted.</p>
+interval and gene evidence. This table is complete &mdash; no significant SNP is omitted.{% if significant_by_model %} It is the {{ significant_by_model[0].model }} table; each model with significant SNPs has its own in the ZIP, as Significant_SNPs_&lt;model&gt;.csv.{% endif %}</p>
 <div style="overflow-x:auto">{{ significant_snps_html | safe }}</div>
 {% endif %}
 
@@ -194,7 +198,7 @@ capped for report size &mdash; the significant-SNP table above is complete.</p>
 
 <!-- ── Isolated significant SNPs (no LD block) ───────── -->
 {% if isolated_intervals_html %}
-<h2>Significant SNPs with no LD block</h2>
+<h2>Significant SNPs with no LD block{% if significant_by_model %} ({{ significant_by_model[0].model }}){% endif %}</h2>
 <p>Significant SNPs that formed no LD block, reported with a flanking-marker interval. Bounds are
 the nearest typed post-QC markers; interval width reflects marker density, not association strength.
 Genes are listed by physical position only, in genomic order.</p>

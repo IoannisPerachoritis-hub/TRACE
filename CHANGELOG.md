@@ -5,6 +5,34 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **MLMM and FarmCPU results carry the same significance columns as MLM.**
+  `GWAS_MLMM_<trait>.csv` and `GWAS_FarmCPU_<trait>.csv` now have `FDR`,
+  `Significant_FDR`, `Significant_Bonf`, `Significant_Meff` and, for a numeric
+  `--sig-thresh`, `Significant_Custom`, as the MLM table `GWAS_<trait>.csv`
+  always had. One function writes them for every model
+  (`gwas.significance.add_significance_columns`), in the CLI, One-Click and the
+  single-trait run. The thresholds are MLM's (Bonferroni over the SNPs tested,
+  M_eff, custom); FDR is Benjamini-Hochberg within each model's own p-values,
+  and a missing p-value is never significant. Before, the CLI wrote none of these
+  columns for MLMM and FarmCPU, 1.1.0's One-Click took their Bonferroni threshold
+  from each table's row count, and the single-trait run wrote only FDR and
+  Bonferroni. The single-trait run writes `Significant_Meff` when the M_eff rule
+  is chosen and `Significant_Custom` under the Custom p-value rule, for every
+  model as for MLM. Each model's `Significant_SNPs_<model>.csv` now fills
+  `Passes_Meff`, `Passes_Bonf`, `Passes_FDR` and `FDR` for MLMM and FarmCPU, and
+  under `--sig-thresh fdr` MLMM and FarmCPU now get their significant-SNP tables
+  and isolated-SNP intervals. MLM's tables, LD blocks and haplotype tests are
+  unchanged.
+- **LD heatmaps cover the blocks whose lead SNP is significant in MLMM or
+  FarmCPU**, in the CLI as in One-Click (1.1.0's One-Click drew them; the CLI
+  drew MLM's only). A block that several models report with the same bounds is
+  drawn once. The title names every model whose own block with these bounds has
+  a significant lead, or in which the marked lead SNP is significant
+  ("significant in MLM, FarmCPU"); when that is MLM alone the title stays as it
+  was, so an MLM-only run's heatmaps are unchanged. Models often delimit one
+  signal with slightly different bounds: those are separate blocks, each with
+  its own heatmap. The HTML report embeds the new heatmaps and, when several
+  models ran, gives one significant-SNP count per model.
 - **Several traits in one run, in the CLI and in One-Click Full Analysis.**
   `--trait` now takes one or more names, and One-Click runs every selected
   trait. Each trait goes through the same per-trait code
@@ -13,15 +41,16 @@ All notable changes to TRACE are documented in this file.
   tests, figures and the report are rebuilt for each trait, and only the parsed
   VCF and the gene models are shared. Each trait gets its own ZIP, and a combined
   ZIP holds them all. A trait that fails is reported (`failed_traits.txt` in the
-  combined ZIP) and the others still run; the CLI then exits non-zero. A
-  single-trait CLI run is unchanged, byte for byte.
+  combined ZIP) and the others still run; the CLI then exits non-zero.
+  Multi-trait support leaves a single-trait CLI run unchanged, byte for byte.
 - **One-Click Full Analysis now runs the CLI's per-trait pipeline**, so its ZIP
   has the CLI's layout: file names such as `Manhattan_MLM.png`, the CLI's report
-  and `run_metadata.json`, and the QC tables. MLMM and FarmCPU tables no longer
-  carry One-Click's own significance columns, so, as in the CLI, their blocks get
-  no LD heatmap, and the ZIP has no interactive Manhattan HTML (the single-trait
-  detailed view still writes it). As in the detailed view, a trait whose samples
-  lack covariate values stops with its own error rather than dropping them; the
+  and `run_metadata.json`, and the QC tables. The MLMM and FarmCPU significance
+  columns follow the pipeline's rule (see above) instead of One-Click's own, which
+  took Bonferroni from each table's row count, and the ZIP has no interactive
+  Manhattan HTML (the single-trait detailed view still writes it). As in the
+  detailed view, a trait whose samples lack covariate values stops with its own
+  error rather than dropping them; the
   phenotype QC panel's transform still applies to the one trait chosen there, and
   that trait's `run_metadata.json` now records it. The detailed view below
   One-Click uses the first selected trait that passes phenotype QC.
@@ -33,11 +62,28 @@ All notable changes to TRACE are documented in this file.
   and windows above 200 SNPs are thinned evenly. The block's span is outlined,
   its lead SNP's tick is marked, and ticks are positions in Mb. One function
   draws all three (`gwas.plotting.plot_ld_block_heatmap`), and every LD heatmap
-  PNG in the ZIPs has the same size (1050 x 900 px). File names, the blocks that
-  get a heatmap, and every table are unchanged; the Local LD r² downloads for a
-  detected block still cover its member SNPs.
+  PNG in the ZIPs has the same size (1050 x 900 px). This change leaves file
+  names, the blocks that get a heatmap and every table as they were (for the
+  MLMM and FarmCPU heatmaps and columns, see above); the Local LD r² downloads
+  for a detected block still cover its member SNPs.
 
 ### Fixed
+- **The CLI and One-Click report's significant-SNP count follows the analysis
+  rule.** It counted the rows of the primary model's significant-SNP table, so
+  when that table was empty (no SNP passes the rule) or not built
+  (`--no-isolated-rescue`) the summary card fell back to the FDR < 0.05 count
+  while still naming the rule (for example "Significant (Bonferroni
+  (m=...))"). It now counts the rule's own significance column, in MLM-only runs
+  too; this card is the one MLM output that changes, and only in those two
+  cases. The single-trait run's report still falls back when the M_eff
+  computation fails.
+- **Under `--sig-thresh fdr`, `CrossModel_Consensus.csv` judged MLMM and FarmCPU
+  SNPs by the M_eff threshold**, because their tables had no FDR column. Each
+  model is now judged by its own FDR.
+- **The single-trait run's results ZIP could hold an earlier run's tables.** It
+  was cached under the trait, the models, the SNP count and λGC, so a re-run
+  after changing the significance rule served the first run's tables and
+  metadata. It is now rebuilt on every run.
 - **One-Click multi-trait runs used the first trait's data for every trait.**
   The loop resolved genotypes and the phenotype reader through session keys
   registered once, from the first selected trait; 1.1.0 refused multi-trait runs

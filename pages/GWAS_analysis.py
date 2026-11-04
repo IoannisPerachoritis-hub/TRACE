@@ -9,7 +9,6 @@ build_plotly_template()
 from fastlmm.association import single_snp
 from pysnptools.kernelreader import KernelData as PSKernelData
 from pysnptools.snpreader import SnpData
-from statsmodels.stats.multitest import multipletests
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -42,6 +41,7 @@ from gwas.haplotype import (
     freedman_lane_perm_pvalue,
 )
 from gwas.stability import _make_run_manifest
+from gwas.significance import add_significance_columns
 from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
     plot_manhattan_interactive, plot_qq, compute_lambda_gc,
@@ -296,16 +296,20 @@ def _render_last_run_results(stale=False):
             "Download results (CSV)", _g.to_csv(index=False).encode("utf-8"),
             file_name=f"GWAS_{_trait}.csv", mime="text/csv", key="rehydrate_csv",
         )
-    for _zk in list(st.session_state.keys()):
-        if isinstance(_zk, str) and _zk.startswith("gwas_zip_"):
-            _zv = st.session_state.get(_zk)
-            if isinstance(_zv, dict) and "data" in _zv:
-                st.download_button(
-                    "Download GWAS results (ZIP)", _zv["data"],
-                    file_name=_zv.get("name", "gwas_results.zip"),
-                    mime="application/zip", key="rehydrate_zip",
-                )
-                break
+    # the ZIP of the run shown here (its session key is recorded with the run); before
+    # runs recorded it, the first gwas_zip_ entry, which may be another trait's
+    _zip_keys = ([_summ["zip_key"]] if _summ.get("zip_key") else
+                 [k for k in list(st.session_state.keys())
+                  if isinstance(k, str) and k.startswith("gwas_zip_")])
+    for _zk in _zip_keys:
+        _zv = st.session_state.get(_zk)
+        if isinstance(_zv, dict) and "data" in _zv:
+            st.download_button(
+                "Download GWAS results (ZIP)", _zv["data"],
+                file_name=_zv.get("name", "gwas_results.zip"),
+                mime="application/zip", key="rehydrate_zip",
+            )
+            break
 
 
 def _rehydrate_or_stop(msg=None, level="error"):
@@ -1547,8 +1551,13 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 key="pipe_generate_ld_heatmaps",
                 help=(
                     "Render an r² heatmap PNG for each LD block whose lead SNP is "
-                    "significant in the MLM scan, showing the block with its "
-                    "neighbouring SNPs, and include them in the ZIP. Useful for visualising "
+                    "significant in any model's scan (MLM, MLMM or FarmCPU), showing "
+                    "the block with its neighbouring SNPs, and include them in the ZIP. "
+                    "A block that several models report with the same bounds is drawn "
+                    "once; blocks with different bounds each get their own PNG. When a "
+                    "model other than MLM reports the block with a significant lead, or "
+                    "calls its marked lead SNP, the title names the models that do. "
+                    "Useful for visualising "
                     "haplotype structure but adds one PNG per block per "
                     "trait; turn off for batch runs over many traits "
                     "(e.g. metabolomics with hundreds-thousands of "
@@ -1980,30 +1989,36 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         )
 
     # Multiple testing
-    reject, p_fdr, _, _ = multipletests(gwas_df["PValue"].values, method="fdr_bh")
     bonf_thresh = 0.05 / len(gwas_df)
-
-    gwas_df["FDR"] = p_fdr
-    gwas_df["Significant_FDR"] = reject
-    gwas_df["Significant_Bonf"] = gwas_df["PValue"] < bonf_thresh
-    if sig_rule.startswith("Custom") and custom_sig_thresh is not None:
-        gwas_df["Significant_Custom"] = gwas_df["PValue"] < float(custom_sig_thresh)
 
     # M_eff (Li & Ji 2005), computed once, cached by SNP count
     meff_val = None
     meff_thresh = None
+    _meff_computed = False
     if sig_rule.startswith("M_eff"):
         with st.spinner("Computing M_eff (Li & Ji): eigendecomposition of SNP correlations…"):
             try:
                 meff_val, _meff_eigs = compute_meff_li_ji(geno_imputed)
                 st.session_state["meff_val"] = meff_val
                 meff_thresh = 0.05 / meff_val
-                gwas_df["Significant_Meff"] = gwas_df["PValue"] < meff_thresh
+                _meff_computed = True
             except Exception as e:
                 logging.exception("M_eff computation failed")
                 st.warning(f"M_eff computation failed ({e}); falling back to Bonferroni.")
                 meff_val = len(gwas_df)
                 meff_thresh = bonf_thresh
+
+    # Significance columns: one rule for MLM here and for MLMM / FarmCPU below, the
+    # same as the CLI / One-Click pipeline (MLM's thresholds; FDR within each model).
+    # Significant_Meff only when M_eff was computed, as before.
+    _sig_cols = {
+        "bonf_thresh": bonf_thresh,
+        "meff_thresh": meff_thresh if _meff_computed else None,
+        "custom_thresh": (float(custom_sig_thresh)
+                          if sig_rule.startswith("Custom") and custom_sig_thresh is not None
+                          else None),
+    }
+    gwas_df = add_significance_columns(gwas_df, **_sig_cols)
 
     # active threshold
     if sig_rule.startswith("Custom") and custom_sig_thresh is not None:
@@ -2775,10 +2790,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             gwas_mlmm = add_ols_effects_to_gwas(gwas_mlmm, geno_imputed, y, covar_reader_mlmm, sid)
         except Exception:
             pass
-        _rej_m, _fdr_m, _, _ = multipletests(gwas_mlmm["PValue"].values, method="fdr_bh")
-        gwas_mlmm["FDR"] = _fdr_m
-        gwas_mlmm["Significant_FDR"] = _rej_m
-        gwas_mlmm["Significant_Bonf"] = gwas_mlmm["PValue"] < bonf_thresh
+        gwas_mlmm = add_significance_columns(gwas_mlmm, **_sig_cols)  # MLM's thresholds
         if "snp_imputation_rate" in results:
             _imp = pd.DataFrame({"SNP": sid.astype(str), "ImputationRate": results["snp_imputation_rate"]})
             gwas_mlmm = gwas_mlmm.merge(_imp, on="SNP", how="left")
@@ -2878,10 +2890,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             gwas_farmcpu = add_ols_effects_to_gwas(gwas_farmcpu, geno_imputed, y, covar_reader_farmcpu, sid)
         except Exception:
             pass
-        _rej_fc, _fdr_fc, _, _ = multipletests(gwas_farmcpu["PValue"].values, method="fdr_bh")
-        gwas_farmcpu["FDR"] = _fdr_fc
-        gwas_farmcpu["Significant_FDR"] = _rej_fc
-        gwas_farmcpu["Significant_Bonf"] = gwas_farmcpu["PValue"] < bonf_thresh
+        gwas_farmcpu = add_significance_columns(gwas_farmcpu, **_sig_cols)  # MLM's thresholds
         if "snp_imputation_rate" in results:
             _imp_fc = pd.DataFrame({"SNP": sid.astype(str), "ImputationRate": results["snp_imputation_rate"]})
             gwas_farmcpu = gwas_farmcpu.merge(_imp_fc, on="SNP", how="left")
@@ -2965,7 +2974,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             comb = []
             for m, sub in all_res.groupby("Model"):
                 dfm = sub.copy()
-                dfm["FDR"] = multipletests(dfm["PValue"].values, method="fdr_bh")[1]
+                # Benjamini-Hochberg within this model, as in its own table
+                dfm["FDR"] = add_significance_columns(dfm[["PValue"]], bonf_thresh=bonf_thresh)["FDR"].to_numpy()
                 dfm["-log10p"] = -np.log10(np.clip(dfm["PValue"].astype(float), 1e-300, 1.0))
                 comb.append(dfm)
             all_res = pd.concat(comb, ignore_index=True)
@@ -3153,7 +3163,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     }
     bump_data_version()  # GWAS complete, notify downstream pages
     # ============================================================
-    # Auto-build GWAS-only ZIP (once per trait, no LD content)
+    # Auto-build GWAS-only ZIP (on every run, no LD content)
     # ============================================================
 
     pheno_label = st.session_state.get("pheno_file_label", "unknown_pheno")
@@ -3161,34 +3171,41 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # MLM always runs (foundational), so include it in the tag even though
     # it is no longer in the user-facing multiselect.
     _models_tag = "_".join(sorted(["MLM"] + [m.split()[0] for m in model_choices]))
-    # Fingerprint binds the cached ZIP to the current run, any change
-    # to PCs/LOCO/QC shifts len(gwas_df) or lambda_gc and invalidates
-    # the cache, so the download always matches what's on screen.
+    # The fingerprint names the session key the download below reads.
     _gwas_fp = f"n{len(gwas_df)}_lam{lambda_gc:.4f}"
     zip_key = f"gwas_zip_{pheno_label}__{trait_col}__{_models_tag}__{_gwas_fp}"
 
-    if zip_key not in st.session_state:
-        # Collect extra model results for ZIP
-        _extra_dfs = {}
-        if "MLMM (iterative cofactors)" in model_choices and "gwas_mlmm" in locals():
-            _extra_dfs["MLMM"] = gwas_mlmm
-        if "FarmCPU (multi-locus)" in model_choices and "gwas_farmcpu" in locals():
-            _extra_dfs["FarmCPU"] = gwas_farmcpu
+    # Built on every run (the page reaches this point only on a Run; other reruns stop
+    # at the last-run guard), because the tables' significance columns follow the rule,
+    # which the fingerprint does not see. This trait's earlier ZIPs (and their metadata
+    # flags) are dropped, and the run records its ZIP's key for the re-display path.
+    _zip_prefix = f"gwas_zip_{pheno_label}__{trait_col}__"
+    for _old_zip_key in [k for k in list(st.session_state.keys())
+                         if isinstance(k, str) and k.startswith(_zip_prefix)]:
+        del st.session_state[_old_zip_key]
 
-        zip_name, zip_buf = _build_gwas_results_zip(
-            trait_col=trait_col,
-            gwas_df=gwas_df,
-            figures_dict=st.session_state.get("gwas_figures", {}),
-            ld_blocks_df=None,
-            hap_gwas_df=None,
-            pheno_label=st.session_state.get("pheno_file_label"),
-            extra_model_dfs=_extra_dfs or None,
-        )
+    # Collect extra model results for ZIP
+    _extra_dfs = {}
+    if "MLMM (iterative cofactors)" in model_choices and "gwas_mlmm" in locals():
+        _extra_dfs["MLMM"] = gwas_mlmm
+    if "FarmCPU (multi-locus)" in model_choices and "gwas_farmcpu" in locals():
+        _extra_dfs["FarmCPU"] = gwas_farmcpu
 
-        st.session_state[zip_key] = {
-            "name": zip_name,
-            "data": zip_buf.getvalue(),
-        }
+    zip_name, zip_buf = _build_gwas_results_zip(
+        trait_col=trait_col,
+        gwas_df=gwas_df,
+        figures_dict=st.session_state.get("gwas_figures", {}),
+        ld_blocks_df=None,
+        hap_gwas_df=None,
+        pheno_label=st.session_state.get("pheno_file_label"),
+        extra_model_dfs=_extra_dfs or None,
+    )
+
+    st.session_state[zip_key] = {
+        "name": zip_name,
+        "data": zip_buf.getvalue(),
+    }
+    st.session_state["gwas_run_summary"]["zip_key"] = zip_key
 
 
     # --- Core genotype / phenotype objects (shared across traits)

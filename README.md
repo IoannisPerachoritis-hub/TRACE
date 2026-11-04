@@ -212,8 +212,8 @@ runs produce the same artifacts as the interface.
 Deep-dive interactive features (Local LD for any window, decay curves, the regional plot) live in the
 Post-GWAS Analysis page and have no CLI counterpart by design; the CLI emits the underlying CSVs so the same
 plots can be regenerated externally. LD-block heatmaps are the exception: the CLI and One-Click ZIPs (for
-blocks whose lead SNP is significant in the MLM scan) and the Local LD "Detected block" view (for any
-detected block) draw them with one function, each block shown with its neighbouring SNPs.
+blocks whose lead SNP is significant in the MLM, MLMM or FarmCPU scan) and the Local LD "Detected block"
+view (for any detected block) draw them with one function, each block shown with its neighbouring SNPs.
 
 ---
 

@@ -72,6 +72,11 @@ def test_run_from_memory_produces_results():
     at.run()
     assert _only_harness_error(at)
     assert "gwas_df" in at.session_state and len(at.session_state["gwas_df"]) > 0
+    # under the default (Bonferroni) rule FarmCPU, on by default, carries the same
+    # significance columns as this view's MLM: no M_eff column, which needs the M_eff rule
+    fc = at.session_state["gwas_results_by_model"]["TestTrait"]["FarmCPU"]
+    assert [c for c in fc.columns if c == "FDR" or c.startswith("Significant_")] == [
+        "FDR", "Significant_FDR", "Significant_Bonf"]
 
 
 def test_covariate_from_memory_runs():
@@ -117,6 +122,12 @@ def test_custom_sig_thresh_runs_from_memory():
     # the rule + custom threshold are propagated to downstream pages (LD tab)
     assert at.session_state["sig_rule"] == "Custom p-value"
     assert float(at.session_state["custom_sig_thresh"]) == 5e-8
+    # FarmCPU (on by default) carries the custom column too. This noise trait has no
+    # SNP below 5e-8; the values are checked on planted data in
+    # test_detailed_view_significance_apptest.
+    fc = at.session_state["gwas_results_by_model"]["TestTrait"]["FarmCPU"]
+    assert [c for c in fc.columns if c == "FDR" or c.startswith("Significant_")] == [
+        "FDR", "Significant_FDR", "Significant_Bonf", "Significant_Custom"]
 
 
 def test_covar_persist_decision():
@@ -153,3 +164,31 @@ def test_stale_scan_notice():
     )
     at.run()
     assert any(_msg in w.value for w in at.warning)
+
+
+def test_meff_failure_writes_no_meff_column_for_any_model(monkeypatch):
+    """When M_eff cannot be computed the page warns and falls back to Bonferroni, and, as
+    at 7062830 for MLM, writes no Significant_Meff column: for MLM and for FarmCPU (on by
+    default) alike."""
+    import gwas.plotting as gp
+
+    def _fail(geno):
+        raise RuntimeError("forced M_eff failure")
+
+    monkeypatch.setattr(gp, "compute_meff_li_ji", _fail)
+    at = AppTest.from_file(_PAGE, default_timeout=300)
+    _seed_from_memory(at, run=True, extra={"sig_rule_select": "M_eff: Li & Ji (LD-aware Bonferroni)"})
+    at.run()
+    assert _only_harness_error(at)
+    assert any("M_eff computation failed" in w.value for w in at.warning)
+    by_model = at.session_state["gwas_results_by_model"]["TestTrait"]
+    assert [c for c in by_model["FarmCPU"].columns if c == "FDR" or c.startswith("Significant_")] == [
+        "FDR", "Significant_FDR", "Significant_Bonf"]
+    import io
+    import zipfile
+    zips = [v for k, v in at.session_state.filtered_state.items()
+            if k.startswith("gwas_zip_") and isinstance(v, dict) and "data" in v]
+    assert len(zips) == 1
+    with zipfile.ZipFile(io.BytesIO(zips[0]["data"])) as zf:
+        mlm = pd.read_csv(io.BytesIO(zf.read("tables/GWAS_TestTrait.csv")))
+    assert "Significant_Meff" not in mlm.columns and "Significant_Bonf" in mlm.columns

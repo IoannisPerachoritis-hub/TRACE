@@ -145,3 +145,160 @@ def test_rule_from_streamlit_custom():
     assert rule_from_streamlit("FDR (q<0.05)", N_SNPS, MEFF).rule == "fdr"
     assert rule_from_streamlit("Bonferroni (alpha=0.05)", N_SNPS, MEFF).rule == "bonferroni"
     assert rule_from_streamlit("M_eff - Li & Ji", N_SNPS, MEFF).rule == "meff"
+
+
+# --- add_significance_columns: one rule for every model's table (2-INT.6a) ---
+
+def _pvals(n=400, seed=3):
+    rng = np.random.default_rng(seed)
+    p = rng.uniform(0, 1, size=n) ** 3
+    p[:6] = [1e-12, 1e-8, 2e-6, 4e-5, 1e-4, 9e-4]
+    return p
+
+
+def test_significance_columns_use_the_given_thresholds_and_bh_within_the_table():
+    from statsmodels.stats.multitest import multipletests
+
+    from gwas.significance import add_significance_columns
+    p = _pvals()
+    df = pd.DataFrame({"SNP": [f"s{i}" for i in range(p.size)], "PValue": p})
+    bonf, meff, custom = 0.05 / 1000, 0.05 / 300, 1e-3     # MLM's numbers, not this table's size
+    out = add_significance_columns(df, bonf_thresh=bonf, meff_thresh=meff, custom_thresh=custom)
+    assert list(out.columns) == ["SNP", "PValue", "FDR", "Significant_FDR", "Significant_Bonf",
+                                 "Significant_Meff", "Significant_Custom"]
+    assert list(df.columns) == ["SNP", "PValue"], "the input frame must not be modified"
+    reject, q, _, _ = multipletests(p, method="fdr_bh")
+    assert np.array_equal(out["FDR"].to_numpy(), q)
+    assert np.array_equal(out["Significant_FDR"].to_numpy(), reject)
+    assert np.array_equal(out["Significant_Bonf"].to_numpy(), p < bonf)
+    assert np.array_equal(out["Significant_Meff"].to_numpy(), p < meff)
+    assert np.array_equal(out["Significant_Custom"].to_numpy(), p < custom)
+    assert out["Significant_Bonf"].sum() < out["Significant_Meff"].sum() < out["Significant_Custom"].sum()
+
+
+def test_significance_columns_equal_the_former_inline_mlm_code():
+    """With no missing p-value the helper writes exactly what gwas/pipeline.py wrote
+    for MLM before it existed (MLM output byte-identical), in the same column order."""
+    from statsmodels.stats.multitest import multipletests
+
+    from gwas.significance import add_significance_columns
+    p = _pvals(seed=11)
+    base = pd.DataFrame({"SNP": [f"s{i}" for i in range(p.size)], "PValue": p, "-log10p": -np.log10(p)})
+    bonf, meff, custom = 0.05 / p.size, 0.05 / 120, 5e-5
+    old = base.copy()
+    _rej, _fdr, _, _ = multipletests(old["PValue"].values, method="fdr_bh")
+    old["FDR"] = _fdr
+    old["Significant_FDR"] = _rej
+    old["Significant_Bonf"] = old["PValue"] < bonf
+    old["Significant_Meff"] = old["PValue"] < meff
+    old["Significant_Custom"] = old["PValue"] < custom
+    new = add_significance_columns(base, bonf_thresh=bonf, meff_thresh=meff, custom_thresh=custom)
+    pd.testing.assert_frame_equal(new, old)
+    assert new.to_csv(index=False) == old.to_csv(index=False)
+
+
+def test_missing_pvalues_are_never_significant_and_bh_counts_only_the_others():
+    from statsmodels.stats.multitest import multipletests
+
+    from gwas.significance import add_significance_columns
+    p = _pvals(seed=5)
+    p[[0, 7, 50, 51]] = np.nan          # p[0] would have been the strongest hit
+    out = add_significance_columns(pd.DataFrame({"PValue": p}), bonf_thresh=1.0,
+                                   meff_thresh=1.0, custom_thresh=1.0)
+    miss = np.isnan(p)
+    for col in ("Significant_FDR", "Significant_Bonf", "Significant_Meff", "Significant_Custom"):
+        assert out[col].dtype == bool
+        assert not out.loc[miss, col].any(), col
+        assert out.loc[~miss, col].all() or col == "Significant_FDR", col   # thresholds of 1
+    assert out.loc[miss, "FDR"].isna().all()
+    reject, q, _, _ = multipletests(p[~miss], method="fdr_bh")
+    assert np.array_equal(out.loc[~miss, "FDR"].to_numpy(), q)
+    assert np.array_equal(out.loc[~miss, "Significant_FDR"].to_numpy(), reject)
+
+
+def test_optional_columns_and_degenerate_tables():
+    from gwas.significance import add_significance_columns
+    df = pd.DataFrame({"PValue": [1e-9, 0.2, 0.9]})
+    out = add_significance_columns(df, bonf_thresh=1e-3)
+    assert list(out.columns) == ["PValue", "FDR", "Significant_FDR", "Significant_Bonf"]
+    stricter = add_significance_columns(df, bonf_thresh=1e-3, fdr_alpha=1e-12)
+    assert out["Significant_FDR"].tolist() == [True, False, False]
+    assert stricter["Significant_FDR"].tolist() == [False, False, False]
+    for frame in (pd.DataFrame({"PValue": pd.Series([], dtype=float)}),
+                  pd.DataFrame({"PValue": [np.nan, np.nan]})):
+        got = add_significance_columns(frame, bonf_thresh=0.05, meff_thresh=0.05)
+        assert not got["Significant_FDR"].any() and not got["Significant_Meff"].any()
+        assert got["FDR"].isna().all() and len(got) == len(frame)
+
+
+def test_rule_mask_selects_what_the_rule_says_on_the_helpers_columns():
+    """SignificanceRule.significant_mask (the rescue / significant-SNP tables) on a table
+    the helper wrote selects exactly PValue < the rule's threshold, or the
+    Benjamini-Hochberg decision for FDR, so an MLMM or FarmCPU table gives the SNPs its
+    rule names."""
+    from statsmodels.stats.multitest import multipletests
+
+    from gwas.significance import add_significance_columns
+    p = _pvals(seed=8)
+    n_snps, meff = 900, 250
+    bh = multipletests(p, method="fdr_bh")[0]
+    for sig in ("bonferroni", "meff", "fdr", 2e-4):
+        r = rule_from_cli_args(SimpleNamespace(sig_thresh=sig), n_snps, meff)
+        out = add_significance_columns(
+            pd.DataFrame({"PValue": p}), bonf_thresh=0.05 / n_snps, meff_thresh=0.05 / meff,
+            custom_thresh=sig if isinstance(sig, float) else None)
+        expected = bh if sig == "fdr" else p < r.p_threshold
+        assert np.array_equal(r.significant_mask(out), expected), sig
+        assert expected.any() and not expected.all(), sig
+
+
+def test_a_pvalue_equal_to_a_threshold_is_not_significant_and_rows_keep_their_labels():
+    """Strict '<' (as the former MLM code), and values stay with their rows on a
+    shuffled, gapped index such as the tables get after dropna."""
+    from statsmodels.stats.multitest import multipletests
+
+    from gwas.significance import add_significance_columns
+    p = _pvals(seed=3)
+    bonf, meff, custom = 0.05 / 1000, 0.05 / 300, 1e-3
+    p[:4] = [bonf, meff, custom, 1.0]                    # exact ties: not below
+    df = pd.DataFrame({"SNP": [f"s{i}" for i in range(p.size)], "PValue": p})
+    df = df.sample(frac=1, random_state=0)
+    df.index = df.index * 2 + 1                           # gapped, shuffled labels
+    out = add_significance_columns(df, bonf_thresh=bonf, meff_thresh=meff, custom_thresh=custom)
+    by_snp = out.set_index("SNP")
+    assert not by_snp.loc["s0", "Significant_Bonf"] and by_snp.loc["s0", "Significant_Meff"]
+    assert not by_snp.loc["s1", "Significant_Meff"] and by_snp.loc["s1", "Significant_Custom"]
+    assert not by_snp.loc["s2", "Significant_Custom"]
+    pv = df["PValue"].to_numpy()
+    reject, q, _, _ = multipletests(pv, method="fdr_bh")
+    assert list(out.index) == list(df.index)
+    np.testing.assert_array_equal(out["FDR"].to_numpy(), q)
+    np.testing.assert_array_equal(out["Significant_FDR"].to_numpy(), reject)
+    for col, thr in (("Significant_Bonf", bonf), ("Significant_Meff", meff), ("Significant_Custom", custom)):
+        np.testing.assert_array_equal(out[col].to_numpy(), pv < thr)
+
+
+def test_a_missing_value_in_a_nullable_column_is_not_significant():
+    from gwas.significance import add_significance_columns
+    df = pd.DataFrame({"PValue": pd.array([pd.NA, 1e-9, 0.5], dtype="Float64")})
+    out = add_significance_columns(df, bonf_thresh=1e-3, meff_thresh=1e-3, custom_thresh=1e-3)
+    for col in ("Significant_FDR", "Significant_Bonf", "Significant_Meff", "Significant_Custom"):
+        assert out[col].dtype == bool, col
+        assert out[col].tolist() == [False, True, False], col
+    assert np.isnan(out["FDR"].iloc[0])
+
+
+def test_frame_for_rule_lets_a_tab_custom_threshold_judge_the_pvalues():
+    """A Post-GWAS tab's own custom p-value must not be overridden by a stored
+    Significant_Custom column written with the run's threshold (MLMM / FarmCPU tables
+    carry one); other rules keep their stored column."""
+    from gwas.significance import frame_for_rule
+    p = np.array([1e-9, 1e-7, 1e-6, 0.3])
+    df = pd.DataFrame({"PValue": p, "Significant_Custom": p < 5e-8,
+                       "Significant_Bonf": [True, False, False, False]})
+    tab = rule_from_streamlit("Custom p-value", 4, None, custom_thresh=1e-5)
+    assert tab.significant_mask(df).tolist() == [True, False, False, False]      # the stale column
+    assert tab.significant_mask(frame_for_rule(df, tab)).tolist() == [True, True, True, False]
+    assert "Significant_Custom" in df.columns                                       # input unchanged
+    bonf = rule_from_streamlit("Bonferroni (alpha=0.05)", 4, None)
+    assert frame_for_rule(df, bonf) is df

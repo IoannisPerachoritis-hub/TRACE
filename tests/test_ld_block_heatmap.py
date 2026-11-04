@@ -301,3 +301,34 @@ def test_png_pixel_size_is_the_same_for_small_and_large_windows():
               _zip_png_shape(large, "LD_heatmap_Chr2_b.png"),
               _zip_png_shape(ids, "LD_heatmap_Chr2_c.png")}
     assert shapes == {(900, 1050)}           # FIGSIZE["heatmap"] (7 x 6 in) at 150 dpi
+
+
+# ---- Model list in the title (2-INT.6a) -------------------------------------------
+
+def test_model_list_is_added_to_the_title_and_fits_above_the_plot():
+    """The pipeline passes models for a block significant in MLMM or FarmCPU; without
+    them the title is the one every caller drew before. The longest title (thinned,
+    whole chromosome, three models, 8-digit positions) stays above the heatmap and
+    inside the canvas."""
+    chroms, pos = _layout({"2": 250})
+    pos = pos + 47_300_000
+    s, e = _block(pos, 0, 50, 199)
+    G = _geno(250)
+    plain, info0 = plot_ld_block_heatmap(G, chroms, pos, "2", s, e)
+    named, info = plot_ld_block_heatmap(G, chroms, pos, "2", s, e,
+                                        models=["MLM", "MLMM", "FarmCPU"])
+    assert "significant in" not in info0["title"]
+    assert info["title"].replace("\n", " ").endswith("significant in MLM, MLMM, FarmCPU")
+    assert info["title"].startswith(info0["title"].split("\n")[0])
+    np.testing.assert_array_equal(info["r2"], info0["r2"])
+    np.testing.assert_array_equal(info["indices"], info0["indices"])
+    named.canvas.draw()
+    renderer = named.canvas.get_renderer()
+    title = [t for t in named.texts if t.get_text() == info["title"]][0]
+    tb = title.get_window_extent(renderer)
+    for ax in named.axes:                                  # heatmap and colour bar
+        assert tb.y0 >= ax.get_window_extent(renderer).y1, "title overlaps the plot"
+    canvas = named.bbox
+    assert tb.x0 >= canvas.x0 - 1 and tb.x1 <= canvas.x1 + 1 and tb.y1 <= canvas.y1 + 1
+    plt.close(plain)
+    plt.close(named)

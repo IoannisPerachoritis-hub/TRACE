@@ -44,7 +44,7 @@ def render(ctx: LDContext):
         return
 
     from gwas.sigtable import build_significant_snp_table, project_unblocked
-    from gwas.significance import rule_from_streamlit
+    from gwas.significance import frame_for_rule, rule_from_streamlit
 
     default_idx = _SIG_LABELS.index(ctx.sig_rule_label) if ctx.sig_rule_label in _SIG_LABELS else 0
     label = st.selectbox("Significance threshold", _SIG_LABELS, index=default_idx,
@@ -63,8 +63,9 @@ def render(ctx: LDContext):
     edge_flank_bp = int((ctx.ld_decay_kb or 300) * 1000)
     ld_decay_bp = int(ctx.ld_decay_kb * 1000) if ctx.ld_decay_kb else None
     try:
+        # frame_for_rule: this tab's own custom p-value, not a stored Significant_Custom
         sig = build_significant_snp_table(
-            gwas_df, ctx.haplo_df_auto, rule, ctx.chroms, ctx.positions, ctx.sid,
+            frame_for_rule(gwas_df, rule), ctx.haplo_df_auto, rule, ctx.chroms, ctx.positions, ctx.sid,
             geno_dosage_raw=ctx.geno_dosage_raw, genes=None,
             seed_p_used=1e-5, top_n_used=0, edge_flank_bp=edge_flank_bp,
             ld_decay_bp=ld_decay_bp, geno_encoding=ctx.geno_encoding or "dosage012",

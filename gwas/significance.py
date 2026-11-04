@@ -8,11 +8,17 @@ significant under the analysis threshold" — the isolated-SNP rescue, the
 significant-SNP table, the LD page — must use the **reporting** rule, resolved
 once per run, never re-derived. This dataclass carries it.
 
-The resolution mirrors, exactly, the two places the rule is computed today:
-`cli.py` (threshold block near :829-854, boolean columns :870-872, `_sig_col_name`
-:1091-1094) and `pages/GWAS_analysis.py` (:3462-3473). Dependency-light on
-purpose (dataclasses / numpy / pandas only) so it is shared by pure code and by
-Streamlit without pulling either in.
+The resolution mirrors, exactly, the two places the rule is computed today: the
+per-trait pipeline (``gwas/pipeline.py``, ``_run_trait``: the threshold block,
+``_hm_sig_col`` and ``_sig_col_final``) and ``pages/GWAS_analysis.py`` (the
+``_active_sig_col`` block).
+Dependency-light on purpose (dataclasses / numpy / pandas only;
+``add_significance_columns`` imports statsmodels when called) so it is shared by
+pure code and by Streamlit without pulling either in.
+
+``add_significance_columns`` writes the ``Significant_*`` columns themselves, with one
+rule for every model's table (MLM, MLMM, FarmCPU) in the pipeline and in the GUI's
+single-trait run.
 
 Spec: ``docs/revision/specs/isolated_snp_spec.md`` §T-40.
 """
@@ -24,7 +30,7 @@ import numpy as np
 
 REPORTING_RULES = ("meff", "bonferroni", "fdr")
 
-# rule -> the Significant_* boolean column the pipeline materialises (cli.py:870-872).
+# rule -> the Significant_* boolean column add_significance_columns writes for it.
 _BOOLEAN_COLUMN = {
     "meff": "Significant_Meff",
     "bonferroni": "Significant_Bonf",
@@ -142,3 +148,63 @@ def rule_from_streamlit(sig_rule_label, n_snps, meff_val, custom_thresh=None) ->
     else:
         rule = "bonferroni"
     return _build(rule, n_snps, meff_val)
+
+
+def add_significance_columns(df, *, bonf_thresh, meff_thresh=None, custom_thresh=None,
+                             fdr_alpha=0.05):
+    """Return a copy of a GWAS results table with its significance columns added.
+
+    One rule for every model's table (MLM, MLMM, FarmCPU), so each model's columns
+    mean the same thing. The p-value thresholds are MLM's (pass the same values for
+    every model); FDR is computed within the table's own p-values:
+
+    ``FDR``                Benjamini-Hochberg q-value (statsmodels ``multipletests``,
+                           ``fdr_bh``) over this table's p-values.
+    ``Significant_FDR``    the Benjamini-Hochberg decision at ``fdr_alpha``.
+    ``Significant_Bonf``   ``PValue < bonf_thresh`` (0.05 / number of tested SNPs).
+    ``Significant_Meff``   ``PValue < meff_thresh``; written only when it is given.
+    ``Significant_Custom`` ``PValue < custom_thresh``; written only when it is given.
+
+    A missing p-value (NaN, or NA in a nullable column) is never significant: its
+    ``FDR`` is NaN, its ``Significant_*`` values are False, and Benjamini-Hochberg
+    counts only the non-missing p-values. A p-value equal to a threshold is not
+    below it. With no missing p-value the columns equal those the pipeline wrote for
+    MLM before this helper existed. Columns are appended in the order above; an
+    existing column of the same name is overwritten in place. The input frame is not
+    modified.
+    """
+    from statsmodels.stats.multitest import multipletests
+
+    out = df.copy()
+    p = out["PValue"].to_numpy(dtype=float, na_value=np.nan)
+    ok = ~np.isnan(p)
+    if p.size and ok.all():
+        reject, q, _, _ = multipletests(p, alpha=fdr_alpha, method="fdr_bh")
+    else:
+        reject = np.zeros(p.shape, dtype=bool)
+        q = np.full(p.shape, np.nan)
+        if ok.any():
+            reject[ok], q[ok], _, _ = multipletests(p[ok], alpha=fdr_alpha, method="fdr_bh")
+    out["FDR"] = q
+    out["Significant_FDR"] = reject
+    out["Significant_Bonf"] = p < bonf_thresh
+    if meff_thresh is not None:
+        out["Significant_Meff"] = p < meff_thresh
+    if custom_thresh is not None:
+        out["Significant_Custom"] = p < float(custom_thresh)
+    return out
+
+
+def frame_for_rule(df, rule):
+    """The table to judge ``rule`` on when its threshold was chosen here, not by the run
+    that wrote the table's columns (a Post-GWAS tab's own custom p-value).
+
+    ``significant_mask`` prefers a stored ``Significant_*`` column. A stored
+    ``Significant_Custom`` was written with the run's custom threshold, so for a custom
+    rule it is dropped and the p-values are judged against the rule's own threshold.
+    Other rules keep their column (their thresholds do not depend on the tab). The
+    input frame is not modified.
+    """
+    if rule.rule == "custom" and rule.boolean_column in df.columns:
+        return df.drop(columns=[rule.boolean_column])
+    return df

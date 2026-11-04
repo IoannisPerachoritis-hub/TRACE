@@ -423,7 +423,7 @@ def _run_trait(parsed, pheno, args):
 
     # ── Run GWAS models ──────────────────────────────────
     from gwas.models import _run_gwas_impl, add_ols_effects_to_gwas
-    from statsmodels.stats.multitest import multipletests
+    from gwas.significance import add_significance_columns
 
     gwas_df = None
     extra_model_dfs = {}
@@ -460,6 +460,11 @@ def _run_trait(parsed, pheno, args):
         primary_thresh = float(sig_rule)
         log.info("Significance: p < %.2e (user-specified)", primary_thresh)
 
+    # One rule for every model's table (MLM, MLMM, FarmCPU): MLM's Bonferroni, M_eff
+    # and custom thresholds, with Benjamini-Hochberg FDR within each model's own p-values.
+    _sig_cols = {"bonf_thresh": bonf_thresh_naive, "meff_thresh": meff_thresh,
+                 "custom_thresh": primary_thresh if _sig_is_numeric else None}
+
     if "mlm" in args.model:
         log.info("Running MLM (LOCO)…")
         gwas_df = _run_gwas_impl(
@@ -473,13 +478,7 @@ def _run_trait(parsed, pheno, args):
             gwas_df = add_ols_effects_to_gwas(gwas_df, geno_imputed, y, covar_mlm, sid)
         except Exception as e:
             log.warning("OLS effects failed: %s", e)
-        _rej, _fdr, _, _ = multipletests(gwas_df["PValue"].values, method="fdr_bh")
-        gwas_df["FDR"] = _fdr
-        gwas_df["Significant_FDR"] = _rej
-        gwas_df["Significant_Bonf"] = gwas_df["PValue"] < bonf_thresh_naive
-        gwas_df["Significant_Meff"] = gwas_df["PValue"] < meff_thresh
-        if _sig_is_numeric:
-            gwas_df["Significant_Custom"] = gwas_df["PValue"] < primary_thresh
+        gwas_df = add_significance_columns(gwas_df, **_sig_cols)
         gwas_df["Model"] = "MLM"
 
         # Imputation rate
@@ -487,7 +486,7 @@ def _run_trait(parsed, pheno, args):
         gwas_df = gwas_df.merge(_imp, on="SNP", how="left")
 
         log.info("  MLM: %d significant (M_eff), %d (FDR<0.05)",
-                 gwas_df["Significant_Meff"].sum(), _rej.sum())
+                 gwas_df["Significant_Meff"].sum(), gwas_df["Significant_FDR"].sum())
 
     if "mlmm" in args.model and gwas_df is not None:
         from gwas.models import run_mlmm_research_grade_fast
@@ -502,9 +501,12 @@ def _run_trait(parsed, pheno, args):
         )
         gwas_mlmm["PValue"] = np.clip(gwas_mlmm["PValue"].astype(float), 1e-300, 1.0)
         gwas_mlmm["-log10p"] = -np.log10(gwas_mlmm["PValue"])
+        gwas_mlmm = add_significance_columns(gwas_mlmm, **_sig_cols)
         extra_model_dfs["MLMM"] = gwas_mlmm
         cofactor_tables["MLMM"] = cof_tbl
         log.info("  MLMM: %d cofactors selected", len(cof_tbl))
+        log.info("  MLMM: %d significant (M_eff), %d (FDR<0.05)",
+                 gwas_mlmm["Significant_Meff"].sum(), gwas_mlmm["Significant_FDR"].sum())
 
     if "farmcpu" in args.model and gwas_df is not None:
         from gwas.models import run_farmcpu
@@ -519,11 +521,14 @@ def _run_trait(parsed, pheno, args):
         )
         gwas_farmcpu["PValue"] = np.clip(gwas_farmcpu["PValue"].astype(float), 1e-300, 1.0)
         gwas_farmcpu["-log10p"] = -np.log10(gwas_farmcpu["PValue"])
+        gwas_farmcpu = add_significance_columns(gwas_farmcpu, **_sig_cols)
         extra_model_dfs["FarmCPU"] = gwas_farmcpu
         cofactor_tables["FarmCPU"] = pqtn_tbl
         log.info("  FarmCPU: %s, %d pseudo-QTNs",
                  "converged" if conv_info["converged"] else "max iter",
                  conv_info["n_pseudo_qtns"])
+        log.info("  FarmCPU: %d significant (M_eff), %d (FDR<0.05)",
+                 gwas_farmcpu["Significant_Meff"].sum(), gwas_farmcpu["Significant_FDR"].sum())
 
     if gwas_df is None:
         log.error("No primary GWAS model ran. At least 'mlm' is required.")
@@ -632,7 +637,14 @@ def _run_trait(parsed, pheno, args):
 
     _geno_float = geno_imputed.astype(float)
     pheno_clean = pheno  # phenotype DataFrame for haplotype testing
-    _heatmap_done = set()  # deduplicate LD heatmaps across models
+    # LD heatmaps: (chr, start, end) -> the lead SNP of the first model that reports the
+    # block with a significant lead, every model that does ("finders"), and whether the
+    # block has the 2 SNPs a heatmap needs. One heatmap per block, drawn after the
+    # per-model loop. _hm_sig_col is the analysis rule's column, in every model's table.
+    _heatmap_blocks = {}
+    _hm_sig_col = ("Significant_Custom" if _sig_is_numeric
+                   else "Significant_Meff" if sig_rule == "meff"
+                   else ("Significant_FDR" if sig_rule == "fdr" else "Significant_Bonf"))
     chroms_canon = np.array([canon_chr(str(c)) for c in chroms])
 
     # ── Isolated-SNP rescue setup (T-45) ──────────────────
@@ -817,22 +829,17 @@ def _run_trait(parsed, pheno, args):
         if m_ld_blocks.empty:
             continue
 
-        # LD heatmaps for blocks with significant lead SNPs. Each shows the block and
-        # its neighbouring SNPs (gwas.plotting.plot_ld_block_heatmap, shared with the
-        # Post-GWAS Local LD tab). The GUI's "Generate LD block heatmap PNGs"
-        # checkbox sets no_ld_heatmaps; the CLI has no such flag (--no-plots).
+        # LD heatmaps for blocks whose lead SNP is significant in this model (its column
+        # for the analysis rule). Each shows the block and its neighbouring SNPs
+        # (gwas.plotting.plot_ld_block_heatmap, shared with the Post-GWAS Local LD tab).
+        # They are drawn after this loop, one per block (chromosome, start, end) however
+        # many models report it. The GUI's "Generate LD block heatmap PNGs" checkbox sets
+        # no_ld_heatmaps; the CLI has no such flag (--no-plots).
         if not args.no_plots and not getattr(args, "no_ld_heatmaps", False):
             try:
-                from gwas.plotting import lead_snp_position, plot_ld_block_heatmap
-                _sig_col_name = (
-                    "Significant_Custom" if _sig_is_numeric
-                    else "Significant_Meff" if sig_rule == "meff"
-                    else ("Significant_FDR" if sig_rule == "fdr" else "Significant_Bonf")
-                )
                 _sig_snps = set()
-                if _sig_col_name in model_df.columns:
-                    _sig_snps = set(model_df.loc[model_df[_sig_col_name], "SNP"].astype(str))
-                _n_hm = 0
+                if _hm_sig_col in model_df.columns:
+                    _sig_snps = set(model_df.loc[model_df[_hm_sig_col], "SNP"].astype(str))
                 for _, _brow in m_ld_blocks.iterrows():
                     _lead = str(_brow.get("lead_snp", "")).strip()
                     if _lead not in _sig_snps:
@@ -841,20 +848,14 @@ def _run_trait(parsed, pheno, args):
                     _bstart = int(_brow.get("Start (bp)", _brow.get("Start", 0)))
                     _bend = int(_brow.get("End (bp)", _brow.get("End", 0)))
                     _block_key = (_bchr, _bstart, _bend)
-                    if _block_key in _heatmap_done:
+                    _hm = _heatmap_blocks.get(_block_key)
+                    if _hm is not None:  # an earlier model reports a block with these bounds
+                        if model_name not in _hm["finders"]:
+                            _hm["finders"].append(model_name)
                         continue
-                    _heatmap_done.add(_block_key)
                     _in_block = (chroms_canon == _bchr) & (positions >= _bstart) & (positions <= _bend)
-                    if np.count_nonzero(_in_block) < 2:
-                        continue
-                    _fig_hm, _ = plot_ld_block_heatmap(
-                        _geno_float, chroms_canon, positions, _bchr, _bstart, _bend,
-                        lead_pos=lead_snp_position(_lead, sid, chroms_canon, positions, _bchr),
-                    )
-                    figures[f"LD_heatmap_Chr{_bchr}_{_bstart}_{_bend}.png"] = _fig_hm
-                    _n_hm += 1
-                if _n_hm:
-                    log.info("  %d LD heatmaps generated for %s", _n_hm, model_name)
+                    _heatmap_blocks[_block_key] = {"lead": _lead, "finders": [model_name],
+                                                   "draw": bool(np.count_nonzero(_in_block) >= 2)}
             except Exception as e:
                 log.warning("  LD heatmap generation failed for %s: %s", model_name, e)
 
@@ -957,6 +958,43 @@ def _run_trait(parsed, pheno, args):
         if model_name == _primary_model:
             _report_ld_annotated = m_ld_annotated
             _report_hap_gwas = m_hap_gwas
+
+    # ── LD heatmaps: one per block whose lead SNP is significant in a model ──
+    # A block is its chromosome, start and end. Each is drawn once, in the order the
+    # models found the blocks (MLM, MLMM, FarmCPU), with the lead SNP of the first model
+    # that reports it with a significant lead marked. The title names every model whose
+    # own block with these bounds has a significant lead, or in which the marked lead SNP
+    # is significant; when that is MLM alone it is the title the heatmap always had, so
+    # an MLM-only run's heatmaps are unchanged. Another model can report the same lead
+    # inside a block with other bounds; that block is its own heatmap.
+    if any(_hm["draw"] for _hm in _heatmap_blocks.values()):
+        from gwas.plotting import lead_snp_position, plot_ld_block_heatmap
+        _sig_sets = {m: set(d.loc[d[_hm_sig_col], "SNP"].astype(str))
+                     for m, d in post_gwas_models if _hm_sig_col in d.columns}
+        _n_drawn, _n_named = 0, {}
+        for (_bchr, _bstart, _bend), _hm in _heatmap_blocks.items():
+            if not _hm["draw"]:
+                continue
+            _models = [m for m, _ in post_gwas_models
+                       if m in _hm["finders"] or _hm["lead"] in _sig_sets.get(m, ())]
+            try:
+                _fig_hm, _ = plot_ld_block_heatmap(
+                    _geno_float, chroms_canon, positions, _bchr, _bstart, _bend,
+                    lead_pos=lead_snp_position(_hm["lead"], sid, chroms_canon, positions, _bchr),
+                    models=None if _models == ["MLM"] else _models,
+                )
+            except Exception as e:
+                log.warning("  LD heatmap failed for Chr%s %d-%d (%s): %s",
+                            _bchr, _bstart, _bend, ", ".join(_models), e)
+                continue
+            figures[f"LD_heatmap_Chr{_bchr}_{_bstart}_{_bend}.png"] = _fig_hm
+            _n_drawn += 1
+            for m in _models:
+                _n_named[m] = _n_named.get(m, 0) + 1
+        if _n_drawn:
+            log.info("LD heatmaps: %d drawn%s", _n_drawn,
+                     "" if list(_n_named) == ["MLM"] else
+                     " (" + ", ".join(f"{m} {k}" for m, k in _n_named.items()) + " significant)")
 
     # ── Subsampling GWAS ───────────────────────────────────
     boot_disc_df = None
@@ -1254,8 +1292,14 @@ def _run_trait(parsed, pheno, args):
             isolated_intervals_df=_report_isolated,
             snp_boxplots=_snp_boxplots or None,
             sig_label=_sig_rule_obj.label,
-            n_significant_override=(
-                len(_report_sig_table) if _report_sig_table is not None else None),
+            # the primary model's significance column for the analysis rule, also when
+            # the significant-SNP table is empty or was not built (--no-isolated-rescue);
+            # the report's own fallback counts FDR<0.05 whatever the rule
+            n_significant_override=int(_sig_rule_obj.significant_mask(gwas_df).sum()),
+            # with several models, one count per model, each from its own column
+            n_significant_by_model=(
+                {m: int(_sig_rule_obj.significant_mask(d).sum()) for m, d in post_gwas_models}
+                if len(post_gwas_models) > 1 else None),
             pc_selection_df=(_pc_diag["spectrum"] if _pc_diag is not None else None),
             lambda_gc=lambda_gc,
             n_samples=int(geno_df.shape[0]),

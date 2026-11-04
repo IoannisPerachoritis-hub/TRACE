@@ -1180,7 +1180,8 @@ def plot_ld_block_heatmap(geno, chroms, positions, block_chr, block_start, block
                           block_max_frac=LD_HEATMAP_BLOCK_MAX_FRAC,
                           min_window=LD_HEATMAP_MIN_WINDOW,
                           max_display=LD_HEATMAP_MAX_DISPLAY,
-                          label_mode="position", sid=None, min_pair_n=20, lead_star=False):
+                          label_mode="position", sid=None, min_pair_n=20, lead_star=False,
+                          models=None):
     """r2 heatmap of an LD block and its neighbouring SNPs; returns ``(fig, info)``.
 
     ``geno`` is samples x SNPs (the imputed dosages the block finder used), its
@@ -1192,6 +1193,9 @@ def plot_ld_block_heatmap(geno, chroms, positions, block_chr, block_start, block
     that canvas. Lower triangle; the block's span is outlined, the lead SNP's tick
     is red, ticks are positions in Mb (or SNP IDs), at most LD_HEATMAP_MAX_LABELS
     of them. ``lead_star`` adds the Local LD tab's gold star on the lead's cell.
+    ``models`` (e.g. ``["MLM", "MLMM"]``) adds "significant in MLM, MLMM" to the
+    title. The pipeline passes the models that report this block or in which the
+    marked lead SNP is significant, unless that is MLM alone.
     """
     import textwrap
 
@@ -1288,6 +1292,8 @@ def plot_ld_block_heatmap(geno, chroms, positions, block_chr, block_start, block
         tail.append(f"thinned to {info['n_shown']} of {info['n_window']}")
     if info["exhausted"]:
         tail.append(f"block share {info['block_share']:.0%}")
+    if models:
+        tail.append("significant in " + ", ".join(str(m) for m in models))
     title = "\n".join(textwrap.wrap(head, 90) + textwrap.wrap("; ".join(tail), 90))
     info["title"] = title
     fig.text(0.5, 1 - 0.12 / H, title, ha="center", va="top", fontsize=9.5)
