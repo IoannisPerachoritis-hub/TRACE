@@ -24,6 +24,8 @@ All notable changes to TRACE are documented in this file.
   gone; the compact letters are in the CLD table. The MLG allele sequences,
   Tukey HSD and compact letters now sit in one collapsed expander, "Haplotype
   details: allele sequences, Tukey HSD, compact letters", with their downloads.
+  If Tukey HSD fails, its warning stays on the page above that expander, and the
+  forest plot and the PCA still show (the tab used to stop there).
 - **One block table on the LD Blocks & Haplotypes tab, with one CSV.** "LD
   blocks and haplotype tests" has one row per detected block, with its
   haplotype test and its LD coherence joined on the block's chromosome, start

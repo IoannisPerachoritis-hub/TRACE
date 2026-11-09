@@ -627,7 +627,7 @@ def render(
         pass
 
 
-# The "?" next to "Association results per block": how to read the effect sizes and the
+# The "?" next to "LD blocks and haplotype tests": how to read the effect sizes and the
 # LD-block coherence columns of the table under it.
 ASSOCIATION_RESULTS_HELP = (
     "**Effect sizes (η²)**\n\n"
@@ -639,9 +639,9 @@ ASSOCIATION_RESULTS_HELP = (
     "  - **< 5%** minor QTL, polygenic background\n"
     "- η² is not adjusted for kinship; in structured panels it can be inflated.\n\n"
     "**LD-block coherence (r²)**\n\n"
-    "- **Mean r2 / Min r2**: mean / weakest member-pair r² in the block "
+    "- **Mean r² / Min r²**: mean / weakest member-pair r² in the block "
     "(how internally correlated it is).\n"
-    "- **Frac r2>=.6 to lead**: fraction of members with r² ≥ 0.6 to the lead "
+    "- **Frac r² ≥ 0.6 to lead**: fraction of members with r² ≥ 0.6 to the lead "
     "SNP. A low value on a lead's own block means the interval is a loose merge "
     "of sub-clusters, not one tight haplotype.\n\n"
     "Full guidance: **Help → Interpreting Results**."
@@ -1505,6 +1505,54 @@ def _hap_ylab(trait):
     return phenotype_axis_label(trait)
 
 
+def _render_tukey_tables(tukey, mlg_df, trait_col):
+    """The details expander's Tukey HSD table and compact letter display (CLD)."""
+    st.markdown("#### Tukey HSD post-hoc test")
+    tukey_data = tukey.summary().data
+    headers = tukey_data[0]
+    rows = tukey_data[1:]
+
+    tukey_df = pd.DataFrame(rows, columns=headers)
+    tukey_df["reject"] = tukey_df["reject"].astype(bool)
+
+    st.dataframe(tukey_df, use_container_width=True)
+
+    # ------------------------------------------------------------
+    # Compact Letter Display: Piepho (2004)
+    # ------------------------------------------------------------
+    st.markdown(
+        "#### Compact Letter Display (CLD)",
+        help=("Two groups that share a letter are not significantly different "
+              "(Tukey HSD). A group with more than one letter is statistically "
+              "indistinguishable from groups that themselves differ (a chain of "
+              "overlapping non-differences), so no single letter can separate every "
+              "group. See **Help → Interpreting Results** for how to read this."),
+    )
+
+    groups = sorted(mlg_df["MLG_label"].unique())
+    sig_matrix = pd.DataFrame(False, index=groups, columns=groups)
+    for _, row in tukey_df.iterrows():
+        g1 = str(row["group1"])
+        g2 = str(row["group2"])
+        reject = bool(row["reject"])
+        sig_matrix.loc[g1, g2] = reject
+        sig_matrix.loc[g2, g1] = reject
+
+    # Maximal-clique CLD (gwas/cld.py): two groups share a letter iff they are NOT
+    # significantly different. Replaces a greedy insert/absorb that could leave private
+    # seed letters unmerged (3 mutually non-sig groups -> a, ab, ac instead of a, a, a).
+    from gwas.cld import compact_letter_display
+
+    _cld_means = mlg_df.groupby("MLG_label")[trait_col].mean().to_dict()
+    cld_strings = compact_letter_display(groups, sig_matrix, means=_cld_means)
+
+    cld_df = pd.DataFrame({
+        "MLG_label": groups,
+        "CLD": [cld_strings[g] for g in groups],
+    })
+    st.dataframe(cld_df, use_container_width=True)
+
+
 def _render_tukey_and_boxplot(
     mlg_df, trait_col, trait_label, mlg_order, hap_counts,
     selected_block, block_chr, block_start, block_end, block_csv=None,
@@ -1577,6 +1625,22 @@ def _render_tukey_and_boxplot(
 
     _viz_toggle_fragment()
 
+    # Tukey HSD runs before the details expander, so that a failure's warning stays on the
+    # page; the plot, the allele sequences, the forest plot and the PCA do not need it
+    from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
+    tukey = None
+    try:
+        tukey = pairwise_tukeyhsd(
+            endog=mlg_df[trait_col].astype(float),
+            groups=mlg_df["MLG_label"].astype(str),
+            alpha=0.05,
+        )
+    except Exception as e:
+        logging.exception("Tukey HSD test failed")
+        st.warning(
+            f"Tukey HSD failed (likely constant phenotype after PC adjustment): {e}")
+
     # --------------------------------------------------------
     # The details: allele sequences, Tukey HSD, compact letters
     # --------------------------------------------------------
@@ -1590,65 +1654,11 @@ def _render_tukey_and_boxplot(
                 "Download MLG sequence table (CSV)", _mlg_csv, file_name=_mlg_name,
                 mime="text/csv", key=_mlg_key,
             )
-        st.markdown("#### Tukey HSD post-hoc test")
-
-        from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
-        try:
-            tukey = pairwise_tukeyhsd(
-                endog=mlg_df[trait_col].astype(float),
-                groups=mlg_df["MLG_label"].astype(str),
-                alpha=0.05,
-            )
-        except Exception as e:
-            logging.exception("Tukey HSD test failed")
-            st.warning(
-                f"Tukey HSD failed (likely constant phenotype after PC adjustment): {e}")
-            st.stop()
-
-        tukey_data = tukey.summary().data
-        headers = tukey_data[0]
-        rows = tukey_data[1:]
-
-        tukey_df = pd.DataFrame(rows, columns=headers)
-        tukey_df["reject"] = tukey_df["reject"].astype(bool)
-
-        st.dataframe(tukey_df, use_container_width=True)
-
-        # ------------------------------------------------------------
-        # Compact Letter Display: Piepho (2004)
-        # ------------------------------------------------------------
-        st.markdown(
-            "#### Compact Letter Display (CLD)",
-            help=("Two groups that share a letter are not significantly different "
-                  "(Tukey HSD). A group with more than one letter is statistically "
-                  "indistinguishable from groups that themselves differ (a chain of "
-                  "overlapping non-differences), so no single letter can separate every "
-                  "group. See **Help → Interpreting Results** for how to read this."),
-        )
-
-        groups = sorted(mlg_df["MLG_label"].unique())
-        sig_matrix = pd.DataFrame(False, index=groups, columns=groups)
-        for _, row in tukey_df.iterrows():
-            g1 = str(row["group1"])
-            g2 = str(row["group2"])
-            reject = bool(row["reject"])
-            sig_matrix.loc[g1, g2] = reject
-            sig_matrix.loc[g2, g1] = reject
-
-        # Maximal-clique CLD (gwas/cld.py): two groups share a letter iff they are NOT
-        # significantly different. Replaces a greedy insert/absorb that could leave private
-        # seed letters unmerged (3 mutually non-sig groups -> a, ab, ac instead of a, a, a).
-        from gwas.cld import compact_letter_display
-
-        _cld_means = mlg_df.groupby("MLG_label")[trait_col].mean().to_dict()
-        cld_strings = compact_letter_display(groups, sig_matrix, means=_cld_means)
-
-        cld_df = pd.DataFrame({
-            "MLG_label": groups,
-            "CLD": [cld_strings[g] for g in groups],
-        })
-        st.dataframe(cld_df, use_container_width=True)
+        if tukey is not None:
+            _render_tukey_tables(tukey, mlg_df, trait_col)
+        else:
+            st.caption("No Tukey HSD or compact letters: the test failed (see the warning "
+                       "above).")
 
     # --------------------------------------------------------
     # Forest plot
