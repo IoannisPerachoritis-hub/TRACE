@@ -5,6 +5,14 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **How-to text on the LD Blocks & Haplotypes tab moved into "?" tooltips.** The
+  lead-SNP gallery's instructions are the "?" on "Lead SNP genotype effect"
+  (they had named "two structure-aware tests"; the panel shows one rank test,
+  adjusted for neither structure nor kinship, as its caption says), and how to
+  read several compact letters is the "?" on "Compact Letter Display (CLD)".
+  Caveats (the rank test's disclosure, the uploaded-values note, the excluded and
+  tested sample counts), statuses and every warning stay visible. The "no LD
+  blocks" message names the seed threshold and where to change it.
 - **The block's haplotype plot is drawn like the lead-SNP plot.** On the LD
   Blocks & Haplotypes tab, the selected block's plot is a box per tested
   haplotype group with the samples as jittered points, coloured by haplotype:

@@ -597,8 +597,8 @@ def render(
         # Show clusters if available
         if not isinstance(haplo_df_auto, pd.DataFrame) or haplo_df_auto.empty:
             st.info(
-                "No LD blocks detected: no markers pass the significance threshold. "
-                "Lower it, or check that the GWAS produced significant hits."
+                "No LD blocks detected: no markers pass the seed threshold. Lower it "
+                "in Settings, or check that the GWAS produced significant hits."
             )
         else:
             # every detected block is a row of "LD blocks and haplotype tests" below
@@ -1061,11 +1061,12 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=No
     from gwas.significance import frame_for_rule, rule_from_streamlit
     from .tab_significant_snps import _SIG_LABELS
 
-    st.markdown("### Lead SNP genotype effect")
-    st.caption(
-        "Browse the genotype/phenotype effect for any significant SNP: pick a SNP. "
-        "Each is rendered with the same two structure-aware tests as the per-block "
-        "lead below."
+    st.markdown(
+        "### Lead SNP genotype effect",
+        help=("Browse the genotype effect of any significant SNP: pick a SNP below. Its "
+              "box plot shows the phenotype per genotype class, coloured by haplotype "
+              "when the SNP lies in a tested LD block, with the MLM effect, η² and one "
+              "marginal rank test."),
     )
 
     # the rule is in the Settings panel (the GWAS page's rule unless changed there)
@@ -1617,7 +1618,14 @@ def _render_tukey_and_boxplot(
         # ------------------------------------------------------------
         # Compact Letter Display: Piepho (2004)
         # ------------------------------------------------------------
-        st.markdown("#### Compact Letter Display (CLD)")
+        st.markdown(
+            "#### Compact Letter Display (CLD)",
+            help=("Two groups that share a letter are not significantly different "
+                  "(Tukey HSD). A group with more than one letter is statistically "
+                  "indistinguishable from groups that themselves differ (a chain of "
+                  "overlapping non-differences), so no single letter can separate every "
+                  "group. See **Help → Interpreting Results** for how to read this."),
+        )
 
         groups = sorted(mlg_df["MLG_label"].unique())
         sig_matrix = pd.DataFrame(False, index=groups, columns=groups)
@@ -1641,13 +1649,6 @@ def _render_tukey_and_boxplot(
             "CLD": [cld_strings[g] for g in groups],
         })
         st.dataframe(cld_df, use_container_width=True)
-        if any(len(_v) > 1 for _v in cld_strings.values()):
-            st.caption(
-                "Some groups carry more than one letter: they are statistically "
-                "indistinguishable from groups that themselves differ (a chain of "
-                "overlapping non-differences), so no single letter can separate every "
-                "group. See **Help → Interpreting Results** for how to read this."
-            )
 
     # --------------------------------------------------------
     # Forest plot
