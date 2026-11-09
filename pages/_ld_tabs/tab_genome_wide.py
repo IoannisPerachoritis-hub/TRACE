@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
-import seaborn as sns
 import plotly.graph_objects as go
 from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
@@ -64,7 +63,7 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
         }
         cache[cache_key] = cached
 
-    show_plot(cached["display"], "medium")
+    show_plot(cached["display"], "small")
     col_png, col_svg, col_pdf = st.columns(3)
     col_png.download_button(
         f"{label_prefix} PNG", cached["png"],
@@ -1425,16 +1424,12 @@ def _render_block_visualization(
 
     mlg_summary["SNPs_in_block"] = ";".join(block_sids.astype(str))
 
-    st.markdown("### Haplotype (MLG) allele sequences")
-    st.dataframe(mlg_summary, use_container_width=True)
-
+    # the MLG sequence table sits in the "Haplotype details" expander under the plot
     mlg_summary_out = mlg_summary.reset_index()
-    st.download_button(
-        "Download MLG sequence table (CSV)",
-        mlg_summary_out.to_csv(index=False).encode(),
-        file_name=f"MLG_sequences_block_{block_chr}_{block_start}_{block_end}.csv",
-        mime="text/csv",
-        key=f"dl_mlg_summary_{selected_block}"
+    _details_table = (
+        mlg_summary, mlg_summary_out.to_csv(index=False).encode(),
+        f"MLG_sequences_block_{block_chr}_{block_start}_{block_end}.csv",
+        f"dl_mlg_summary_{selected_block}",
     )
 
     # ── T-34: make the two views' differing sample sets VISIBLE, not implied ──
@@ -1467,6 +1462,12 @@ def _render_block_visualization(
         block_start=block_start,
         block_end=block_end,
         block_csv=_block_csv,
+        plot_rows=_tested,
+        title_lines=_hap_title(block_chr, block_start, block_end,
+                               block_row.get("P_perm", block_row.get("PValue")),
+                               block_row.get("eta2")),
+        y_label=_hap_ylab(ctx.ld_trait),
+        details_table=_details_table,
     )
 
     _render_haplotype_pca(
@@ -1492,414 +1493,44 @@ def _block_assignments_button(block_csv):
         )
 
 
+def _hap_title(chrom, start, end, p_perm, eta2):
+    from gwas.snpplots import hap_boxplot_title
+    return hap_boxplot_title(chrom, start, end, p_perm, eta2)
+
+
+def _hap_ylab(trait):
+    """The haplotype plot's axis: the trait (the uploaded values the test compared)."""
+    from gwas.snpplots import phenotype_axis_label
+    return phenotype_axis_label(trait)
+
+
 def _render_tukey_and_boxplot(
     mlg_df, trait_col, trait_label, mlg_order, hap_counts,
     selected_block, block_chr, block_start, block_end, block_csv=None,
+    plot_rows=None, title_lines=None, y_label=None, details_table=None,
 ):
-    """Tukey HSD + CLD + boxplot + forest plot. ``block_csv`` is the block's assignments
-    CSV (bytes, file name, key), offered under the box plot as its data."""
+    """The block's haplotype box plot, one details expander, then the forest plot.
+
+    The plot is drawn as the lead-SNP plot (``gwas.snpplots.plotly_hap_boxplot`` /
+    ``render_hap_boxplot``) from ``plot_rows``, the block's in-test assignment rows: the
+    samples, labels and uploaded values the haplotype test compared. ``block_csv`` is
+    the block's assignments CSV (bytes, file name, key), offered under the plot as its
+    data. The collapsed "Haplotype details" expander holds ``details_table`` (the MLG
+    sequence table: frame, CSV bytes, file name, key), Tukey HSD and the compact letters.
+    """
     # one colour per haplotype label, the same as the PCA panel and the lead-SNP box plot
     _hap_colors = haplotype_color_map(mlg_order)
-    st.markdown("#### Tukey HSD post-hoc test")
 
-    from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
-    try:
-        tukey = pairwise_tukeyhsd(
-            endog=mlg_df[trait_col].astype(float),
-            groups=mlg_df["MLG_label"].astype(str),
-            alpha=0.05,
-        )
-    except Exception as e:
-        logging.exception("Tukey HSD test failed")
-        st.warning(
-            f"Tukey HSD failed (likely constant phenotype after PC adjustment): {e}")
-        st.stop()
-
-    tukey_data = tukey.summary().data
-    headers = tukey_data[0]
-    rows = tukey_data[1:]
-
-    tukey_df = pd.DataFrame(rows, columns=headers)
-    tukey_df["reject"] = tukey_df["reject"].astype(bool)
-
-    st.dataframe(tukey_df, use_container_width=True)
-
-    # ------------------------------------------------------------
-    # Compact Letter Display: Piepho (2004)
-    # ------------------------------------------------------------
-    st.markdown("#### Compact Letter Display (CLD)")
-
-    groups = sorted(mlg_df["MLG_label"].unique())
-    sig_matrix = pd.DataFrame(False, index=groups, columns=groups)
-    for _, row in tukey_df.iterrows():
-        g1 = str(row["group1"])
-        g2 = str(row["group2"])
-        reject = bool(row["reject"])
-        sig_matrix.loc[g1, g2] = reject
-        sig_matrix.loc[g2, g1] = reject
-
-    # Maximal-clique CLD (gwas/cld.py): two groups share a letter iff they are NOT
-    # significantly different. Replaces a greedy insert/absorb that could leave private
-    # seed letters unmerged (3 mutually non-sig groups -> a, ab, ac instead of a, a, a).
-    from gwas.cld import compact_letter_display
-
-    _cld_means = mlg_df.groupby("MLG_label")[trait_col].mean().to_dict()
-    cld_strings = compact_letter_display(groups, sig_matrix, means=_cld_means)
-
-    cld_df = pd.DataFrame({
-        "MLG_label": groups,
-        "CLD": [cld_strings[g] for g in groups],
-    })
-    st.dataframe(cld_df, use_container_width=True)
-    if any(len(_v) > 1 for _v in cld_strings.values()):
-        st.caption(
-            "Some groups carry more than one letter: they are statistically "
-            "indistinguishable from groups that themselves differ (a chain of "
-            "overlapping non-differences), so no single letter can separate every "
-            "group. See **Help → Interpreting Results** for how to read this."
-        )
-
-    # --------------------------------------------------------
-    # Boxplot WITH CLD letters (closure, rendered via the viz toggle below)
-    # --------------------------------------------------------
-    def _build_box_fig():
-        fig_box2, ax2 = plt.subplots(figsize=FIGSIZE["boxplot"])
-
-        sns.boxplot(
-            data=mlg_df,
-            x="MLG_label",
-            y=trait_col,
-            order=mlg_order,
-            ax=ax2,
-            width=0.6,
-            showfliers=False,
-            linewidth=1.2,
-            boxprops=dict(edgecolor="black"),
-            medianprops=dict(color="black", linewidth=2),
-            whiskerprops=dict(linewidth=1.2),
-            capprops=dict(linewidth=1.2),
-        )
-
-        sns.stripplot(
-            data=mlg_df,
-            x="MLG_label",
-            y=trait_col,
-            order=mlg_order,
-            ax=ax2,
-            color="black",
-            alpha=0.25,
-            size=3,
-            jitter=0.15,
-        )
-
-        ax2.tick_params(axis="both", which="both", labelsize=10, length=0)
-
-        for spine in ax2.spines.values():
-            spine.set_visible(False)
-
-        data_min = float(mlg_df[trait_col].min())
-        data_max = float(mlg_df[trait_col].max())
-        data_range = data_max - data_min if data_max > data_min else 1.0
-
-        y_text = data_max + 0.05 * data_range
-        ax2.set_ylim(data_min - 0.05 * data_range, data_max + 0.25 * data_range)
-
-        for i, tick in enumerate(ax2.get_xticklabels()):
-            raw = tick.get_text().split("\n")[0].strip()
-            if raw in cld_strings:
-                ax2.text(
-                    i,
-                    y_text,
-                    cld_strings[raw],
-                    ha="center",
-                    va="bottom",
-                    fontsize=12,
-                    fontweight="bold",
-                )
-
-        ax2.set_xlabel("Multi-locus genotype (haplotype)")
-        ax2.set_ylabel(trait_label)   # T-34: values are PC-adjusted; label must say so (P3)
-        ax2.set_title("Phenotype distribution across haplotypes")
-
-        new_xticklabels = [
-            f"{lbl.get_text()}\n(n={hap_counts.get(lbl.get_text(), 0)})"
-            for lbl in ax2.get_xticklabels()
-        ]
-
-        ax2.set_xticks(range(len(new_xticklabels)))
-        ax2.set_xticklabels(new_xticklabels, rotation=0)
-        return fig_box2
-
-    # --------------------------------------------------------
-    # Raincloud plot (half-violin + narrow box + strip + mean marker).
-    # Better suited than boxplot to visualize unbalanced-n comparisons
-    # (e.g. n=118 vs n=9), where boxplot IQR overlap can mask real mean
-    # differences. Shows distribution shape, summary stats, and individual
-    # datapoints simultaneously.
-    # --------------------------------------------------------
-    def _build_raincloud_fig():
-        fig_rain, ax_rain = plt.subplots(figsize=FIGSIZE["boxplot"])
-        rng = np.random.default_rng(42)
-
-        for i, mlg in enumerate(mlg_order):
-            data = (
-                mlg_df.loc[mlg_df["MLG_label"] == mlg, trait_col]
-                .dropna()
-                .to_numpy()
-            )
-            if data.size == 0:
-                continue
-            color = _hap_colors[mlg]
-
-            # Half-violin: centered at i - 0.12, density on LEFT side
-            # (flat edge faces the box at category center; density
-            # bulges away from the box, canonical Scherer/ggdist
-            # orientation: violin's flat side adjacent to box, no overlap).
-            if data.size >= 2 and np.unique(data).size >= 2:
-                parts = ax_rain.violinplot(
-                    [data],
-                    positions=[i - 0.12],
-                    widths=0.32,
-                    showmeans=False,
-                    showmedians=False,
-                    showextrema=False,
-                )
-                for pc in parts["bodies"]:
-                    pc.set_facecolor(color)
-                    pc.set_alpha(0.50)
-                    pc.set_edgecolor(color)
-                    pc.set_linewidth(0.8)
-                    for path in pc.get_paths():
-                        # Keep left half (density faces AWAY from box;
-                        # violin's flat right edge sits at i - 0.12,
-                        # box's left edge at i - 0.09, ~0.03 gap)
-                        path.vertices[:, 0] = np.clip(
-                            path.vertices[:, 0], -np.inf, i - 0.12
-                        )
-
-            # Narrow boxplot at category center (white fill, thin black
-            # outline, no outliers; dots show full distribution)
-            ax_rain.boxplot(
-                [data],
-                positions=[i],
-                widths=0.18,
-                showfliers=False,
-                patch_artist=True,
-                boxprops=dict(facecolor="white", edgecolor="black", linewidth=1.0),
-                medianprops=dict(color="black", linewidth=1.5),
-                whiskerprops=dict(linewidth=1.0, color="black"),
-                capprops=dict(linewidth=1.0, color="black"),
-            )
-
-            # Jittered dots AT category center (overlapping with box,
-            # haplotype-coloured, thin black outline), the "rain"
-            jitter = rng.uniform(-0.07, 0.07, size=data.size)
-            ax_rain.scatter(
-                np.full(data.size, i) + jitter,
-                data,
-                color=color,
-                alpha=0.55,
-                s=18,
-                edgecolors="black",
-                linewidths=0.4,
-                zorder=3,
-            )
-
-        ax_rain.tick_params(axis="both", which="both", labelsize=15, length=0)
-        for spine in ax_rain.spines.values():
-            spine.set_visible(False)
-
-        data_min = float(mlg_df[trait_col].min())
-        data_max = float(mlg_df[trait_col].max())
-        data_range = data_max - data_min if data_max > data_min else 1.0
-        y_text = data_max + 0.05 * data_range
-        ax_rain.set_ylim(data_min - 0.05 * data_range, data_max + 0.25 * data_range)
-
-        for i, mlg in enumerate(mlg_order):
-            if mlg in cld_strings:
-                ax_rain.text(
-                    i,
-                    y_text,
-                    cld_strings[mlg],
-                    ha="center",
-                    va="bottom",
-                    fontsize=18,
-                    fontweight="bold",
-                )
-
-        ax_rain.set_xlabel(
-            "Multi-locus genotype (haplotype)",
-            fontsize=16, fontweight="bold",
-        )
-        ax_rain.set_ylabel(trait_col, fontsize=16, fontweight="bold")
-        ax_rain.set_title(
-            "Phenotype distribution across haplotypes",
-            fontsize=17, fontweight="bold",
-        )
-        ax_rain.set_xticks(range(len(mlg_order)))
-        ax_rain.set_xticklabels(
-            [f"{m}\n(n={hap_counts.get(m, 0)})" for m in mlg_order],
-            rotation=0,
-            fontsize=15,
-            fontweight="bold",
-        )
-        plt.setp(ax_rain.get_yticklabels(), fontsize=15, fontweight="bold")
-        ax_rain.set_xlim(-0.5, len(mlg_order) - 0.5)
-        return fig_rain
-
-    # --------------------------------------------------------
-    # Interactive Plotly raincloud (hover shows accession ID per dot).
-    # Renders via st.plotly_chart so it's always interactive; not cached
-    # via _render_fig_or_cached because Plotly handles its own client-side
-    # rendering. Half-violin + narrow box + per-point hover, canonical
-    # ggdist / Cédric Scherer raincloud layout.
-    # --------------------------------------------------------
-    def _build_interactive_raincloud_fig():
-        fig = go.Figure()
-        rng = np.random.default_rng(42)
-
-        for i, mlg in enumerate(mlg_order):
-            mask = mlg_df["MLG_label"] == mlg
-            samples = mlg_df.loc[mask, "Sample"].astype(str).to_numpy()
-            values = mlg_df.loc[mask, trait_col].astype(float).to_numpy()
-            n = values.size
-            if n == 0:
-                continue
-            color = _hap_colors[mlg]
-
-            # Half-violin: centered at i - 0.12, density on LEFT side
-            if n >= 2 and np.unique(values).size >= 2:
-                fig.add_trace(go.Violin(
-                    x=np.full(n, i - 0.12),
-                    y=values,
-                    side="negative",
-                    fillcolor=color,
-                    opacity=0.50,
-                    line_color=color,
-                    line_width=1,
-                    points=False,
-                    box_visible=False,
-                    meanline_visible=False,
-                    showlegend=False,
-                    hoverinfo="skip",
-                    width=0.36,
-                    spanmode="soft",
-                    scalemode="width",
-                ))
-
-            # Narrow boxplot at category center
-            fig.add_trace(go.Box(
-                x=np.full(n, i),
-                y=values,
-                fillcolor="white",
-                line=dict(color="black", width=1.0),
-                width=0.18,
-                boxpoints=False,
-                showlegend=False,
-                hoverinfo="skip",
-            ))
-
-            # Jittered dots AT category center (hover shows accession ID)
-            jitter = rng.uniform(-0.07, 0.07, size=n)
-            fig.add_trace(go.Scatter(
-                x=np.full(n, i) + jitter,
-                y=values,
-                mode="markers",
-                marker=dict(
-                    color=color,
-                    size=8,
-                    opacity=0.55,
-                    line=dict(color="black", width=0.4),
-                ),
-                customdata=np.column_stack([samples, np.full(n, mlg)]),
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>"
-                    "Haplotype: %{customdata[1]}<br>"
-                    f"{trait_col}: " "%{y:.3f}<extra></extra>"
-                ),
-                showlegend=False,
-            ))
-
-        # CLD letters as annotations
-        data_min = float(mlg_df[trait_col].min())
-        data_max = float(mlg_df[trait_col].max())
-        data_range = data_max - data_min if data_max > data_min else 1.0
-        y_text = data_max + 0.05 * data_range
-
-        # Font cascade matching matplotlib (no Arial fallback)
-        font_family = "DejaVu Sans, Verdana, Geneva, sans-serif"
-
-        for i, mlg in enumerate(mlg_order):
-            if mlg in cld_strings:
-                fig.add_annotation(
-                    x=i,
-                    y=y_text,
-                    text=f"<b>{cld_strings[mlg]}</b>",
-                    showarrow=False,
-                    font=dict(size=18, color="black", family=font_family),
-                )
-
-        axis_title_font = dict(size=16, color="black", family=font_family)
-        tick_font = dict(size=14, color="black", family=font_family)
-        title_font = dict(size=17, color="black", family=font_family)
-
-        fig.update_layout(
-            title=dict(
-                text="<b>Phenotype distribution across haplotypes (interactive)</b>",
-                x=0.5,
-                xanchor="center",
-                font=title_font,
-            ),
-            xaxis=dict(
-                tickmode="array",
-                tickvals=list(range(len(mlg_order))),
-                ticktext=[
-                    f"<b>{m}<br>(n={hap_counts.get(m, 0)})</b>"
-                    for m in mlg_order
-                ],
-                range=[-0.5, len(mlg_order) - 0.5],
-                showgrid=False,
-                zeroline=False,
-                title=dict(
-                    text="<b>Multi-locus genotype (haplotype)</b>",
-                    font=axis_title_font,
-                ),
-                tickfont=tick_font,
-            ),
-            yaxis=dict(
-                title=dict(text=f"<b>{trait_col}</b>", font=axis_title_font),
-                showgrid=True,
-                gridcolor="rgba(200,200,200,0.4)",
-                zeroline=False,
-                range=[
-                    data_min - 0.05 * data_range,
-                    data_max + 0.25 * data_range,
-                ],
-                tickfont=tick_font,
-            ),
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            height=500,
-            margin=dict(t=70, b=90, l=90, r=40),
-            showlegend=False,
-            hovermode="closest",
-            font=dict(family=font_family, color="black", size=14),
-        )
-        return fig
-
-    # --------------------------------------------------------
-    # Visualization toggle (fragment-scoped): switching plot type only
-    # reruns this fragment, not the whole page. Matplotlib variants are
-    # byte-cached on first build for instant toggle; Plotly variant is
-    # rebuilt each rerun (cheap) but the fragment scope keeps that local.
-    # --------------------------------------------------------
+    from gwas.snpplots import hap_boxplot_data, plotly_hap_boxplot, render_hap_boxplot
+    _pdata = hap_boxplot_data(plot_rows) if plot_rows is not None else None
+    _title = list(title_lines or [f"Chr{block_chr}:{int(block_start):,}-{int(block_end):,}"])
     box_cache_base = (
         "HAP_BOX",
         block_chr, int(block_start), int(block_end),
-        _hash_df(mlg_df[["MLG_label", trait_col]].copy()),
-        tuple(mlg_order),
-        trait_col,
+        (_hash_df(_pdata[["Haplotype", "Phenotype"]].copy())
+         if _pdata is not None else "nodata"),
+        tuple(_title),
+        str(y_label),
     )
 
     viz_widget_key = (
@@ -1908,52 +1539,115 @@ def _render_tukey_and_boxplot(
 
     @st.fragment
     def _viz_toggle_fragment():
+        if _pdata is None or _pdata.empty:
+            st.caption("No haplotype plot: the block has no samples in the test.")
+            _block_assignments_button(block_csv)
+            return
         with st.expander("Plot style", expanded=False):
             viz_type = st.radio(
                 "Visualization",
-                ("Raincloud", "Interactive raincloud", "Boxplot"),
+                ("Interactive", "Static"),
                 horizontal=True,
                 key=viz_widget_key,
                 help=(
-                    "Raincloud (half-violin + narrow box + jittered points) is "
-                    "recommended for unbalanced-n comparisons. "
-                    "Interactive raincloud (Plotly) adds hover-over per point "
-                    "showing the accession ID, useful for identifying which "
-                    "samples drive the H2 distribution. Boxplot is the legacy "
-                    "view kept for compatibility with prior figures."
+                    "Interactive (Plotly) shows each sample's ID, haplotype and value on "
+                    "hover. Static (matplotlib) is the same plot, downloadable as PNG / "
+                    "SVG / PDF."
                 ),
             )
-
-        if viz_type == "Boxplot":
-            _render_fig_or_cached(
-                cache_namespace="_hap_box_cache",
-                cache_key=box_cache_base + ("boxplot",),
-                fname_stem=(
-                    f"haplotype_boxplot_{trait_col}_{block_chr}_"
-                    f"{block_start}_{block_end}"
-                ),
-                label_prefix="Download boxplot",
-                build_fig_fn=_build_box_fig,
-            )
-        elif viz_type == "Interactive raincloud":
+        if viz_type == "Interactive":
+            _hfig = plotly_hap_boxplot(_pdata, _title, y_label=y_label)
             show_plot(
-                _build_interactive_raincloud_fig(), "medium",
+                _hfig, "small",
                 key=f"hap_plotly_{block_chr}_{int(block_start)}_{int(block_end)}_{trait_col}",
             )
         else:
             _render_fig_or_cached(
                 cache_namespace="_hap_box_cache",
-                cache_key=box_cache_base + ("raincloud",),
+                cache_key=box_cache_base + ("static",),
                 fname_stem=(
-                    f"haplotype_raincloud_{trait_col}_{block_chr}_"
+                    f"haplotype_boxplot_{trait_col}_{block_chr}_"
                     f"{block_start}_{block_end}"
                 ),
-                label_prefix="Download raincloud",
-                build_fig_fn=_build_raincloud_fig,
+                label_prefix="Download box plot",
+                build_fig_fn=lambda: render_hap_boxplot(_pdata, _title, y_label=y_label),
             )
         _block_assignments_button(block_csv)
 
     _viz_toggle_fragment()
+
+    # --------------------------------------------------------
+    # The details: allele sequences, Tukey HSD, compact letters
+    # --------------------------------------------------------
+    with st.expander("Haplotype details: allele sequences, Tukey HSD, compact letters",
+                     expanded=False):
+        if details_table is not None:
+            _mlg_tbl, _mlg_csv, _mlg_name, _mlg_key = details_table
+            st.markdown("#### Haplotype (MLG) allele sequences")
+            st.dataframe(_mlg_tbl, use_container_width=True)
+            st.download_button(
+                "Download MLG sequence table (CSV)", _mlg_csv, file_name=_mlg_name,
+                mime="text/csv", key=_mlg_key,
+            )
+        st.markdown("#### Tukey HSD post-hoc test")
+
+        from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
+        try:
+            tukey = pairwise_tukeyhsd(
+                endog=mlg_df[trait_col].astype(float),
+                groups=mlg_df["MLG_label"].astype(str),
+                alpha=0.05,
+            )
+        except Exception as e:
+            logging.exception("Tukey HSD test failed")
+            st.warning(
+                f"Tukey HSD failed (likely constant phenotype after PC adjustment): {e}")
+            st.stop()
+
+        tukey_data = tukey.summary().data
+        headers = tukey_data[0]
+        rows = tukey_data[1:]
+
+        tukey_df = pd.DataFrame(rows, columns=headers)
+        tukey_df["reject"] = tukey_df["reject"].astype(bool)
+
+        st.dataframe(tukey_df, use_container_width=True)
+
+        # ------------------------------------------------------------
+        # Compact Letter Display: Piepho (2004)
+        # ------------------------------------------------------------
+        st.markdown("#### Compact Letter Display (CLD)")
+
+        groups = sorted(mlg_df["MLG_label"].unique())
+        sig_matrix = pd.DataFrame(False, index=groups, columns=groups)
+        for _, row in tukey_df.iterrows():
+            g1 = str(row["group1"])
+            g2 = str(row["group2"])
+            reject = bool(row["reject"])
+            sig_matrix.loc[g1, g2] = reject
+            sig_matrix.loc[g2, g1] = reject
+
+        # Maximal-clique CLD (gwas/cld.py): two groups share a letter iff they are NOT
+        # significantly different. Replaces a greedy insert/absorb that could leave private
+        # seed letters unmerged (3 mutually non-sig groups -> a, ab, ac instead of a, a, a).
+        from gwas.cld import compact_letter_display
+
+        _cld_means = mlg_df.groupby("MLG_label")[trait_col].mean().to_dict()
+        cld_strings = compact_letter_display(groups, sig_matrix, means=_cld_means)
+
+        cld_df = pd.DataFrame({
+            "MLG_label": groups,
+            "CLD": [cld_strings[g] for g in groups],
+        })
+        st.dataframe(cld_df, use_container_width=True)
+        if any(len(_v) > 1 for _v in cld_strings.values()):
+            st.caption(
+                "Some groups carry more than one letter: they are statistically "
+                "indistinguishable from groups that themselves differ (a chain of "
+                "overlapping non-differences), so no single letter can separate every "
+                "group. See **Help → Interpreting Results** for how to read this."
+            )
 
     # --------------------------------------------------------
     # Forest plot

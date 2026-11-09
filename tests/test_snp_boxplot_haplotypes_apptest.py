@@ -161,15 +161,16 @@ def _rec_effect(*a, **kw):
 def _rec_cached(cache_namespace, cache_key, fname_stem, label_prefix, build_fig_fn):
     def _build():
         fig = build_fig_fn()
-        if fig is not None and fname_stem.startswith("haplotype_raincloud"):
+        if fig is not None and fname_stem.startswith("haplotype_boxplot"):
+            # the block's static haplotype plot: each group's dot colour, by its tick label
             ax = fig.axes[0]
             ticks = [t.get_text().split(chr(10))[0] for t in ax.get_xticklabels()]
-            rain = {}
-            for c in ax.collections:
-                if isinstance(c, PathCollection) and len(c.get_offsets()):
-                    i = int(round(float(np.mean(np.asarray(c.get_offsets())[:, 0]))))
-                    rain[ticks[i]] = to_hex(c.get_facecolor()[0][:3])
-            st.session_state["_rec_rain"] = rain
+            block = {}
+            for ln in ax.lines:
+                if ln.get_marker() == "o" and len(ln.get_xdata()):
+                    i = int(round(float(np.mean(np.asarray(ln.get_xdata(), float)))))
+                    block[ticks[i]] = to_hex(ln.get_color())
+            st.session_state["_rec_rain"] = block
         return fig
     return tgw._pristine_render_fig_or_cached(
         cache_namespace, cache_key, fname_stem, label_prefix, _build)
@@ -212,6 +213,7 @@ def _start(norm):
     at = AppTest.from_string(_SCRIPT.replace("__ROOT__", str(_ROOT).replace("\\", "/"))
                              .replace("__NORM__", norm), default_timeout=240)
     at.session_state["lead_snp_viz_type"] = "Static"    # the static plot's colours
+    at.session_state["hap_viz_type_2_1000000_1040000_t"] = "Static"   # the block's plot
     at.run()
     _assert_clean(at)
     for name in _WRAPPED:      # the script restored what it wrapped

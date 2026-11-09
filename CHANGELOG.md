@@ -5,6 +5,17 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The block's haplotype plot is drawn like the lead-SNP plot.** On the LD
+  Blocks & Haplotypes tab, the selected block's plot is a box per tested
+  haplotype group with the samples as jittered points, coloured by haplotype:
+  Interactive by default (hover: sample, haplotype, value, in the test) or
+  Static (PNG/SVG/PDF), in the collapsed "Plot style". It shows the samples,
+  labels and uploaded values the haplotype test compared (its rows of the
+  assignments table), and its title names the block, P (permutation) and η².
+  The raincloud, the interactive raincloud and the older seaborn box plot are
+  gone; the compact letters are in the CLD table. The MLG allele sequences,
+  Tukey HSD and compact letters now sit in one collapsed expander, "Haplotype
+  details: allele sequences, Tukey HSD, compact letters", with their downloads.
 - **One block table on the LD Blocks & Haplotypes tab, with one CSV.** "LD
   blocks and haplotype tests" has one row per detected block, with its
   haplotype test and its LD coherence joined on the block's chromosome, start

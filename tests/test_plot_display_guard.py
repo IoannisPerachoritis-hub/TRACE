@@ -100,11 +100,12 @@ _PINNED = Counter({
     ("pages/GWAS_analysis.py", "fig_plotly_fc", "wide", False): 1,
     ("pages/GWAS_analysis.py", "fig_qq_fc", "small", False): 1,
     ("pages/GWAS_analysis.py", "fig_overlay", "wide", False): 1,
-    ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']", "medium", False): 2,
+    ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']", "medium", False): 1,  # PCA
+    ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']", "small", False): 1,   # haplotypes
     ("pages/_ld_tabs/tab_genome_wide.py", "_build_interactive_pca_fig()", "medium", True): 1,
     ("pages/_ld_tabs/tab_genome_wide.py", "_fig", "small", False): 1,   # lead-SNP box plot
     ("pages/_ld_tabs/tab_genome_wide.py", "_pfig", "small", True): 1,   # ... interactive
-    ("pages/_ld_tabs/tab_genome_wide.py", "_build_interactive_raincloud_fig()", "medium", True): 1,
+    ("pages/_ld_tabs/tab_genome_wide.py", "_hfig", "small", True): 1,   # haplotypes, interactive
     ("pages/_ld_tabs/tab_genome_wide.py", "_fig_forest", "small", False): 1,
     ("pages/_ld_tabs/tab_local_ld.py", "local_cached['display']", "medium", False): 1,
     ("pages/_ld_tabs/tab_regional.py", "fig_i", "wide", True): 1,
@@ -149,7 +150,7 @@ _DATA_ELSEWHERE = {
     # the haplotype box/raincloud: the block's assignments, under the plot
     ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']"):
         "Download sample-to-haplotype assignments (CSV)",
-    ("pages/_ld_tabs/tab_genome_wide.py", "_build_interactive_raincloud_fig()"):
+    ("pages/_ld_tabs/tab_genome_wide.py", "_hfig"):
         "Download sample-to-haplotype assignments (CSV)",
     ("pages/_ld_tabs/tab_genome_wide.py", "_fig"): "Download plotted data (CSV)",   # lead SNP
     ("pages/_ld_tabs/tab_genome_wide.py", "_pfig"): "Download plotted data (CSV)",

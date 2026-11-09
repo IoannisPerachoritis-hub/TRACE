@@ -70,7 +70,7 @@ AREAS: list[tuple[str, str, list[str]]] = [
         ["test_regional_plot", "test_regional_tab_apptest", "test_ld_block_heatmap", "test_snpview",
          "test_snpplots", "test_plotting_stats", "test_views", "test_snp_boxplot_haplotypes",
          "test_snp_boxplot_haplotypes_cli", "test_snp_boxplot_haplotypes_apptest",
-         "test_lead_snp_plot_data"]),
+         "test_lead_snp_plot_data", "test_hap_boxplot"]),
     ("Gene annotation", "LD-block gene annotation, gene-model summaries and resolution",
         ["test_annotation", "test_gene_model_summary", "test_gene_model_resolution"]),
     ("Subsampling stability", "bootstrap subsampling and stability metrics",

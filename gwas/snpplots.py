@@ -294,3 +294,120 @@ def build_snp_view_index(sig_table, plotted_ids, collapse_df=None):
         out["r2_to_representative"] = 1.0
         out["Representative_Of_Count"] = 1
     return out
+
+
+# ── The LD block's haplotype box plot, in the lead-SNP plot's style ───────────────────
+HAP_BOXPLOT_DATA_COLUMNS = ["Sample", "Haplotype", "Phenotype", "In_haplotype_test"]
+
+
+def hap_boxplot_data(block_rows):
+    """The samples a block's haplotype box plot draws: its in-test rows of the
+    haplotype_assignments table (the samples, labels and values the haplotype test
+    compared), groups in H1, H2, ... order and samples in table order within a group."""
+    from utils.pub_theme import hap_sort_key
+
+    r = block_rows[block_rows["in_haplotype_test"].astype(bool)]
+    out = pd.DataFrame({
+        "Sample": r["Sample"].astype(str).to_numpy(),
+        "Haplotype": r["Haplotype"].astype(str).to_numpy(),
+        "Phenotype": pd.to_numeric(r["Phenotype_used"], errors="coerce").to_numpy(dtype=float),
+        "In_haplotype_test": True,
+    })
+    order = {h: k for k, h in enumerate(sorted(set(out["Haplotype"]), key=hap_sort_key))}
+    out["_o"] = out["Haplotype"].map(order)
+    return (out.sort_values("_o", kind="stable").drop(columns="_o")
+            .reset_index(drop=True)[HAP_BOXPLOT_DATA_COLUMNS])
+
+
+def hap_boxplot_title(chrom, start, end, p_perm=None, eta2=None):
+    """The block and its haplotype test: "Chr2:700,000-860,000" and "P (permutation) =
+    0.012 · η² = 0.21"."""
+    lines = [f"Chr{chrom}:{int(start):,}-{int(end):,}"]
+    bits = []
+    if p_perm is not None and np.isfinite(float(p_perm)):
+        bits.append(f"P (permutation) = {float(p_perm):.3g}")
+    if eta2 is not None and np.isfinite(float(eta2)):
+        bits.append(f"η² = {float(eta2):.2f}")
+    if bits:
+        lines.append(" · ".join(bits))
+    return lines
+
+
+def _hap_groups(data):
+    """The plotted groups, in H1, H2, ... order, with their rows."""
+    groups = list(dict.fromkeys(data["Haplotype"].tolist()))
+    return [(h, (data["Haplotype"] == h).to_numpy()) for h in groups]
+
+
+def render_hap_boxplot(data, title_lines, *, y_label=None, dpi=110):
+    """The block's haplotype box plot as ``render_snp_boxplot`` draws a SNP's: a box per
+    haplotype group, the group's samples as jittered dots (seed 0, one draw per group,
+    in group order), coloured by utils.pub_theme.haplotype_color_map."""
+    import matplotlib
+    matplotlib.use("Agg", force=False)
+    import matplotlib.pyplot as plt
+
+    from utils.pub_theme import haplotype_color_map
+
+    groups = _hap_groups(data)
+    cmap = haplotype_color_map([h for h, _m in groups])
+    rng = np.random.default_rng(0)
+    k = len(groups)
+    fig, ax = plt.subplots(figsize=(max(3.2, 0.55 * k + 1.6), 3.0), dpi=dpi)
+    ticks = []
+    for i, (h, m) in enumerate(groups):
+        yc = data.loc[m, "Phenotype"].to_numpy(dtype=float)
+        if len(yc):
+            ax.boxplot([yc], positions=[i], widths=0.5, showfliers=False)
+            jitter = i + (rng.random(len(yc)) - 0.5) * 0.18
+            ax.plot(jitter, yc, "o", ms=3, alpha=0.45, color=cmap[h])
+        ticks.append(f"{h}\n(n={len(yc)})")
+    ax.set_xticks(list(range(k)))
+    ax.set_xticklabels(ticks)
+    ax.set_xlim(-0.6, k - 0.4)
+    ax.set_xlabel("Haplotype")
+    ax.set_ylabel(y_label if y_label else "Phenotype")
+    ax.set_title("\n".join(title_lines), fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+def plotly_hap_boxplot(data, title_lines, *, y_label=None):
+    """The interactive form of ``render_hap_boxplot``, as ``plotly_snp_boxplot``: the same
+    boxes and jittered points (same seed and draws), and on hover each sample's ID,
+    haplotype, value and whether the haplotype test took it."""
+    import plotly.graph_objects as go
+
+    from utils.pub_theme import haplotype_color_map
+
+    groups = _hap_groups(data)
+    cmap = haplotype_color_map([h for h, _m in groups])
+    rng = np.random.default_rng(0)
+    fig = go.Figure()
+    ticks, x_all = [], np.full(len(data), np.nan)
+    for i, (h, m) in enumerate(groups):
+        n = int(m.sum())
+        ticks.append(f"{h}<br>(n={n})")
+        if not n:
+            continue
+        fig.add_trace(go.Box(x=np.full(n, i), y=data.loc[m, "Phenotype"], width=0.5,
+                             boxpoints=False, fillcolor="rgba(0,0,0,0)",
+                             line=dict(color="#333333", width=1), hoverinfo="skip",
+                             showlegend=False))
+        x_all[m] = i + (rng.random(n) - 0.5) * 0.18
+    hover = ("<b>%{customdata[0]}</b><br>Haplotype: %{customdata[1]}<br>"
+             "Phenotype: %{y:.4g}<br>In the haplotype test: %{customdata[2]}<extra></extra>")
+    for h, m in groups:
+        fig.add_trace(go.Scatter(
+            x=x_all[m], y=data.loc[m, "Phenotype"], mode="markers",
+            marker=dict(size=6, opacity=0.6, color=cmap[h]), name=h, showlegend=False,
+            customdata=np.column_stack([
+                data.loc[m, "Sample"].astype(str), data.loc[m, "Haplotype"].astype(str),
+                np.where(data.loc[m, "In_haplotype_test"].astype(bool), "yes", "no")]),
+            hovertemplate=hover))
+    fig.update_layout(
+        title=dict(text="<br>".join(title_lines), font=dict(size=11)),
+        xaxis=dict(title="Haplotype", tickvals=list(range(len(groups))), ticktext=ticks,
+                   range=[-0.6, len(groups) - 0.4]),
+        yaxis=dict(title=y_label or "Phenotype"), height=440, margin=dict(t=80))
+    return fig
