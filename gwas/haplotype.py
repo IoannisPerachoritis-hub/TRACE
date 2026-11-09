@@ -228,6 +228,9 @@ def run_haplotype_block_gwas(
     sample_ids = geno_df.index.astype(str)
 
     results = []
+    # why each block that is not tested was left out ({"Chr:Start-End": reason}); kept in
+    # the result's attrs for the GUI's block table, never written to a file
+    untested = {}
 
     # These two lines prevent any UnboundLocalError even in edge cases
     hap_labels = pd.Series(dtype=str)
@@ -239,10 +242,12 @@ def run_haplotype_block_gwas(
         start_bp = int(block["Start (bp)"])
         end_bp = int(block["End (bp)"])
         lead_snp = str(block.get("lead_snp", ""))
+        _bkey = f"{chr_sel}:{start_bp}-{end_bp}"
 
         region_mask = get_block_snp_mask(block, chroms, positions, sid)
 
         if region_mask.sum() < 2:
+            untested[_bkey] = "fewer than 2 SNPs"
             continue
 
         block_sids = sid[region_mask].astype(str)
@@ -255,6 +260,7 @@ def run_haplotype_block_gwas(
         block_sids = block_sids[col_ok]
 
         if G_block.shape[1] < 2:
+            untested[_bkey] = "fewer than 2 SNPs pass the call-rate filter"
             continue
 
         # Allow missingness within block; drop only very incomplete samples
@@ -275,6 +281,7 @@ def run_haplotype_block_gwas(
         n_samples_block_used = int(G_block.shape[0])
 
         if G_block.shape[0] < 5:
+            untested[_bkey] = "fewer than 5 samples with genotypes"
             continue
 
         enc = str(geno_encoding)
@@ -337,6 +344,7 @@ def run_haplotype_block_gwas(
         n_snps_block = int(G_block_int.shape[1])
 
         if n_snps_block < 2:
+            untested[_bkey] = "fewer than 2 SNPs after thinning"
             continue
 
         # haplotype strings
@@ -357,12 +365,14 @@ def run_haplotype_block_gwas(
         y_vec = y_vec.iloc[keep]
 
         if hap_strings.empty:
+            untested[_bkey] = "no phenotyped samples"
             continue
 
         # counts AFTER phenotype filtering
         hap_counts = hap_strings.value_counts()
         keep_haps = hap_counts[hap_counts >= int(min_hap_count)].index
         if len(keep_haps) == 0:
+            untested[_bkey] = f"no haplotype in at least {int(min_hap_count)} samples"
             continue
 
         hap_sorted = hap_counts.loc[keep_haps].sort_values(ascending=False).index
@@ -372,6 +382,7 @@ def run_haplotype_block_gwas(
         ).fillna("Other")
 
         if hap_labels.empty:
+            untested[_bkey] = "no phenotyped samples"
             continue
 
         # store once (for expression selection)
@@ -397,6 +408,7 @@ def run_haplotype_block_gwas(
         haplo_pheno_df = haplo_pheno_df.dropna(subset=[trait_col])
 
         if haplo_pheno_df.empty:
+            untested[_bkey] = "no phenotyped samples"
             continue
 
         # test frame
@@ -406,6 +418,7 @@ def run_haplotype_block_gwas(
         df_test = df_test.dropna(subset=[trait_col])
 
         if df_test.empty:
+            untested[_bkey] = "no phenotyped samples"
             continue
 
         counts = df_test["MLG"].astype(str).value_counts()
@@ -414,6 +427,8 @@ def run_haplotype_block_gwas(
             if (counts[h] >= int(min_group_size) and str(h) != "Other")
         ]
         if len(valid_haps) < 2:
+            untested[_bkey] = (f"fewer than 2 haplotype groups of at least "
+                               f"{int(min_group_size)} samples")
             continue
 
         df_test = df_test[df_test["MLG"].isin(valid_haps)].copy()
@@ -505,6 +520,7 @@ def run_haplotype_block_gwas(
             )
 
         except Exception:
+            untested[_bkey] = "the haplotype test failed"
             continue
 
         # η² must be on PC-adjusted residuals to be consistent with the F-test
@@ -569,7 +585,7 @@ def run_haplotype_block_gwas(
         )
 
     if not results:
-        return pd.DataFrame(
+        empty = pd.DataFrame(
             columns=[
                 "Chr", "Start", "End", "lead_snp",
                 "n_snps", "n_haplotypes", "n_tested_haplotypes",
@@ -581,7 +597,9 @@ def run_haplotype_block_gwas(
                 "mlg_n_observed", "mlg_top1_freq", "mlg_eff_inv_simpson",
                 "mlg_n_other", "mlg_frac_retained", "mlg_min_group_n", "n_samples_tested",
             ]
-        ), {}
+        )
+        empty.attrs["untested"] = untested
+        return empty, {}
 
     df_res = pd.DataFrame(results)
     df_res["MidPos"] = (df_res["Start"] + df_res["End"]) / 2.0
@@ -592,6 +610,7 @@ def run_haplotype_block_gwas(
         df_res["FDR_BH"] = multipletests(df_res["PValue"], method="fdr_bh")[1]
     except (ValueError, ZeroDivisionError):
         df_res["FDR_BH"] = np.nan
+    df_res.attrs["untested"] = untested
 
     return df_res, hap_tables
 

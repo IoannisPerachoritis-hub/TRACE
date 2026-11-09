@@ -4,11 +4,10 @@ Renders ``tab_genome_wide.render`` through a real Streamlit script context with 
 seeded LDContext + a small non-empty block inventory + stubbed haplotype compute,
 and asserts the block-table sections render:
 
-- Block inventory: the "LD blocks" section subheader (the inventory expander sits
-  under it). The descriptive inventory caption was removed in the UI-text pass.
-- Results: the "Association results per block" subheader, whose "?" tooltip holds the
-  η² and LD-coherence guidance (it replaced two popovers). Its descriptive caption was
-  removed in the UI-text pass.
+- Detection: the "LD blocks" section subheader.
+- Results: the one block table, "LD blocks and haplotype tests" (it replaced the
+  block inventory, the per-block results and the coherence table), whose "?" tooltip
+  holds the η² and LD-coherence guidance, with one row per detected block.
 
 The heavy per-block visualization (`_render_block_visualization`, MLG boxplots) is
 monkeypatched to a no-op so the render reaches the labels without needing real
@@ -118,13 +117,18 @@ def test_block_tables_render_with_new_labels():
     assert not any("Run haplotype" in c.label for c in at.checkbox), \
         "'Run haplotype' checkbox should be gone (analysis is unconditional)"
 
-    # results-table subheader (its caption was removed in the UI-text pass)
-    assert any("Association results per block" in s.value for s in at.subheader), \
-        "results-table subheader missing"
+    # the one block table's subheader
+    assert any("LD blocks and haplotype tests" in s.value for s in at.subheader), \
+        "block table subheader missing"
+    # one row per detected block (2), the tested ones marked
+    _tables = [d.value for d in at.dataframe if "Tested" in d.value.columns]
+    assert len(_tables) == 1 and len(_tables[0]) == 2, "block table missing"
+    assert _tables[0]["Tested"].tolist() == ["yes", "yes"]
+    assert any(b.label == "Download block table (CSV)" for b in at.get("download_button"))
 
     # the effect-size (η²) and LD-coherence guidance is the subheader's "?" tooltip
     _help = " ".join(s.proto.help for s in at.subheader
-                     if "Association results per block" in s.value)
+                     if "LD blocks and haplotype tests" in s.value)
     assert "Variance explained" in _help, "effect-size (η²) guidance missing"
     assert "not adjusted for kinship" in _help, "η² kinship caveat missing"
     assert "member-pair" in _help, "LD-block coherence guidance missing"

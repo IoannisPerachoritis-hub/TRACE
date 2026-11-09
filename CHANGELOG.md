@@ -5,6 +5,19 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **One block table on the LD Blocks & Haplotypes tab, with one CSV.** "LD
+  blocks and haplotype tests" has one row per detected block, with its
+  haplotype test and its LD coherence joined on the block's chromosome, start
+  and end. A "Tested" column says "yes", or why the block was not tested (the
+  haplotype test now records the reason, e.g. "fewer than 2 haplotype groups of
+  at least 3 samples"; nothing it writes to a file changes). The default view
+  shows the main columns, "Show all columns" the rest. A value that appeared
+  under two names is shown once: P (permutation) (PValue is P_perm), FDR q, mean
+  r². The test's η² and the η² over every SNP in the block's window differ, so
+  both are kept, labelled. "Download block table (CSV)" gives every column and
+  replaces the three CSV buttons (LD blocks, LD-block coherence, haplotype
+  analysis results). The tab's ZIP bundle, which held the same two tables, is
+  gone; the GWAS page's results ZIP is unchanged.
 - **The LD Blocks & Haplotypes tab keeps its settings in one panel.** A collapsed
   "Settings" panel at the top of the tab holds the LD-block detection settings
   (seed threshold, top N, LD window, r² threshold), the haplotype test's

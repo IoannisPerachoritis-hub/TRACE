@@ -3,7 +3,6 @@
 import logging
 import re
 import textwrap
-import zipfile
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -603,25 +602,8 @@ def render(
                 "Lower it, or check that the GWAS produced significant hits."
             )
         else:
+            # every detected block is a row of "LD blocks and haplotype tests" below
             st.success(f"Found {haplo_df_auto.shape[0]} LD blocks.")
-            with st.expander("Block inventory: coordinates, SNP counts, coherence"):
-                # seed_significant: does each block's lead clear the significance
-                # threshold? Retaining the top-N control admits blocks seeded by
-                # non-significant markers; this column tells them apart in the inventory.
-                _inv = haplo_df_auto.copy()
-                _sig_thr = float(st.session_state.get("ld_block_metadata_auto", {})
-                                 .get("sig_threshold", 1e-5))
-                if "lead_snp_pvalue" in _inv.columns:
-                    _inv["seed_significant"] = (
-                        pd.to_numeric(_inv["lead_snp_pvalue"], errors="coerce") < _sig_thr)
-                st.dataframe(_inv, use_container_width=True)
-                st.download_button(
-                    "Download LD blocks (CSV)",
-                    _inv.to_csv(index=False).encode(),
-                    file_name="LD_clusters_genomewide.csv",
-                    mime="text/csv",
-                    key="dl_ld_clusters"
-                )
 
         # ============================================================
         # Stability of LD block discovery
@@ -833,6 +815,35 @@ def _render_haplotype_gwas(
     else:
         hap_gwas_df = st.session_state[hap_key]
     hap_tables = st.session_state.get(f"{hap_key}::tables", {})
+    # why each untested block was left out (recorded by the test, in its result's attrs)
+    _untested = dict(getattr(hap_gwas_df, "attrs", {}).get("untested", {}) or {})
+
+    # LD-block coherence: the triage quality layer for every detected block (Mean r2 is
+    # the same helper as the block's own, so one coherence number). Raw dosage is used
+    # when present (higher fidelity than the imputed fallback).
+    _ldq_full = None
+    try:
+        from gwas.ld import compute_block_ld_quality as _cblq
+        _ldq_full = _cblq(haplo_df_auto, chroms, positions, sid, geno_ld, ctx.gwas_df,
+                          geno_dosage_raw=ctx.geno_dosage_raw, r2_coherent=0.6)
+    except Exception as _e:
+        st.caption(f"LD-block coherence unavailable: {_e}")
+
+    _seed_p = (settings or {}).get("seed_p")
+
+    def _show_block_table(tested_df):
+        """One row per detected block: the block, its haplotype test, its coherence."""
+        from .block_table import compact_view, merge_block_table
+        _tbl = merge_block_table(haplo_df_auto, tested_df, _ldq_full, untested=_untested,
+                                 seed_p=_seed_p)
+        st.subheader("LD blocks and haplotype tests", help=ASSOCIATION_RESULTS_HELP)
+        _all = st.toggle("Show all columns", value=False, key="block_table_all_columns")
+        st.dataframe(_tbl if _all else compact_view(_tbl), use_container_width=True)
+        st.download_button(
+            "Download block table (CSV)", _tbl.to_csv(index=False).encode("utf-8"),
+            file_name=f"LD_blocks_and_haplotype_tests_{ld_trait}.csv", mime="text/csv",
+            key="dl_block_table",
+        )
 
     # ------------------------------------------------------------
     # Block-level multiple testing correction (FDR)
@@ -841,6 +852,7 @@ def _render_haplotype_gwas(
 
     # checked before the FDR step: multipletests raises on an empty table
     if hap_gwas_df is None or hap_gwas_df.empty:
+        _show_block_table(None)
         st.info(
             "No haplotype blocks had enough variation "
             "for association testing."
@@ -885,70 +897,11 @@ def _render_haplotype_gwas(
         )
     st.session_state["hap_gwas_df_enriched"] = hap_gwas_df
 
-    # LD-block coherence (Change 2): surface the already-wired triage quality layer,
-    # which was invisible in the GUI. ldq_r2_mean == the block table's "Mean r2"
-    # (Change 1, same helper -> one coherence number, never two); ldq_r2_min +
-    # ldq_frac_members_r2_lead_ge show how tight the block is and how much of it
-    # tracks the lead. DISPLAY-ONLY join -- the downloadable haplotype CSV / ZIP
-    # (hap_gwas_df) is untouched. Raw dosage is used when present (higher fidelity
-    # than the imputed fallback).
-    _ldq_full = None
-    _disp = hap_gwas_df.sort_values("PValue").copy()
-    try:
-        from gwas.ld import compute_block_ld_quality as _cblq
-        from annotation import canon_chr as _cc
-        _ldq_full = _cblq(haplo_df_auto, chroms, positions, sid, geno_ld, ctx.gwas_df,
-                          geno_dosage_raw=ctx.geno_dosage_raw, r2_coherent=0.6)
-        if _ldq_full is not None and not _ldq_full.empty:
-            _coh = ["ldq_r2_mean", "ldq_r2_min", "ldq_frac_members_r2_lead_ge"]
-            _j = _ldq_full.copy()
-            _j["_c"] = _j["Chr"].astype(str).map(_cc)
-            _j["_s"] = _j["Start (bp)"].astype(int)
-            _j["_e"] = _j["End (bp)"].astype(int)
-            _disp["_c"] = _disp["Chr"].astype(str).map(_cc)
-            _disp["_s"] = _disp["Start"].astype(int)
-            _disp["_e"] = _disp["End"].astype(int)
-            _disp = _disp.merge(_j[["_c", "_s", "_e"] + _coh],
-                                on=["_c", "_s", "_e"], how="left").drop(columns=["_c", "_s", "_e"])
-            _disp = _disp.rename(columns={
-                "ldq_r2_mean": "Mean r2", "ldq_r2_min": "Min r2",
-                "ldq_frac_members_r2_lead_ge": "Frac r2>=.6 to lead"})
-    except Exception as _e:
-        st.caption(f"LD-block coherence unavailable: {_e}")
-
-    show_cols = [c for c in [
-        "Chr", "Start", "End", "lead_snp", "n_snps",
-        "n_haplotypes", "n_tested_haplotypes",
-        "n_samples_block", "n_samples_tested",          # T-34: the two view denominators, now visible
-        "df1", "df2", "F_param", "PValue_param",
-        "F_perm", "P_perm", "PValue", "FDR_qvalue",
-        "eta2", "eta2_ci_low", "eta2_ci_high", "omega2", "lead_snp_r2",  # effect-size CI + omega2 + lead R^2
-        "EtaSq", "Frac_other", "Block_length_kb", "maf_median",  # T-34: enriched, now on screen
-        "Mean r2", "Min r2", "Frac r2>=.6 to lead",     # LD-coherence (Change 2); Mean r2 == block table
-    ] if c in _disp.columns]
-
     st.success(
         f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
     )
-    st.subheader("Association results per block", help=ASSOCIATION_RESULTS_HELP)
-    st.dataframe(
-        _disp[show_cols],
-        use_container_width=True
-    )
-    if _ldq_full is not None and not _ldq_full.empty:
-        with st.expander("LD-block coherence: full per-block quality metrics"):
-            st.caption(
-                "Within-block coherence threshold (--ld-merge-r2): **0.5** (active default). "
-                "It governs both the within-block coherence split and the cross-block merge test."
-            )
-            st.dataframe(_ldq_full, use_container_width=True)
-            st.download_button(
-                "Download LD-block coherence (CSV)",
-                _ldq_full.to_csv(index=False).encode(),
-                file_name="LD_block_coherence.csv",
-                mime="text/csv",
-                key="dl_ld_quality",
-            )
+    # every detected block, its haplotype test and its coherence: one table, one CSV
+    _show_block_table(hap_gwas_df)
 
     # Lead-SNP genotype-effect gallery: browse any significant SNP (threshold selector
     # + expander picker) above the per-block MLG visualization below. Module-level so it
@@ -1341,7 +1294,6 @@ def _render_block_visualization(
                    + (f"its sample-to-haplotype assignments could not be built "
                       f"({hap_assign_error})." if hap_assign_error else
                       "the haplotype test kept no per-sample table for it."))
-        _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col)
         return
 
     # the block's own file sits under its box/raincloud plot (the plot's data); the
@@ -1528,27 +1480,6 @@ def _render_block_visualization(
     # Store for expression panel selection
     st.session_state["pheno_vis"] = pheno_vis
     st.session_state["sample_vis"] = sample_vis
-
-    _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col)
-
-
-def _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col):
-    """The block panel's ZIP export and haplotype results download."""
-    # ZIP export
-    _render_zip_export(
-        haplo_df_auto=haplo_df_auto,
-        hap_gwas_df=hap_gwas_df,
-        trait_col=trait_col,
-    )
-
-    # Download results
-    st.download_button(
-        "Download haplotype analysis results (CSV)",
-        hap_gwas_df.to_csv(index=False).encode(),
-        file_name=f"Haplotype_GWAS_{trait_col}.csv",
-        mime="text/csv",
-        key="dl_hap_gwas"
-    )
 
 
 
@@ -2126,58 +2057,3 @@ def _render_tukey_and_boxplot(
                 mime="text/csv",
                 key=f"dl_forest_{selected_block}",
             )
-
-
-def _render_zip_export(haplo_df_auto, hap_gwas_df, trait_col):
-    """One-click analysis bundle (ZIP)."""
-    with st.expander("Export: one-click analysis bundle (ZIP)", expanded=False):
-        st.markdown(
-            "Creates a single ZIP containing the main tables produced on this page "
-            "(LD blocks and haplotype analysis results with η²/MAF)."
-        )
-
-        if st.button("Build ZIP bundle"):
-            buf_zip = BytesIO()
-
-            hap_out = hap_gwas_df
-
-            readme = textwrap.dedent(f"""
-            Post-GWAS Analysis Bundle
-
-            Trait: {trait_col}
-
-            Notes:
-            - LD blocks are correlated due to LD; BH-FDR on blocks can be conservative.
-            - Permutation-calibrated block p-values (if computed) are empirical robustness checks.
-            - EtaSq is η² (SS_between / SS_total) for the tested MLG groups.
-            - maf_median/maf_mean are computed from 0/1/2 dosage as minor allele frequency per SNP, summarized per block.
-
-            Contents:
-            - LD_clusters_peakcentric.csv (if available)
-            - Haplotype_GWAS_blocks.csv (haplotype/MLG GWAS table with η²/MAF)
-            """)
-
-            with zipfile.ZipFile(buf_zip, "w", compression=zipfile.ZIP_DEFLATED) as z:
-                z.writestr("README.txt", readme)
-
-                if isinstance(haplo_df_auto, pd.DataFrame) and not haplo_df_auto.empty:
-                    z.writestr(
-                        f"LD_clusters_peakcentric__{trait_col}.csv",
-                        haplo_df_auto.to_csv(index=False)
-                    )
-
-                if isinstance(hap_out, pd.DataFrame) and not hap_out.empty:
-                    z.writestr(
-                        f"Haplotype_GWAS__{trait_col}.csv",
-                        hap_out.to_csv(index=False)
-                    )
-
-            st.download_button(
-                "Download ZIP bundle",
-                data=buf_zip.getvalue(),
-                file_name=f"LD_Haplotype_bundle__{trait_col}.zip",
-                mime="application/zip",
-                key="dl_zip_bundle"
-            )
-
-
