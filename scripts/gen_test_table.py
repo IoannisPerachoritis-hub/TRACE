@@ -85,7 +85,7 @@ AREAS: list[tuple[str, str, list[str]]] = [
          "test_hap_sample_alignment_apptest", "test_one_click_multitrait_apptest",
          "test_ld_heatmap_same_window_apptest", "test_detailed_view_significance_apptest",
          "test_post_gwas_fdr_apptest", "test_haplotype_assignments_apptest",
-         "test_plot_display_guard", "test_show_plot"]),
+         "test_plot_display_guard", "test_show_plot", "test_tab_settings_panel"]),
     ("Pipeline integration", "end-to-end GWAS pipeline and stage wiring",
         ["test_gwas_integration", "test_pipeline_stages", "test_trait_pipeline"]),
     ("Golden regression & pinned defaults", "byte-stable golden fixtures, the golden lock, and pinned signatures/defaults",

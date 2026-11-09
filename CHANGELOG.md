@@ -5,6 +5,14 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The LD Blocks & Haplotypes tab keeps its settings in one panel.** A collapsed
+  "Settings" panel at the top of the tab holds the LD-block detection settings
+  (seed threshold, top N, LD window, r² threshold), the haplotype test's
+  (permutations and the two minimum sample counts) and the lead-SNP gallery's
+  significance rule, with one line above it naming the values in use. The keys
+  and defaults are unchanged. "Significance threshold (P <)" is now "Seed
+  threshold for LD blocks (P <)": it is the CLI's `--ld-seed-p`, not the
+  genome-wide significance rule. The gallery names the rule it uses.
 - **"How to read" guidance moved into "?" tooltips.** On the haplotype tab, the
   "How to read effect sizes (η²)" and "How to read LD-block coherence (r²)"
   buttons are now one "?" on "Association results per block"; on the GWAS page,

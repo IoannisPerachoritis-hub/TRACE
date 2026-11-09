@@ -340,42 +340,46 @@ def _render_haplotype_pca(
         _pca_toggle_fragment()
 
 
-def render(
-    ctx: LDContext,
-    get_r2_cached,
-    cached_extract_block_geno,
-    compute_block_qc_effects,
-    run_haplotype_block_gwas_cached_fn,
-):
-    try:
-        st.subheader("LD blocks")
+def _rule_short_name(rule_label, custom=None):
+    """'Bonferroni' for 'Bonferroni (α = 0.05)', 'M_eff' for 'M_eff: Li & Ji (...)';
+    a custom rule names its p-value."""
+    label = str(rule_label)
+    if label.startswith("Custom"):
+        return f"custom P < {float(custom):.1e}" if custom is not None else "custom"
+    return label.split(":")[0].split(" (")[0].strip()
 
-        # Haplotype permutation control (tab-local: only this tab consumes n_perm_hap).
-        st.number_input(
-            "Haplotype permutations",
-            min_value=100, max_value=10000, value=1000, step=100,
-            key="n_perm_hap",
-            help="Number of Freedman-Lane permutations for haplotype block analysis. "
-                 "Higher = finer p-values but slower. Max -log10(p) ≈ log10(n_perm).",
-        )
 
-        # Local aliases
-        gwas_df = ctx.gwas_df
-        chroms = ctx.chroms
-        positions = ctx.positions
-        geno_ld = ctx.geno_ld
-        sid = ctx.sid
-        trait_col = ctx.trait_col
-        ld_decay_kb = ctx.ld_decay_kb
-        haplo_df_auto = ctx.haplo_df_auto
+def settings_summary(seed_p, top_n, flank_kb, ld_r2, n_perm, min_hap_count, min_group_size,
+                     gallery_rule, gallery_custom=None):
+    """The Settings panel's one line: the values in use, e.g. "Seeds P < 1e-05 plus top 10
+    · window 200 kb · r² ≥ 0.6 · 1,000 permutations · haplotypes ≥ 5 samples · groups ≥ 3
+    · gallery: Bonferroni"."""
+    seeds = f"Seeds P < {float(seed_p):.0e}"
+    if int(top_n) > 0:
+        seeds += f" plus top {int(top_n)}"
+    return " · ".join([
+        seeds,
+        f"window {float(flank_kb):g} kb",
+        f"r² ≥ {float(ld_r2):g}",
+        f"{int(n_perm):,} permutations",
+        f"haplotypes ≥ {int(min_hap_count)} samples",
+        f"groups ≥ {int(min_group_size)}",
+        f"gallery: {_rule_short_name(gallery_rule, gallery_custom)}",
+    ])
 
-        # LD-block detection auto-reruns on any parameter change (no run/refresh
-        # checkbox): the parameter controls render unconditionally, and detection is
-        # cached by a session-state hash-guard (ld_key, mirroring the hap_key guard
-        # below and the page-level needs_rebuild), so it recomputes only when the data
-        # or a detection parameter changes.
+
+def _render_settings(ctx):
+    """Every setting of the tab, in one collapsed "Settings" panel at the top, with a
+    summary line of the values in use above it. Three groups: LD blocks (detection),
+    Haplotype test, Lead-SNP gallery. Keys and defaults are those the widgets had in
+    their former places (the CLI's defaults); returns their values."""
+    from .tab_significant_snps import _SIG_LABELS
+
+    summary_slot = st.empty()
+    with st.expander("Settings", expanded=False):
+        st.markdown("**LD blocks**")
         sig_thresh = st.number_input(
-            "Significance threshold (P <)",
+            "Seed threshold for LD blocks (P <)",
             min_value=1e-12,
             max_value=0.1,
             value=1e-5,
@@ -383,11 +387,18 @@ def render(
             help=(
                 "Markers below this p-value seed LD blocks. After the disjoint-block "
                 "redesign each seed yields at most one block, so this threshold now "
-                "determines the block count directly."
+                "determines the block count directly. This is the CLI's --ld-seed-p "
+                "(default 1e-5), not the genome-wide significance rule."
             ),
         )
-
-        flank_kb_default = float(np.clip(ld_decay_kb * 2, 200, 2000))
+        top_n = st.number_input(
+            "Also include top N SNPs by P-value",
+            min_value=0,
+            max_value=500,
+            value=10,
+            step=1,
+        )
+        flank_kb_default = float(np.clip(ctx.ld_decay_kb * 2, 200, 2000))
         flank_kb_auto = st.number_input(
             "LD window around each lead SNP (kb)",
             min_value=10.0,
@@ -401,7 +412,6 @@ def render(
                 "default is 2× the measured LD decay distance."
             ),
         )
-
         ld_threshold_auto = st.number_input(
             "r² threshold for cluster definition",
             min_value=0.1,
@@ -415,6 +425,96 @@ def render(
             ),
         )
 
+        st.markdown("**Haplotype test**")
+        # tab-local: only this tab consumes n_perm_hap
+        n_perm = st.number_input(
+            "Haplotype permutations",
+            min_value=100, max_value=10000, value=1000, step=100,
+            key="n_perm_hap",
+            help="Number of Freedman-Lane permutations for haplotype block analysis. "
+                 "Higher = finer p-values but slower. Max -log10(p) ≈ log10(n_perm).",
+        )
+        min_hap_count = st.number_input(
+            "Minimum total samples per haplotype (collapse rarer → Other)",
+            min_value=2,
+            max_value=50,
+            value=5,
+            step=1,
+            help=(
+                "Haplotypes observed in fewer samples than this threshold "
+                "are collapsed into the 'Other' group."
+            ),
+        )
+        min_group_size = st.number_input(
+            "Minimum samples per haplotype group (for testing)",
+            min_value=2,
+            max_value=50,
+            value=3,
+            step=1,
+            help=(
+                "Only haplotype groups with at least this many samples "
+                "are included in the ANOVA test."
+            ),
+        )
+
+        st.markdown("**Lead-SNP gallery**")
+        _default = getattr(ctx, "sig_rule_label", "") or ""
+        _idx = _SIG_LABELS.index(_default) if _default in _SIG_LABELS else 1
+        gallery_rule = st.selectbox(
+            "Significance rule:", _SIG_LABELS, index=_idx, key="lead_gallery_rule",
+            help="Which SNPs count as significant for this gallery (defaults to the GWAS-page rule).",
+        )
+        gallery_custom = None
+        if gallery_rule.startswith("Custom"):
+            gallery_custom = st.number_input(
+                "Custom p-value", min_value=1e-300, max_value=1.0,
+                value=float(ctx.custom_thresh) if ctx.custom_thresh else 5e-8,
+                format="%.1e", key="lead_gallery_custom",
+            )
+    summary_slot.caption(settings_summary(sig_thresh, top_n, flank_kb_auto,
+                                          ld_threshold_auto, n_perm,
+                                          min_hap_count, min_group_size, gallery_rule,
+                                          gallery_custom))
+    return {"seed_p": sig_thresh, "top_n": top_n, "flank_kb": flank_kb_auto,
+            "ld_r2": ld_threshold_auto,
+            "n_perm": int(n_perm), "min_hap_count": int(min_hap_count),
+            "min_group_size": int(min_group_size), "gallery_rule": gallery_rule,
+            "gallery_custom": gallery_custom}
+
+
+def render(
+    ctx: LDContext,
+    get_r2_cached,
+    cached_extract_block_geno,
+    compute_block_qc_effects,
+    run_haplotype_block_gwas_cached_fn,
+):
+    try:
+        # every setting of the tab, in one collapsed panel at the top
+        settings = _render_settings(ctx)
+        sig_thresh = settings["seed_p"]
+        flank_kb_auto = settings["flank_kb"]
+        ld_threshold_auto = settings["ld_r2"]
+        top_n = settings["top_n"]
+
+        st.subheader("LD blocks")
+
+        # Local aliases
+        gwas_df = ctx.gwas_df
+        chroms = ctx.chroms
+        positions = ctx.positions
+        geno_ld = ctx.geno_ld
+        sid = ctx.sid
+        trait_col = ctx.trait_col
+        ld_decay_kb = ctx.ld_decay_kb
+        haplo_df_auto = ctx.haplo_df_auto
+
+        # LD-block detection auto-reruns on any parameter change (no run/refresh
+        # checkbox): the parameter controls (in the Settings panel) render unconditionally,
+        # and detection is cached by a session-state hash-guard (ld_key, mirroring the
+        # hap_key guard below and the page-level needs_rebuild), so it recomputes only
+        # when the data or a detection parameter changes.
+
         # Detection parameters the CLI has no flag for are fixed here so the GUI
         # exposes exactly what the CLI exposes (one control per flag), and a GUI
         # run is reproducible from the command line. adj_r2_min (0.2) is measured
@@ -422,14 +522,6 @@ def render(
         # binds on real blocks; gap_factor (10.0) has no CLI flag; min_snps (2) is
         # hardcoded in cli.py's detection call.
         st.session_state["adj_r2_min"] = 0.2   # consumed by Post_GWAS_Analysis.py
-
-        top_n = st.number_input(
-            "Also include top N SNPs by P-value",
-            min_value=0,
-            max_value=500,
-            value=10,
-            step=1,
-        )
 
         # Cache key: the data version (reuse the page's gwas_hash, cheap; fall back to
         # hashing gwas_df) + every detection parameter, incl. the fixed literals so a
@@ -547,6 +639,7 @@ def render(
             cached_extract_block_geno=cached_extract_block_geno,
             compute_block_qc_effects=compute_block_qc_effects,
             run_haplotype_block_gwas_cached_fn=run_haplotype_block_gwas_cached_fn,
+            settings=settings,
         )
 
     except StopException:
@@ -580,8 +673,10 @@ def _render_haplotype_gwas(
     cached_extract_block_geno,
     compute_block_qc_effects,
     run_haplotype_block_gwas_cached_fn,
+    settings=None,
 ):
-    """Sub-section: Haplotype analysis parameters, execution, and visualization."""
+    """Sub-section: the haplotype analysis (its parameters are in the Settings panel),
+    execution, and visualization."""
     # ------------------------------------------------------------------
     # Drift guard: do the genotypes on this page belong to the run on screen?
     # ------------------------------------------------------------------
@@ -617,8 +712,6 @@ def _render_haplotype_gwas(
         # a traceback.
         st.stop()
 
-    st.markdown("#### Haplotype analysis parameters")
-
     trait_col = ctx.trait_col
     ld_trait = ctx.ld_trait
     _gctx_norm = (st.session_state.get("GWAS_CTX") or {})
@@ -636,33 +729,10 @@ def _render_haplotype_gwas(
     pcs = ctx.pcs
     trait_col_resolved = ctx.ld_trait
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        min_hap_count = st.number_input(
-            "Minimum total samples per haplotype (collapse rarer → Other)",
-            min_value=2,
-            max_value=50,
-            value=5,
-            step=1,
-            help=(
-                "Haplotypes observed in fewer samples than this threshold "
-                "are collapsed into the 'Other' group."
-            ),
-        )
-
-    with col2:
-        min_group_size = st.number_input(
-            "Minimum samples per haplotype group (for testing)",
-            min_value=2,
-            max_value=50,
-            value=3,
-            step=1,
-            help=(
-                "Only haplotype groups with at least this many samples "
-                "are included in the ANOVA test."
-            ),
-        )
+    # the two minimum-sample settings (Settings panel; the CLI's defaults otherwise)
+    settings = settings or {}
+    min_hap_count = int(settings.get("min_hap_count", 5))
+    min_group_size = int(settings.get("min_group_size", 3))
 
     if run_haplotype_block_gwas_cached_fn is None:
         st.error(
@@ -883,7 +953,8 @@ def _render_haplotype_gwas(
     # Lead-SNP genotype-effect gallery: browse any significant SNP (threshold selector
     # + expander picker) above the per-block MLG visualization below. Module-level so it
     # runs even when _render_block_visualization is stubbed out in the AppTest.
-    _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=hap_assignments)
+    _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=hap_assignments,
+                             settings=settings)
 
     # ============================================================
     # BLOCK-LEVEL VISUALIZATION: MLG boxplots + Tukey HSD + Table
@@ -1012,7 +1083,8 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
     st.caption(" · ".join(_parts))
 
 
-def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=None):
+def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=None,
+                             settings=None):
     """Browsable per-SNP genotype-effect gallery over the significant SNPs.
 
     A threshold selector (M_eff / Bonferroni / FDR / Custom, via ``rule_from_streamlit``)
@@ -1039,24 +1111,21 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=No
 
     st.markdown("### Lead SNP genotype effect")
     st.caption(
-        "Browse the genotype/phenotype effect for any significant SNP: pick the "
-        "significance rule, then a SNP. Each is rendered with the same two "
-        "structure-aware tests as the per-block lead below."
+        "Browse the genotype/phenotype effect for any significant SNP: pick a SNP. "
+        "Each is rendered with the same two structure-aware tests as the per-block "
+        "lead below."
     )
 
-    _default = getattr(ctx, "sig_rule_label", "") or ""
-    _idx = _SIG_LABELS.index(_default) if _default in _SIG_LABELS else 1
-    _rule_label = st.selectbox(
-        "Significance rule:", _SIG_LABELS, index=_idx, key="lead_gallery_rule",
-        help="Which SNPs count as significant for this gallery (defaults to the GWAS-page rule).",
-    )
-    _custom = None
-    if _rule_label.startswith("Custom"):
-        _custom = st.number_input(
-            "Custom p-value", min_value=1e-300, max_value=1.0,
-            value=float(ctx.custom_thresh) if ctx.custom_thresh else 5e-8,
-            format="%.1e", key="lead_gallery_custom",
-        )
+    # the rule is in the Settings panel (the GWAS page's rule unless changed there)
+    if settings is not None:
+        _rule_label, _custom = settings["gallery_rule"], settings.get("gallery_custom")
+    else:
+        _default = getattr(ctx, "sig_rule_label", "") or ""
+        _rule_label = _default if _default in _SIG_LABELS else _SIG_LABELS[1]
+        _custom = (float(ctx.custom_thresh) if ctx.custom_thresh else 5e-8) \
+            if _rule_label.startswith("Custom") else None
+    st.caption(f"Significant SNPs by the {_rule_short_name(_rule_label, _custom)} rule "
+               "(change it in Settings above).")
     _rule = rule_from_streamlit(_rule_label, int(len(gdf)), ctx.meff_val, custom_thresh=_custom)
     # frame_for_rule: this gallery's own custom p-value, not a stored Significant_Custom
     _sig = gdf.loc[_rule.significant_mask(frame_for_rule(gdf, _rule))].copy()
