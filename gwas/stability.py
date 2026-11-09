@@ -138,6 +138,8 @@ def _make_run_manifest(
         "phenotype_model_normalization": str(norm_option),
         "phenotype_preprocessing": {
             "zero_handling": pheno_zero_handling or {},
+            # the GWAS page's applied transformation for this trait, {trait: --norm
+            # slug}; {} when the trait uses raw values
             "transformations_section_2b": pheno_transformations or {},
         },
         "structure_covariates": {"n_pcs": int(n_pcs)},

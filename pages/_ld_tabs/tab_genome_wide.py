@@ -603,6 +603,13 @@ def _render_haplotype_gwas(
 
     trait_col = ctx.trait_col
     ld_trait = ctx.ld_trait
+    _gctx_norm = (st.session_state.get("GWAS_CTX") or {})
+    if _gctx_norm.get("trait") == ld_trait and _gctx_norm.get("norm") not in (None, "none"):
+        from pages._pheno_qc.stats import SLUG_NAMES as _SLUG_NAMES
+        st.caption(
+            f"The haplotype tests use the uploaded values of {ld_trait}; the GWAS scans "
+            f"used {_SLUG_NAMES.get(_gctx_norm['norm'], _gctx_norm['norm'])} for it (as "
+            "cli.py --norm does).")
     geno_ld = ctx.geno_ld
     geno_df = ctx.geno_df
     chroms = ctx.chroms
@@ -1044,6 +1051,14 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
             return
         _ph_ser = pd.to_numeric(_ph_used[ctx.ld_trait], errors="coerce")
         _ph_ser.index = _ph_ser.index.astype(str)
+        # When the GWAS page applied a transformation to this trait, plot the phenotype
+        # the GWAS model analysed (its y), so the axis and eta2 are on the scale of the
+        # beta shown, as in the CLI report's per-SNP plots; raw runs are unchanged.
+        _gctx = st.session_state.get("GWAS_CTX") or {}
+        if (_gctx.get("trait") == ctx.ld_trait and _gctx.get("norm") not in (None, "none")
+                and _gctx.get("y") is not None and _gctx.get("geno_index") is not None):
+            _ph_ser = pd.Series(np.asarray(_gctx["y"], dtype=float).ravel(),
+                                index=np.asarray(_gctx["geno_index"], dtype=str))
         _y_full = _ph_ser.reindex(_geno_ids).values.astype(float)
         _ok = np.isfinite(_dose) & np.isfinite(_y_full)
         if int(_ok.sum()) < 5:

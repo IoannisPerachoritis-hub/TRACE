@@ -323,7 +323,8 @@ def _rehydrate_or_stop(msg=None, level="error"):
     st.stop()
 
 
-_CLEAR_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "VCF_BYTES::", "gwas_zip_")
+_CLEAR_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "VCF_BYTES::", "gwas_zip_",
+                   "BOOT_GWAS::")
 _CLEAR_KEYS = (
     "_persist_vcf_bytes", "_persist_pheno", "_persist_is_gz", "_persist_covar",
     "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
@@ -331,6 +332,7 @@ _CLEAR_KEYS = (
     "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
     "pheno_reader", "covar_reader", "pheno_aligned", "pheno", "y", "iid",
     "sid", "chroms", "chroms_num", "positions", "GWAS_CTX", "pheno_raw",
+    "pheno_applied_transforms", "_pheno_raw_fp", "subsampling_gwas_summary",
 )
 
 
@@ -766,6 +768,20 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # Store RAW phenotype immediately (before zero-handling or transformations)
     # Always refresh pheno_raw when a new phenotype file is loaded
     st.session_state["pheno_raw"] = pheno.copy()
+    # A new phenotype file clears the applied transformations (they were chosen for
+    # the previous table); a rerun or a run from memory has the same content.
+    from pages._pheno_qc.stats import SLUG_NAMES as _SLUG_NAMES
+    _pheno_raw_fp = hash_df(pheno)
+    _applied_before = st.session_state.get("pheno_applied_transforms") or {}
+    if (st.session_state.get("_pheno_raw_fp") not in (None, _pheno_raw_fp)
+            and _applied_before):
+        st.session_state["pheno_applied_transforms"] = {}
+        st.info(
+            "A new phenotype file was loaded, so the applied transformations were cleared ("
+            + "; ".join(f"{_t} -> {_SLUG_NAMES.get(_s, _s)}" for _t, _s in _applied_before.items())
+            + "). Every trait now uses raw values."
+        )
+    st.session_state["_pheno_raw_fp"] = _pheno_raw_fp
 
     st.caption(f"Phenotype IDs (first 10): {pheno.index[:10].tolist()}")
 
@@ -795,43 +811,45 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     #   pheno_raw       : original upload (for fallback/reset)
     #   pheno_aligned   : GWAS QC-aligned subset (primary for downstream analysis)
     #   pheno_used_for_hap : column-standardized copy for LD/haplotype pages
+    #   pheno_applied_transforms : {trait: CLI --norm slug}: Apply / Remove / Reset all
+    #                       (2b); cleared on a new phenotype file and Clear session data
 
     # ------------------------------------------------
     # 2b. Phenotype QC and transformation
     # ------------------------------------------------
-    _gui_pheno_tf = None  # the transform applied on THIS rerun (One-Click records it)
+    # The panel's trait and method selectors drive only its preview. A transformation
+    # is used only after Apply, which records it for that trait; the table keeps the
+    # uploaded values, and each trait's slug is passed as that trait's normalisation,
+    # applied where cli.py applies --norm (gwas.qc._pipeline_phenotype_qc, on the
+    # trait's own analysis samples). Apply, Remove and Reset all are callbacks, which
+    # run before this script, so the status line below is current on the click's rerun.
+    from pages._pheno_qc import PhenoQCContext
+    from pages._pheno_qc import apply as _pheno_apply
+    from pages._pheno_qc import diagnostics as _pheno_diag
+    from pages._pheno_qc.stats import applied_status_line as _applied_status_line
+    _pheno_num_cols = pheno.select_dtypes(include=[np.number]).columns.tolist()
+    st.caption(_applied_status_line(_pheno_apply.applied_transforms(), order=_pheno_num_cols))
     with st.expander("Phenotype QC and transformation", expanded=False):
-        _pheno_raw_df = st.session_state.get("pheno_raw", pheno)
-        _pheno_num_cols = _pheno_raw_df.select_dtypes(include=[np.number]).columns.tolist()
         if not _pheno_num_cols:
             st.write("No numeric phenotype columns available for QC / transformation.")
         else:
-            from pages._pheno_qc import PhenoQCContext
-            from pages._pheno_qc import diagnostics as _pheno_diag
-            # Read the ORIGINAL upload (pheno_raw) so the preview is idempotent and
-            # never double-transforms; the chosen transform is then applied to pheno
-            # for the run. This stays ABOVE the pheno_hash so switching the transform
-            # is a correct cache miss (the key is content-derived from the transformed
-            # frame -- do not move this below the hash).
             _pheno_ctx = PhenoQCContext(
-                pheno_df=_pheno_raw_df, numeric_cols=_pheno_num_cols,
-                id_col=str(_pheno_raw_df.index.name or "ID"), source="session")
+                pheno_df=pheno, numeric_cols=_pheno_num_cols,
+                id_col=str(pheno.index.name or "ID"), source="session")
             _qc_trait, _qc_method, _qc_transformed, _qc_ok = _pheno_diag.render(
                 _pheno_ctx, embedded=True, key_prefix="gwas_pheno_qc")
-            if _qc_ok and _qc_method != "None (raw values)":
-                pheno = pheno.copy()
-                pheno[_qc_trait] = _qc_transformed
-                st.session_state["pheno_transformations"] = {
-                    "transformation_method": str(_qc_method),
-                    "columns_transformed": [_qc_trait],
-                }
-                st.session_state["pheno_already_transformed"] = True
-                _gui_pheno_tf = {"method": str(_qc_method), "columns": [_qc_trait]}
+            _pheno_apply.render(_pheno_ctx, _qc_trait, _qc_method, key_prefix="gwas_pheno_qc")
+    # Each trait's normalisation for this run: its applied transformation, else none.
+    _norm_by_trait = {_t: _s for _t, _s in _pheno_apply.applied_transforms().items()
+                      if _t in _pheno_num_cols}
+
+    def _norm_for(_trait):
+        return _norm_by_trait.get(_trait, "none")
 
     # =========================
     # 3. Trait selection
     # =========================
-    # After normalization, select only numeric columns as possible traits
+    # The numeric columns are the traits (the table holds the uploaded values)
     numeric_traits = pheno.select_dtypes(include=[np.number]).columns.tolist()
 
     st.markdown("### Select traits for GWAS")
@@ -908,13 +926,15 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         vcf_bytes = st.session_state["_persist_vcf_bytes"]
         is_gz = st.session_state.get("_persist_is_gz", False)
 
-    # Phenotype normalisation is handled exclusively in Section 2b (above); the
-    # pipeline must not re-transform, so it receives the 'none' slug.
-    norm_option = "none"
+    # Phenotype normalisation: each trait's applied transformation from Section 2b
+    # (else 'none'), passed to the pipeline as its --norm slug, which applies it as
+    # cli.py --norm does. The phenotype table (and so pheno_hash) holds raw values.
 
     # --- Build stable cache keys ---
     vcf_hash = hash_bytes(vcf_bytes)
-    pheno_hash = hash_df(pheno)
+    # the raw table's fingerprint from the new-upload check above (the table has not
+    # changed since: only an idempotent column-name strip ran in between)
+    pheno_hash = _pheno_raw_fp
 
     # --- Store heavy inputs in session_state under those keys ---
     st.session_state[f"VCF_BYTES::{vcf_hash}"] = vcf_bytes
@@ -935,7 +955,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 trait_col=_setup_trait,
                 maf_thresh=maf_thresh,
                 miss_thresh=miss_thresh,
-                norm_option=norm_option,
+                norm_option=_norm_for(_setup_trait),
                 drop_alt=drop_alt,
                 ind_miss_thresh=ind_miss_thresh,
                 mac_thresh=mac_thresh,
@@ -966,6 +986,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         _rehydrate_or_stop(
             "No selected trait can be analysed: "
             + "; ".join(f"{t}: {e}" for t, e in _setup_failed.items()))
+    # the detailed view's trait: its normalisation keys the caches and the records below
+    norm_option = _norm_for(trait_col)
     if _setup_failed:
         st.warning(
             "Not usable for the detailed view: "
@@ -1037,12 +1059,15 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         st.caption(
             f"Covariate: {_covar_source} · columns: {', '.join(user_covar_names)}"
         )
+    # y depends on the trait's normalisation, which pheno_hash (raw table) does not
+    # carry: it keys the string-keyed MLMM / FarmCPU caches
     y_key = put_array_in_session(
         np.asarray(y),
         "Y_VEC",
         vcf_hash,
         pheno_hash,
         trait_col,
+        norm_option,
     )
 
     # Kernel reader
@@ -1125,7 +1150,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         "PHENO_READER",
         vcf_hash,
         pheno_hash,
-        trait_col
+        trait_col,
+        norm_option,
     )
 
     # Covariates (PCs + optional user covariates)
@@ -1358,6 +1384,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         "positions": st.session_state["positions"],
         "pheno_aligned": st.session_state["pheno_aligned"].copy(),
         "trait": trait_col,
+        "norm": norm_option,   # y's normalisation (the applied transformation, or none)
         "iid": st.session_state["iid"],
         "y": st.session_state["y"],
         "pcs": st.session_state["pcs"],
@@ -1723,8 +1750,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 impute=impute_method,
                 impute_k=int(impute_k),
                 impute_l=int(impute_l),
-                norm="none",  # Section 2b has already transformed the phenotype table
-                pheno_transform=_gui_pheno_tf,  # ...for its one trait; recorded in the metadata
+                norm="none",  # every trait without an applied transformation...
+                norm_by_trait=dict(_norm_by_trait),  # ...and the ones Apply set (Section 2b)
                 covar=(_covar_source or "covariates") if covar_df is not None else None,
                 covar_frame=covar_df,
                 covar_missing="refuse",  # the page's rule, per trait (the CLI drops instead)
@@ -1874,7 +1901,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         trait_col, int(n_pcs), _covar_fp,
         maf_thresh, miss_thresh, ind_miss_thresh, mac_thresh, info_thresh,
         impute_method, impute_k, impute_l,
-        int(drop_alt), vcf_hash, pheno_hash,
+        int(drop_alt), vcf_hash, pheno_hash, norm_option,
     )).encode(), digest_size=16)
     # Navigated back (did not click Run this rerun) and results already exist for this
     # trait -> re-display them, with a staleness notice if the inputs have since changed.
@@ -1887,6 +1914,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     if not st.session_state.get("gwas_triggered", False):
         _rehydrate_or_stop()
     st.session_state["_last_gwas_trait"] = trait_col
+    # this run's subsampling (if ticked) writes its own summary for the run manifest;
+    # never carry an earlier run's (or another trait's) summary into this one
+    st.session_state.pop("subsampling_gwas_summary", None)
 
     # ------------------------------------------------------------
     # Collect all figures for ZIP export (per trait)
@@ -2173,7 +2203,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         n_snps=int(geno_df.shape[1]),
         qc_snp=results.get("qc_snp", {}) if isinstance(results, dict) else {},
         pheno_zero_handling=st.session_state.get("pheno_zero_handling", {}),
-        pheno_transformations=st.session_state.get("pheno_transformations", {}),
+        # this trait's applied transformation only ({} when it uses raw values)
+        pheno_transformations=({trait_col: norm_option} if norm_option != "none" else {}),
         kinship_model=results.get("kinship_model", None) if isinstance(results, dict) else None,
         loco_fallback_by_chr=st.session_state.get("loco_diagnostics_by_chr", {}),
     )
@@ -2258,9 +2289,12 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 ),
             )
 
-            # Stable cache key for subsampling results
+            # Stable cache key for subsampling results. _scan_fp carries every input of
+            # the scan (the trait's normalisation, the phenotype table, the genotypes,
+            # PCs, covariates, QC and imputation settings), so an Apply / Remove in the
+            # phenotype QC panel or a new upload is a miss.
             boot_cache_key = (
-                f"BOOT_GWAS::{trait_col}"
+                f"BOOT_GWAS::{trait_col}::{_scan_fp}"
                 f"::reps{boot_n_reps}::frac{boot_sample_frac:.2f}"
                 f"::thresh{boot_disc_thresh:.1e}::seed{boot_seed}"
                 f"::loco{boot_use_loco}"
@@ -2268,6 +2302,11 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             )
 
             if boot_cache_key not in st.session_state:
+                # one entry per trait (each holds a reps x SNPs p-value matrix)
+                for _old_boot_key in [k for k in list(st.session_state.keys())
+                                      if isinstance(k, str)
+                                      and k.startswith(f"BOOT_GWAS::{trait_col}::")]:
+                    del st.session_state[_old_boot_key]
 
                 # Validate Z_for_grm is available
                 Z_grm_boot = st.session_state.get("Z_grm", None)
@@ -2721,7 +2760,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     cofactor_logs = {}
     pheno_reader_key = put_object_in_session(
         pheno_reader, "PHENO_READER",
-        vcf_hash, pheno_hash, trait_col
+        vcf_hash, pheno_hash, trait_col, norm_option
     )
     # MLM covar key (used by downstream helpers that reference the MLM PC set).
     covar_reader_key = put_object_in_session(
@@ -3255,6 +3294,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         manifest["Covariate columns"] = (
             ", ".join(user_covar_names) if user_covar_names else None)
         manifest["Covariates applied"] = user_covar_mat is not None
+        # this run's subsampling summary (written by the stability section above, after
+        # the manifest was built), or None when this run did no subsampling
+        manifest["subsampling_gwas_resampling"] = (
+            st.session_state.get("subsampling_gwas_summary") if run_subsampling else None)
         meta["run_manifest"] = manifest
 
 

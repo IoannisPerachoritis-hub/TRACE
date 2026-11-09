@@ -228,15 +228,6 @@ def check_data_version(page_key: str) -> bool:
     return True
 
 
-def trait_was_transformed(trait: str) -> bool:
-    """
-    Returns True if the current trait was transformed in Section 2b.
-    Uses session_state['pheno_transformations'] (columns_transformed list).
-    """
-    info = st.session_state.get("pheno_transformations", {}) or {}
-    cols = set(map(str, info.get("columns_transformed", []) or []))
-    return str(trait) in cols
-
 def _mean_impute_cols(Z: np.ndarray) -> np.ndarray:
     """
     Column-wise mean impute for NaNs. Used ONLY for PCA/GRM pruning steps

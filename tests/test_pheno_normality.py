@@ -4,6 +4,8 @@ Tests for the phenotype normality-check page's pure statistics and loader.
 Covers the house conventions: happy-path (normal data), monomorphic/constant
 column, small-n guards, the Shapiro (n>5000) and D'Agostino (n<8) skips,
 transform round-trips, NaN preservation, and the file loader's ID detection.
+Plus the GWAS page's Apply helpers: each menu entry's CLI --norm slug, the reason
+Apply is not available, and the status line (reviewer point 2-INT.7).
 """
 import io
 
@@ -13,14 +15,19 @@ import pytest
 
 from pages._pheno_qc import load_phenotype_file
 from pages._pheno_qc.stats import (
+    SLUG_NAMES,
     TRANSFORM_INT,
+    TRANSFORM_LABELS,
     TRANSFORM_LOG10,
     TRANSFORM_NONE,
+    TRANSFORM_SLUGS,
     TRANSFORM_YEOJOHNSON,
+    applied_status_line,
     apply_transform,
     normality_summary_table,
     recommend_uniform_method,
     run_normality_tests,
+    transform_refusal,
     transform_whole_table,
 )
 
@@ -245,3 +252,48 @@ def test_loader_tab_separated():
     pheno, id_col, _ = load_phenotype_file(io.BytesIO(tsv))
     assert id_col == "Sample"
     assert list(pheno.columns) == ["Yield"]
+
+
+# ── the GWAS page's Apply: CLI slugs, refusals, status line ───
+
+def test_every_menu_entry_has_a_cli_norm_slug():
+    from cli import _build_parser
+    choices = next(a.choices for a in _build_parser()._actions if a.dest == "norm")
+    assert TRANSFORM_SLUGS == {TRANSFORM_NONE: "none", TRANSFORM_LOG10: "log",
+                               TRANSFORM_YEOJOHNSON: "yeojohnson", TRANSFORM_INT: "int"}
+    assert set(TRANSFORM_SLUGS) == set(TRANSFORM_LABELS)
+    assert set(TRANSFORM_SLUGS.values()) <= set(choices)
+    assert set(TRANSFORM_SLUGS.values()) <= set(SLUG_NAMES)
+
+
+@pytest.mark.parametrize("method", [TRANSFORM_NONE, TRANSFORM_LOG10, TRANSFORM_YEOJOHNSON, TRANSFORM_INT])
+def test_each_method_is_the_clis_normalisation(rng, method):
+    """The preview's transform is gwas.qc.normalise_phenotype with the method's slug,
+    the function the pipeline applies for --norm (log10 is base 10 in both)."""
+    from gwas.qc import normalise_phenotype
+    x = rng.lognormal(0.0, 1.0, size=60)
+    x[[3, 17]] = np.nan
+    expected, note = normalise_phenotype(x, TRANSFORM_SLUGS[method])
+    assert note is None
+    np.testing.assert_array_equal(apply_transform(x, method), expected)
+
+
+def test_transform_refusal_gives_the_reason_or_none():
+    neg = np.array([-1.0, 0.5, 2.0, 3.0, 4.5])
+    assert "non-positive" in transform_refusal(neg, TRANSFORM_LOG10)
+    assert transform_refusal(neg, TRANSFORM_INT) is None
+    assert transform_refusal(neg, TRANSFORM_YEOJOHNSON) is None
+    assert transform_refusal(np.ones(6), TRANSFORM_YEOJOHNSON)       # constant: refused
+    assert transform_refusal(neg, TRANSFORM_NONE)                     # nothing to apply
+    assert transform_refusal(np.abs(neg) + 1.0, TRANSFORM_LOG10) is None
+
+
+def test_applied_status_line():
+    order = ["Trait1", "Trait2", "Trait3"]
+    assert applied_status_line({}, order) == "Phenotypes used: raw values for all traits"
+    assert applied_status_line({"Trait1": "none"}, order) == "Phenotypes used: raw values for all traits"
+    # the brief's example; traits in table order, whatever order they were applied in
+    assert (applied_status_line({"Trait3": "log", "Trait1": "int"}, order)
+            == "Applied: Trait1 -> rank-INT; Trait3 -> log10 - all other traits use raw values")
+    assert (applied_status_line({"Trait2": "yeojohnson", "Trait1": "int", "Trait3": "log"}, order)
+            == "Applied: Trait1 -> rank-INT; Trait2 -> Yeo-Johnson; Trait3 -> log10")

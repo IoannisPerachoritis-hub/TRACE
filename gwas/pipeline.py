@@ -158,20 +158,44 @@ def run_trait_pipeline(parsed_genotypes, pheno_df, trait, options, progress=None
     fields; it is copied, never modified. ``progress``, if given, is called with each
     log message of this trait's run. Raises TraitPipelineError for a trait-level
     stop, and lets any other error propagate to the caller.
+
+    GUI-only: ``options.norm_by_trait`` ({trait: --norm slug}, the phenotype QC
+    panel's applied transformations) gives a trait its own normalisation in place of
+    ``options.norm``. The CLI never sets it, so its ``--norm`` applies to every trait.
+
+    The figures are drawn with matplotlib's original settings (those a CLI process
+    has), whatever the calling process set: the GUI applies its publication theme
+    globally, which would otherwise make One-Click's figures differ from the CLI's.
     """
+    import matplotlib
+
     args = argparse.Namespace(**vars(options))
     args.trait = trait
+    _norm_by_trait = getattr(args, "norm_by_trait", None)
+    if _norm_by_trait is not None:
+        args.norm = _norm_by_trait.get(trait, args.norm)
     records = []
     collector = _Collector(records, progress)
     log.addHandler(collector)
     _info_level_enter()
     try:
-        result = _run_trait(parsed_genotypes, pheno_df.copy(), args)
+        with matplotlib.rc_context(rc=_cli_matplotlib_settings()):
+            result = _run_trait(parsed_genotypes, pheno_df.copy(), args)
     finally:
         log.removeHandler(collector)
         _info_level_exit()
     result.log = records
     return result
+
+
+def _cli_matplotlib_settings():
+    """matplotlib's settings as loaded at import (the matplotlibrc values a CLI process
+    draws with), without the keys a style may not set (backend, interactive, ...). In
+    a CLI process they equal the current settings, so applying them changes nothing."""
+    import matplotlib
+    from matplotlib.style.core import STYLE_BLACKLIST
+
+    return {k: v for k, v in matplotlib.rcParamsOrig.items() if k not in STYLE_BLACKLIST}
 
 
 def run_traits(parsed_genotypes, pheno_df, traits, options, on_start=None, progress=None):
@@ -1264,13 +1288,9 @@ def _run_trait(parsed, pheno, args):
     }
 
     # GUI-only provenance (absent in the CLI, whose metadata stays as it was): the run
-    # label, and a transform the GUI applied to this trait before the pipeline ran.
+    # label. "Normalization" above is this trait's own slug in the GUI too (norm_by_trait).
     if getattr(args, "run_label", None):
         meta["Pipeline"] = args.run_label
-    _gui_tf = getattr(args, "pheno_transform", None)
-    if _gui_tf and args.trait in (_gui_tf.get("columns") or []):
-        meta["Normalization"] = (f"{_gui_tf.get('method')} (applied in the GUI's phenotype "
-                                 "QC panel, to the uploaded table)")
 
     report_html = None
     if not args.no_report:

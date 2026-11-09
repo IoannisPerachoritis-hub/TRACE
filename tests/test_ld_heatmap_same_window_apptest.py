@@ -17,8 +17,8 @@ Every site runs for real, with nothing stubbed:
 
 Settings, the same at all three sites (each exists in the CLI and in the GUI): LD r2
 0.1, flank 200 kb, seeds p < 1e-5 plus the top 10, Bonferroni, MLM only, raw
-phenotype values (the GUI's Section 2b default is a rank-based INT, the CLI default
-is --norm none). At a 200 kb flank the detector's distance cap is 200 kb at every
+phenotype values (no transformation applied in the GUI's Section 2b, the CLI default
+--norm none). At a 200 kb flank the detector's distance cap is 200 kb at every
 site, whatever LD-decay estimate the GUI passes (200 kb floor), so all three detect
 the same blocks. Haplotype permutations are cut to 100 to keep the run short; the
 heatmap does not use them. At the default r2 of 0.6 the example forms no LD block.
@@ -160,7 +160,7 @@ def _run_gwas_page(rec):
     ss["_persist_is_gz"] = True
     ss["_persist_pheno"] = pd.read_csv(_PHENO, sep=None, engine="python", encoding="utf-8-sig")
     ss["selected_traits_multiselect"] = [_TRAIT]
-    ss["gwas_pheno_qc_transform"] = "None (raw values)"   # = the CLI's --norm none
+    ss["gwas_pheno_qc_transform"] = "None (raw values)"   # the preview only; nothing is applied
     ss["pipe_models"] = []                                # One-Click: MLM only
     ss["pipe_subsampling"] = False
     ss["pipe_generate_ld_heatmaps"] = True

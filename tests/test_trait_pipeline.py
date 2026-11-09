@@ -93,19 +93,34 @@ def test_refuse_policy_stops_a_trait_with_covariate_missing_samples(planted, tmp
     assert dropped.summary["n_samples"] == 117
 
 
-def test_gui_provenance_is_recorded_in_the_metadata(planted):
-    res = pl.run_trait_pipeline(
-        planted["parsed"], planted["pheno"], "T_chr1",
-        _opts(planted, no_plots=True, run_label="One-Click Full Analysis",
-              pheno_transform={"method": "Rank-based INT", "columns": ["T_chr1"]}))
-    meta = json.loads(_zip(res)["run_metadata.json"])
-    assert meta["Pipeline"] == "One-Click Full Analysis"
-    assert meta["Normalization"].startswith("Rank-based INT")
-    other = pl.run_trait_pipeline(
-        planted["parsed"], planted["pheno"], "T_chr2",
-        _opts(planted, no_plots=True,
-              pheno_transform={"method": "Rank-based INT", "columns": ["T_chr1"]}))
-    assert json.loads(_zip(other)["run_metadata.json"])["Normalization"] == "none"
+def _without_generated(members):
+    """ZIP members with the report's 'Generated:' time line dropped."""
+    out = dict(members)
+    out["report.html"] = b"\n".join(line for line in members["report.html"].split(b"\n")
+                                    if b"<strong>Generated:</strong>" not in line)
+    return out
+
+
+def test_norm_by_trait_gives_each_trait_its_own_norm(planted):
+    """One-Click passes the phenotype QC panel's applied transformations as
+    norm_by_trait: each trait runs exactly as a run with its own --norm, its metadata
+    names that slug, and the GUI's run label is recorded."""
+    label = "One-Click Full Analysis"
+    runs = {t: res for t, res, _err in pl.run_traits(
+        planted["parsed"], planted["pheno"], ["T_chr1", "T_chr2"],
+        _opts(planted, no_plots=True, run_label=label, norm_by_trait={"T_chr1": "int"}))}
+    for trait, norm in (("T_chr1", "int"), ("T_chr2", "none")):
+        alone = pl.run_trait_pipeline(planted["parsed"], planted["pheno"], trait,
+                                      _opts(planted, no_plots=True, run_label=label, norm=norm))
+        got = _zip(runs[trait])
+        assert _without_generated(got) == _without_generated(_zip(alone)), trait
+        meta = json.loads(got["run_metadata.json"])
+        assert meta["Normalization"] == norm and meta["Pipeline"] == label, trait
+    # the CLI never sets it: --norm applies to every trait, and no Pipeline label
+    cli_run = pl.run_trait_pipeline(planted["parsed"], planted["pheno"], "T_chr2",
+                                    _opts(planted, no_plots=True, norm="int"))
+    meta = json.loads(_zip(cli_run)["run_metadata.json"])
+    assert meta["Normalization"] == "int" and "Pipeline" not in meta
 
 
 def test_trait_log_lines_reach_progress_even_when_the_logger_is_at_warning(planted):

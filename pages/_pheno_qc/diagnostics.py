@@ -94,10 +94,11 @@ def _panel(vals, trait, tag):
 def render(ctx: PhenoQCContext, *, embedded=False, key_prefix="pheno_qc"):
     """Per-trait raw-vs-transformed diagnostics (histogram + Q-Q + normality
     metrics on each side). ``embedded=True`` drops the header and the per-trait
-    CSV download (the standalone page provides it), states that the choice feeds
-    the GWAS run, and RETURNS ``(trait, method, transformed, transform_ok)`` so the
-    caller can apply it. ``key_prefix`` isolates the two selectbox keys from the
-    standalone page's session state."""
+    CSV download (the standalone page provides it) and RETURNS ``(trait, method,
+    transformed, transform_ok)``. The preview itself never changes the GWAS
+    phenotype: the GWAS page applies a method only through its Apply button
+    (pages/_pheno_qc/apply.py). ``key_prefix`` isolates the two selectbox keys from
+    the standalone page's session state."""
     if not embedded:
         st.header("3 · Per-trait diagnostics & transforms")
 
@@ -133,8 +134,6 @@ def render(ctx: PhenoQCContext, *, embedded=False, key_prefix="pheno_qc"):
         st.caption("log10 scale; multiply effect sizes by 3.32 for per-doubling units.")
 
     if embedded:
-        if transform_ok and method != TRANSFORM_NONE:
-            st.info(f"This transform will be applied to **{trait}** for this GWAS run.")
         return trait, method, transformed, transform_ok
 
     # ── Standalone: per-trait download (preview only) ──────────

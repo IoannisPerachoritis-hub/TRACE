@@ -5,6 +5,35 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The phenotype QC panel's transformation is used only after Apply.** The
+  panel's trait and method selectors now drive only its preview. Before, the
+  GWAS page transformed the previewed trait in every run, even when the panel
+  was never opened: by default the first numeric trait was rank-INT
+  transformed, and choosing another trait in the preview moved the
+  transformation to it. An Apply button ("Apply rank-INT to Trait1") records a
+  method for a trait, the panel lists the applied methods with a Remove button
+  each and Reset all, and a status line above the panel says what is used
+  ("Phenotypes used: raw values for all traits"). Each applied method is that
+  trait's normalisation, applied where the CLI applies `--norm` (to the trait's
+  own analysis samples, after phenotype QC, by `gwas.qc.normalise_phenotype`),
+  so with rank-INT applied One-Click gives that trait the CLI's `--norm int`
+  results and every other trait the CLI's `--norm none` results. The phenotype
+  table keeps the uploaded values, so the QC report and the haplotype tests use
+  raw values, as in the CLI (Post-GWAS too, which says so for an applied trait);
+  the subsampling and the lead-SNP box plots use the analysed phenotype. The
+  GUI's Log10 is the CLI's `log` (both base 10). A new phenotype file clears the
+  list. One-Click records each trait's normalisation (`none` or the CLI slug,
+  such as `int`) as `Normalization` in its `run_metadata.json` and report; the
+  single-trait view records it as `Normalization method` and in its run
+  manifest, whose applied list and subsampling summary now describe that run
+  only (they could carry an earlier run's or trait's entry). The single-trait
+  view's subsampling results are now recomputed when the trait's normalisation,
+  the phenotype file or another scan input changes (they were cached on the
+  trait and the subsampling settings alone). One-Click's figures are now drawn
+  with the CLI's matplotlib settings, so its ZIP equals the CLI's figure for
+  figure: the GUI's publication theme (fonts, title weight, tight bounding box)
+  reached them before, so every figure and the report's embedded images
+  differed from the CLI's.
 - **MLMM and FarmCPU results carry the same significance columns as MLM.**
   `GWAS_MLMM_<trait>.csv` and `GWAS_FarmCPU_<trait>.csv` now have `FDR`,
   `Significant_FDR`, `Significant_Bonf`, `Significant_Meff` and, for a numeric
@@ -50,10 +79,10 @@ All notable changes to TRACE are documented in this file.
   took Bonferroni from each table's row count, and the ZIP has no interactive
   Manhattan HTML (the single-trait detailed view still writes it). As in the
   detailed view, a trait whose samples lack covariate values stops with its own
-  error rather than dropping them; the
-  phenotype QC panel's transform still applies to the one trait chosen there, and
-  that trait's `run_metadata.json` now records it. The detailed view below
-  One-Click uses the first selected trait that passes phenotype QC.
+  error rather than dropping them; each trait gets the transformation applied to
+  it in the phenotype QC panel (see above), and its `run_metadata.json` records
+  it. The detailed view below One-Click uses the first selected trait that passes
+  phenotype QC.
 - **LD-block heatmaps now show the block's neighbouring SNPs.** Each heatmap in
   the CLI and One-Click ZIPs, and the Post-GWAS Local LD view of a detected
   block, shows the block plus the SNPs immediately on each side, so a reader can

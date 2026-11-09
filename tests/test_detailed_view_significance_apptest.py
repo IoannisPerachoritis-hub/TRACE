@@ -2,9 +2,9 @@
 columns and values (reviewer point 2-INT.6a, criterion D).
 
 Real AppTest runs of the single-trait view with MLM, MLMM and FarmCPU on the planted
-data (tests/_multitrait_data), under the M_eff rule and under a custom p-value. The
-phenotype-QC panel is set to raw values: its default transforms the panel's trait, which
-would give the view other inputs than the pipeline. For the same inputs each model's
+data (tests/_multitrait_data), under the M_eff rule and under a custom p-value, with raw
+phenotype values (the phenotype-QC panel's preview no longer transforms the GWAS
+phenotype; its preview is set to raw values all the same). For the same inputs each model's
 table in the view's ZIP equals the pipeline's (gwas.pipeline.run_trait_pipeline, as the
 CLI and One-Click run it): the same p-values and FDR, and the same Significant_* columns
 and values. The view writes Significant_Meff only under the M_eff rule, for every model
@@ -70,7 +70,7 @@ def _collect(at):
                 "gwas_results_by_model", "gwas_results", "gwas_df", "downstream_model"):
         if key in state:
             state[key] = copy.deepcopy(state[key])
-    assert "pheno_transformations" not in state, "the view's phenotype was transformed"
+    assert not state.get("pheno_applied_transforms"), "a transformation was applied to the view's trait"
     zips = {k: v for k, v in state.items()
             if k.startswith("gwas_zip_") and isinstance(v, dict) and "data" in v}
     assert len(zips) == 1, sorted(zips)
@@ -95,7 +95,7 @@ def views():
         ss["_persist_is_gz"] = False
         ss["_persist_pheno"] = pheno
         ss["selected_traits_multiselect"] = [TRAIT]
-        ss["gwas_pheno_qc_transform"] = "None (raw values)"   # the panel's default transforms T_chr1
+        ss["gwas_pheno_qc_transform"] = "None (raw values)"   # the preview only; nothing is applied
         ss["sig_rule_select"] = RULES["meff"]["label"]
         at.run()
         models = [m for m in at.sidebar.multiselect if m.label == "Additional GWAS models"]

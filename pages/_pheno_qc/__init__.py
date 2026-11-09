@@ -8,8 +8,12 @@ transforms the GWAS pipeline uses (log10, Yeo-Johnson, rank-INT).
 
 Each submodule exports a ``render(...)`` function that receives the shared
 ``PhenoQCContext`` dataclass, following the same pattern as ``pages/_vnn/``
-and ``pages/_ld_tabs/``. This page is fully standalone. It does NOT write
-into GWAS session state and has no upstream data-version dependency.
+and ``pages/_ld_tabs/``. The GWAS page embeds ``diagnostics`` (a preview that
+changes nothing) and ``apply`` (Apply, Remove and Reset all, which write
+``st.session_state["pheno_applied_transforms"]``, the per-trait transformations
+the GWAS runs use; the GWAS page itself clears that list when a new phenotype file
+is loaded and on Clear session data). Nothing here has an upstream data-version
+dependency.
 """
 
 import dataclasses

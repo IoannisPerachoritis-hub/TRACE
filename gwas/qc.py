@@ -814,9 +814,12 @@ def gwas_pipeline(
 
     from gwas.utils import hash_bytes
     sample_set_hash = hash_bytes(repr(tuple(sorted(geno_df.index.astype(str)))).encode())
+    # the phenotype's normalisation is applied after every sample filter and only to
+    # y, so it never reaches the imputed matrix: its key slot stays "none" (one
+    # imputation per sample set, whatever transformation the GWAS page applies)
     geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = _impute_cached(
         geno_df, vcf_hash, sample_set_hash, maf_thresh, miss_thresh, mac_thresh,
-        ind_miss_thresh, info_thresh, drop_alt, norm_option, canonical,
+        ind_miss_thresh, info_thresh, drop_alt, "none", canonical,
         impute_method, impute_k, impute_l)
     qc_snp["Imputation method"] = impute_method
 

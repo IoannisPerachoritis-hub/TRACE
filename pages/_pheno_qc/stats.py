@@ -26,6 +26,23 @@ TRANSFORM_LABELS = [
     TRANSFORM_YEOJOHNSON,
     TRANSFORM_INT,
 ]
+# Each menu entry's CLI --norm slug (cli.py --norm, gwas.qc.normalise_phenotype). The
+# menu's Log10 is the CLI's log: both are base 10 (np.log10), so they share the slug.
+TRANSFORM_SLUGS = {
+    TRANSFORM_NONE: "none",
+    TRANSFORM_LOG10: "log",
+    TRANSFORM_YEOJOHNSON: "yeojohnson",
+    TRANSFORM_INT: "int",
+}
+# Short names for the GWAS page's Apply button, applied list and status line.
+SLUG_NAMES = {
+    "none": "raw values",
+    "log": "log10",
+    "yeojohnson": "Yeo-Johnson",
+    "int": "rank-INT",
+    "zscore": "z-score",
+}
+RAW_STATUS = "Phenotypes used: raw values for all traits"
 
 
 def _finite(x):
@@ -153,11 +170,7 @@ def apply_transform(x, method):
     x = np.asarray(x, dtype=float).reshape(-1)
     if method == TRANSFORM_NONE:
         return x.copy()
-    slug = {
-        TRANSFORM_LOG10: "log",
-        TRANSFORM_YEOJOHNSON: "yeojohnson",
-        TRANSFORM_INT: "int",
-    }.get(method)
+    slug = TRANSFORM_SLUGS.get(method)
     if slug is None:
         raise ValueError(f"Unknown transform method: {method!r}")
     if slug == "yeojohnson":
@@ -169,6 +182,42 @@ def apply_transform(x, method):
     if note is not None:
         raise ValueError(note)
     return out
+
+
+def transform_refusal(x, method):
+    """Why ``method`` cannot be applied to this trait vector, or None when it can.
+
+    None (raw values) is never applied: it is what every trait uses until a
+    transformation is applied. A method apply_transform refuses (log10 with values
+    <= 0, Yeo-Johnson on a constant trait) gives its reason.
+    """
+    if method == TRANSFORM_NONE:
+        return ("every trait uses raw values until a transformation is applied; to "
+                "return a trait to raw values, remove its transformation below")
+    try:
+        apply_transform(x, method)
+    except ValueError as err:
+        if method == TRANSFORM_LOG10:
+            return "log10 needs every value > 0, and this trait has non-positive values"
+        return str(err)
+    return None
+
+
+def applied_status_line(applied, order=()):
+    """The GWAS page's status line for the applied list ``{trait: slug}``.
+
+    Traits are listed in ``order`` (the table's trait columns). The closing clause is
+    left out when every trait in ``order`` has a transformation.
+    """
+    rank = {t: i for i, t in enumerate(order)}
+    items = sorted(((t, s) for t, s in (applied or {}).items() if s not in (None, "", "none")),
+                   key=lambda item: rank.get(item[0], len(rank)))
+    if not items:
+        return RAW_STATUS
+    line = "Applied: " + "; ".join(f"{t} -> {SLUG_NAMES.get(s, s)}" for t, s in items)
+    if not order or set(order) - {t for t, _s in items}:
+        line += " - all other traits use raw values"
+    return line
 
 
 def transform_whole_table(df, cols, method):
