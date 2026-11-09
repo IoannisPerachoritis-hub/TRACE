@@ -2416,15 +2416,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 )
 
             # Top SNPs by discovery frequency
-            st.markdown("#### Per-SNP discovery frequency (top 50)")
-            with st.popover("How to read discovery frequency"):
-                st.markdown(
-                    "Fraction of resamples in which a SNP stayed significant:\n"
-                    "- **> 80%** robust, detected in most resamples\n"
-                    "- **50-80%** moderately stable, mind sample-size limits\n"
-                    "- **< 50%** unstable, may be driven by a few influential samples\n\n"
-                    "Full guidance: **Help → Interpreting Results**."
-                )
+            st.markdown(
+                "#### Per-SNP discovery frequency (top 50)",
+                help=("Fraction of resamples in which a SNP stayed significant:\n"
+                      "- **> 80%** robust, detected in most resamples\n"
+                      "- **50-80%** moderately stable, mind sample-size limits\n"
+                      "- **< 50%** unstable, may be driven by a few influential samples\n\n"
+                      "Full guidance: **Help → Interpreting Results**."),
+            )
             st.dataframe(
                 boot_disc_df.head(50)[
                     ["SNP", "Chr", "Pos", "DiscoveryFreq", "DiscoveryCount",

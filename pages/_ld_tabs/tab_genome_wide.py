@@ -553,6 +553,27 @@ def render(
         pass
 
 
+# The "?" next to "Association results per block": how to read the effect sizes and the
+# LD-block coherence columns of the table under it.
+ASSOCIATION_RESULTS_HELP = (
+    "**Effect sizes (η²)**\n\n"
+    "- **Effect (β)**: trait change per minor-allele copy (sign = direction).\n"
+    "- **Variance explained (η²)** per LD block: the most interpretable measure "
+    "of QTL importance for breeding:\n"
+    "  - **> 10%** major QTL, strong marker-assisted-selection candidate\n"
+    "  - **5-10%** moderate QTL, useful combined with other loci\n"
+    "  - **< 5%** minor QTL, polygenic background\n"
+    "- η² is not adjusted for kinship; in structured panels it can be inflated.\n\n"
+    "**LD-block coherence (r²)**\n\n"
+    "- **Mean r2 / Min r2**: mean / weakest member-pair r² in the block "
+    "(how internally correlated it is).\n"
+    "- **Frac r2>=.6 to lead**: fraction of members with r² ≥ 0.6 to the lead "
+    "SNP. A low value on a lead's own block means the interval is a loose merge "
+    "of sub-clusters, not one tight haplotype.\n\n"
+    "Full guidance: **Help → Interpreting Results**."
+)
+
+
 def _render_haplotype_gwas(
     ctx,
     haplo_df_auto,
@@ -839,26 +860,7 @@ def _render_haplotype_gwas(
     st.success(
         f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
     )
-    st.subheader("Association results per block")
-    with st.popover("How to read effect sizes (η²)"):
-        st.markdown(
-            "- **Effect (β)**: trait change per minor-allele copy (sign = direction).\n"
-            "- **Variance explained (η²)** per LD block: the most interpretable measure "
-            "of QTL importance for breeding:\n"
-            "  - **> 10%** major QTL, strong marker-assisted-selection candidate\n"
-            "  - **5-10%** moderate QTL, useful combined with other loci\n"
-            "  - **< 5%** minor QTL, polygenic background\n\n"
-            "Full guidance: **Help → Interpreting Results**."
-        )
-    with st.popover("How to read LD-block coherence (r²)"):
-        st.markdown(
-            "- **Mean r2 / Min r2**: mean / weakest member-pair r² in the block "
-            "(how internally correlated it is).\n"
-            "- **Frac r2>=.6 to lead**: fraction of members with r² ≥ 0.6 to the lead "
-            "SNP. A low value on a lead's own block means the interval is a loose merge "
-            "of sub-clusters, not one tight haplotype.\n\n"
-            "Full guidance: **Help → Interpreting Results**."
-        )
+    st.subheader("Association results per block", help=ASSOCIATION_RESULTS_HELP)
     st.dataframe(
         _disp[show_cols],
         use_container_width=True

@@ -6,8 +6,9 @@ and asserts the block-table sections render:
 
 - Block inventory: the "LD blocks" section subheader (the inventory expander sits
   under it). The descriptive inventory caption was removed in the UI-text pass.
-- Results: the "Association results per block" subheader + its η² popover. Its
-  descriptive caption was removed in the UI-text pass.
+- Results: the "Association results per block" subheader, whose "?" tooltip holds the
+  η² and LD-coherence guidance (it replaced two popovers). Its descriptive caption was
+  removed in the UI-text pass.
 
 The heavy per-block visualization (`_render_block_visualization`, MLG boxplots) is
 monkeypatched to a no-op so the render reaches the labels without needing real
@@ -121,13 +122,13 @@ def test_block_tables_render_with_new_labels():
     assert any("Association results per block" in s.value for s in at.subheader), \
         "results-table subheader missing"
 
-    # the effect-size (η²) interpretation popover renders next to the table
-    assert any("Variance explained" in m.value for m in at.markdown), \
-        "effect-size (η²) popover missing"
-
-    # LD-coherence (Change 2) — the block-coherence popover renders next to the table
-    assert any("member-pair" in m.value for m in at.markdown), \
-        "LD-block coherence popover missing"
+    # the effect-size (η²) and LD-coherence guidance is the subheader's "?" tooltip
+    _help = " ".join(s.proto.help for s in at.subheader
+                     if "Association results per block" in s.value)
+    assert "Variance explained" in _help, "effect-size (η²) guidance missing"
+    assert "not adjusted for kinship" in _help, "η² kinship caveat missing"
+    assert "member-pair" in _help, "LD-block coherence guidance missing"
+    assert "Interpreting Results" in _help, "pointer to Help missing"
 
 
 def test_no_testable_haplotype_block_shows_the_info_message():

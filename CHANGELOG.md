@@ -5,6 +5,13 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **"How to read" guidance moved into "?" tooltips.** On the haplotype tab, the
+  "How to read effect sizes (η²)" and "How to read LD-block coherence (r²)"
+  buttons are now one "?" on "Association results per block"; on the GWAS page,
+  "How to read discovery frequency" is a "?" on "Per-SNP discovery frequency".
+  The text is the same, with one addition: η² is not adjusted for kinship, so in
+  structured panels it can be inflated (it comes from a one-way ANOVA on the
+  haplotype groups). The pointer to Help → Interpreting Results stays.
 - **Plots on screen have three sizes.** In wide mode the Manhattan, overlay,
   subsampling Manhattan and regional plots and the QC report strip fill the
   page; the LD heatmaps, PCA, haplotype box/raincloud plots, haplotype PCA and
