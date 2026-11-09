@@ -5,6 +5,20 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The lead-SNP box plots colour each dot by its sample's haplotype.** In the
+  report's per-SNP plots (CLI and One-Click) and in Post-GWAS's "Lead SNP
+  genotype effect" panel, each dot takes the colour of its sample's haplotype in
+  the LD block that contains the SNP (by position, the block of the
+  significant-SNP table's `Block_ID`), with the labels of
+  `Haplotype_assignments_<trait>.csv` and a legend beside the plot. A label has
+  the same colour in the box plot, the haplotype tab's block plots and the
+  report (`utils.pub_theme.haplotype_color_map`: H<n> takes palette colour n,
+  Other is grey); the block plots keep their colours. A SNP outside every block,
+  or in a block with no haplotype groups, keeps the single colour, with a note
+  under the plot. The dots do not move (same jitter) and the boxes are
+  unchanged. The y axis names the trait, with its scale when the GWAS
+  transformed it ("locule_number (rank-INT)"), instead of "Phenotype". In the
+  ZIP only the report's per-SNP images change.
 - **The phenotype QC panel's transformation is used only after Apply.** The
   panel's trait and method selectors now drive only its preview. Before, the
   GWAS page transformed the previewed trait in every run, even when the panel

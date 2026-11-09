@@ -745,6 +745,44 @@ def haplotype_assignments(hap_result, hap_tables, geno_df, pheno_df, trait_col, 
     return pd.concat(frames, ignore_index=True)[columns]
 
 
+def snp_haplotype_labels(blocks_df, assignments, chrom, pos, sample_ids):
+    """The haplotype labels of the LD block that contains a SNP, for its box plot.
+
+    The block is the first row of ``blocks_df`` (the LD blocks) on the SNP's chromosome
+    with Start <= pos <= End, the rule the significant-SNP table's Block_ID uses. Its
+    labels come from ``assignments`` (a haplotype_assignments table), aligned to
+    ``sample_ids``; a sample without a haplotype there counts as "Other". Returns
+    ``(labels, block_key, reason)``: ``labels`` is None and ``reason`` says why when
+    the dots cannot be coloured: "no_block" (no LD block contains the SNP) or
+    "no_groups" (its block has no tested haplotype group).
+    """
+    from annotation import canon_chr
+
+    if blocks_df is None or len(blocks_df) == 0:
+        return None, None, "no_block"
+    b = normalize_ld_blocks_schema(blocks_df)
+    c = canon_chr(str(chrom))
+    hit = b[(b["Chr"].astype(str).map(canon_chr) == c)
+            & (b["Start (bp)"].astype(int) <= int(pos)) & (b["End (bp)"].astype(int) >= int(pos))]
+    if hit.empty:
+        return None, None, "no_block"
+    row = hit.iloc[0]
+    start, end = int(row["Start (bp)"]), int(row["End (bp)"])
+    key = f"{row['Chr']}:{start}-{end}"
+    if assignments is None or len(assignments) == 0:
+        return None, key, "no_groups"
+    a = assignments[(assignments["Chr"].astype(str).map(canon_chr) == c)
+                    & (assignments["Block_start"].astype(int) == start)
+                    & (assignments["Block_end"].astype(int) == end)]
+    if a.empty or not a["Haplotype"].astype(str).str.match(r"^H\d+$").any():
+        return None, key, "no_groups"
+    by_sample = pd.Series(a["Haplotype"].astype(str).to_numpy(),
+                          index=a["Sample"].astype(str).to_numpy())
+    labels = by_sample.reindex(np.asarray(sample_ids, dtype=str)).fillna("").to_numpy(dtype=object)
+    labels[labels == ""] = "Other"
+    return labels, key, None
+
+
 def block_test_lm_with_pcs(y, groups, pcs=None):
     """
     Parametric nested F-test for:

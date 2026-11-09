@@ -12,7 +12,7 @@ import seaborn as sns
 import plotly.graph_objects as go
 from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
-from utils.pub_theme import PALETTE_CYCLE, FIGSIZE, export_matplotlib
+from utils.pub_theme import PALETTE_CYCLE, FIGSIZE, export_matplotlib, haplotype_color_map, hap_sort_key
 
 from gwas.ld import (
     find_ld_clusters_genomewide,
@@ -27,10 +27,8 @@ def _hash_df(df: pd.DataFrame) -> str:
     return hashlib.blake2b(h.tobytes(), digest_size=16).hexdigest()
 
 
-def _hap_sort_key(label):
-    """Numeric sort for H1, H2, ..., H10, H11; non-H labels sort last."""
-    m = re.match(r"^H(\d+)$", str(label))
-    return (0, int(m.group(1))) if m else (1, str(label))
+# numeric sort for H1, H2, ..., H10, H11 (shared with the box plot: utils.pub_theme)
+_hap_sort_key = hap_sort_key
 
 
 def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, build_fig_fn):
@@ -144,11 +142,8 @@ def _render_haplotype_pca(
     # Per-point arrays + colour map shared by both visualisation variants
     present = list(pd.unique(labels))
     hap_order = sorted([h for h in present if h != "Other"], key=_hap_sort_key)
-    color_map = {
-        h: PALETTE_CYCLE[i % len(PALETTE_CYCLE)]
-        for i, h in enumerate(hap_order)
-    }
-    color_map["Other"] = "#bdbdbd"
+    # one colour per label in every plot of the tab and in the box plots (Other grey)
+    color_map = haplotype_color_map(present)
     plot_order = (["Other"] if "Other" in present else []) + hap_order
 
     def _build_static_pca_fig():
@@ -881,7 +876,7 @@ def _render_haplotype_gwas(
     # Lead-SNP genotype-effect gallery: browse any significant SNP (threshold selector
     # + expander picker) above the per-block MLG visualization below. Module-level so it
     # runs even when _render_block_visualization is stubbed out in the AppTest.
-    _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto)
+    _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=hap_assignments)
 
     # ============================================================
     # BLOCK-LEVEL VISUALIZATION: MLG boxplots + Tukey HSD + Table
@@ -899,7 +894,8 @@ def _render_haplotype_gwas(
     )
 
 
-def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, geno_df, n_perm):
+def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, geno_df, n_perm,
+                       hap_kwargs=None):
     """Render one SNP's genotype-class boxplot + one marginal rank-test caption.
 
     ``geno_col`` / ``y`` are already masked to the SNP's non-missing, phenotyped samples.
@@ -909,6 +905,8 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
     three -- disclosed as adjusting for neither population structure nor kinship. ``chrom`` /
     ``pos`` / ``trait_col`` / ``samp`` / ``geno_df`` / ``n_perm`` are retained in the
     signature but unused now that the per-SNP Freedman-Lane test and its PC covariates are gone.
+    ``hap_kwargs`` goes to ``render_snp_boxplot``: the haplotype labels of the block that
+    contains the SNP (or the note why there are none) and the phenotype axis label.
     """
     from gwas.snpplots import render_snp_boxplot
     import matplotlib.pyplot as _plt
@@ -932,7 +930,8 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
                     return None
             _bm, _se, _bo = _num("Beta_MLM"), _num("SE_MLM"), _num("Beta_OLS")
 
-    _fig = render_snp_boxplot(str(snp_id), geno_col, y, beta_mlm=_bm, se_mlm=_se, beta_ols=_bo)
+    _fig = render_snp_boxplot(str(snp_id), geno_col, y, beta_mlm=_bm, se_mlm=_se, beta_ols=_bo,
+                              **(hap_kwargs or {}))
     st.pyplot(_fig)
     _plt.close(_fig)
 
@@ -979,14 +978,16 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
     st.caption(" · ".join(_parts))
 
 
-def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
+def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=None):
     """Browsable per-SNP genotype-effect gallery over the significant SNPs.
 
     A threshold selector (M_eff / Bonferroni / FDR / Custom, via ``rule_from_streamlit``)
     picks the significant set from ``ctx.gwas_df``; an expander SNP-picker (sorted by p,
     tagged lead-of / in-block / unblocked) renders the ONE chosen SNP through the shared
     ``_render_snp_effect`` helper. Complementary to the per-block panel below (which
-    auto-shows the selected block's lead); this browses ALL significant SNPs.
+    auto-shows the selected block's lead); this browses ALL significant SNPs. The dots are
+    coloured by the haplotypes (``hap_assignments``, the tab's haplotype test) of the LD
+    block that contains the SNP, as in the CLI report's per-SNP plots.
     """
     gdf = ctx.gwas_df
     if not isinstance(gdf, pd.DataFrame) or gdf.empty or "SNP" not in gdf.columns:
@@ -1080,10 +1081,12 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
         # the GWAS model analysed (its y), so the axis and eta2 are on the scale of the
         # beta shown, as in the CLI report's per-SNP plots; raw runs are unchanged.
         _gctx = st.session_state.get("GWAS_CTX") or {}
+        _plotted_norm = None          # the normalisation of the values plotted (axis label)
         if (_gctx.get("trait") == ctx.ld_trait and _gctx.get("norm") not in (None, "none")
                 and _gctx.get("y") is not None and _gctx.get("geno_index") is not None):
             _ph_ser = pd.Series(np.asarray(_gctx["y"], dtype=float).ravel(),
                                 index=np.asarray(_gctx["geno_index"], dtype=str))
+            _plotted_norm = _gctx["norm"]
         _y_full = _ph_ser.reindex(_geno_ids).values.astype(float)
         _ok = np.isfinite(_dose) & np.isfinite(_y_full)
         if int(_ok.sum()) < 5:
@@ -1096,9 +1099,24 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto):
         _chr = str(_sig.loc[_sig["SNP"].astype(str) == _chosen, "Chr"].iloc[0])
         _n_perm = int(st.session_state.get("n_perm_hap", 1000))
 
+        # the haplotype labels of the LD block that contains the SNP (by position, as the
+        # significant-SNP table's Block_ID), the same labels as the assignments table
+        from gwas.haplotype import snp_haplotype_labels
+        from gwas.snpplots import HAP_NOTE_NO_BLOCK, HAP_NOTE_NO_GROUPS, phenotype_axis_label
+        try:
+            _hl, _hb, _why = snp_haplotype_labels(
+                haplo_df_auto, hap_assignments, np.asarray(ctx.chroms)[_ci], _pos, _samp)
+            _hk = ({"hap_labels": _hl} if _hl is not None else
+                   {"hap_note": HAP_NOTE_NO_BLOCK if _why == "no_block" else HAP_NOTE_NO_GROUPS})
+        except Exception:
+            _hk = {}
+        # the axis names the values plotted (the GWAS's phenotype, transformed or raw)
+        _hk["y_label"] = phenotype_axis_label(ctx.ld_trait, _plotted_norm)
+
         st.markdown(f"#### {_chosen} genotype effect")
         _render_snp_effect(
-            ctx, _chosen, _chr, _pos, ctx.trait_col, _g, _y, _samp, ctx.geno_df, _n_perm)
+            ctx, _chosen, _chr, _pos, ctx.trait_col, _g, _y, _samp, ctx.geno_df, _n_perm,
+            hap_kwargs=_hk)
 
 
 def _render_block_visualization(
@@ -1427,6 +1445,8 @@ def _render_tukey_and_boxplot(
     selected_block, block_chr, block_start, block_end,
 ):
     """Tukey HSD + CLD + boxplot + forest plot."""
+    # one colour per haplotype label, the same as the PCA panel and the lead-SNP box plot
+    _hap_colors = haplotype_color_map(mlg_order)
     st.markdown("#### Tukey HSD post-hoc test")
 
     from statsmodels.stats.multicomp import pairwise_tukeyhsd
@@ -1577,7 +1597,7 @@ def _render_tukey_and_boxplot(
             )
             if data.size == 0:
                 continue
-            color = PALETTE_CYCLE[i % len(PALETTE_CYCLE)]
+            color = _hap_colors[mlg]
 
             # Half-violin: centered at i - 0.12, density on LEFT side
             # (flat edge faces the box at category center; density
@@ -1693,7 +1713,7 @@ def _render_tukey_and_boxplot(
             n = values.size
             if n == 0:
                 continue
-            color = PALETTE_CYCLE[i % len(PALETTE_CYCLE)]
+            color = _hap_colors[mlg]
 
             # Half-violin: centered at i - 0.12, density on LEFT side
             if n >= 2 and np.unique(values).size >= 2:
@@ -1929,7 +1949,7 @@ def _render_tukey_and_boxplot(
             figsize=(FIGSIZE["forest"][0], max(3, len(_forest_data) * 0.75))
         )
         for _i, _r in _forest_df.iterrows():
-            _col_f = PALETTE_CYCLE[_i % len(PALETTE_CYCLE)]
+            _col_f = _hap_colors[_r["Haplotype"]]
             _y_pos = len(_forest_data) - 1 - _i
             _ax_forest.plot(
                 [_r["CI95_lo"], _r["CI95_hi"]], [_y_pos, _y_pos],

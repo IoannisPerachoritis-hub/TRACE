@@ -738,6 +738,7 @@ def _run_trait(parsed, pheno, args):
         post_gwas_models[0][0] if post_gwas_models else None)
     _report_sig_table = _report_unblocked = _report_isolated = None
     _report_ld_annotated = _report_hap_gwas = None
+    _report_ld_blocks = _report_assignments = None   # the per-SNP plots' haplotype colours
     _per_model_post = {}
 
     # P14: LD-block seed mode (mirrors the GUI radio). "suggestive" (default) =
@@ -978,6 +979,7 @@ def _run_trait(parsed, pheno, args):
                 from gwas.haplotype import haplotype_assignments
                 _assign = haplotype_assignments(m_hap_gwas, m_hap_tables, geno_df,
                                                 pheno_clean, args.trait)
+                _report_assignments = _assign
                 if not _assign.empty:
                     extra_csvs[f"Haplotype_assignments_{args.trait}.csv"] = _assign
             except Exception as e:
@@ -994,6 +996,7 @@ def _run_trait(parsed, pheno, args):
         if model_name == _primary_model:
             _report_ld_annotated = m_ld_annotated
             _report_hap_gwas = m_hap_gwas
+            _report_ld_blocks = m_ld_blocks
 
     # ── LD heatmaps: one per block whose lead SNP is significant in a model ──
     # A block is its chromosome, start and end. Each is drawn once, in the order the
@@ -1198,9 +1201,15 @@ def _run_trait(parsed, pheno, args):
             extra_csvs[f"SNP_view_index_{_primary_model}.csv"] = build_snp_view_index(
                 _report_sig_table, _plot_ids, _collapse)
             if _plot_ids and not args.no_report:
+                from gwas.haplotype import snp_haplotype_labels
+                from gwas.snpplots import (HAP_NOTE_NO_BLOCK, HAP_NOTE_NO_GROUPS,
+                                           phenotype_axis_label)
                 _sid_arr = np.asarray(sid).astype(str)
                 _geno_raw = np.asarray(geno_dosage_raw, dtype=float)
                 _yv = np.asarray(y, dtype=float).ravel()
+                _samples = np.asarray(geno_df.index, dtype=str)    # the rows of y
+                # the y axis names the values plotted: the GWAS's y, normalised as --norm
+                _ylab = phenotype_axis_label(args.trait, args.norm)
                 for _pid in _plot_ids:
                     _mi = np.where(_sid_arr == str(_pid))[0]
                     _rowsel = _report_sig_table[_report_sig_table["SNP"].astype(str) == str(_pid)]
@@ -1214,8 +1223,21 @@ def _run_trait(parsed, pheno, args):
                     _flag = effect_flag(_bm if _bm is not None else np.nan,
                                         _bo if _bo is not None else np.nan)
                     _cap = f"{_pid} · {_row.get('Block_Status', '')} · {_flag}"
+                    # dots coloured by the haplotype of the LD block that contains the SNP
+                    # (the Haplotype_assignments table's labels), else a note
+                    try:
+                        _labels, _bkey, _why = snp_haplotype_labels(
+                            _report_ld_blocks, _report_assignments,
+                            chroms[int(_mi[0])], positions[int(_mi[0])], _samples)
+                        _hk = ({"hap_labels": _labels} if _labels is not None else
+                               {"hap_note": HAP_NOTE_NO_BLOCK if _why == "no_block"
+                                else HAP_NOTE_NO_GROUPS})
+                    except Exception as e:
+                        log.warning("  Haplotype colours for %s failed: %s", _pid, e)
+                        _hk = {}
                     _fig = render_snp_boxplot(str(_pid), _geno_raw[:, int(_mi[0])], _yv,
-                                              beta_mlm=_bm, se_mlm=_se, beta_ols=_bo)
+                                              beta_mlm=_bm, se_mlm=_se, beta_ols=_bo,
+                                              y_label=_ylab, **_hk)
                     _snp_boxplots.append((str(_pid), _fig, _cap))
         except Exception as e:
             log.warning("Per-SNP boxplots/ledger failed: %s", e)

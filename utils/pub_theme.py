@@ -4,6 +4,7 @@ Colorblind-safe palette (Wong 2011), shared matplotlib rcParams,
 Plotly template, and export helpers (PNG/SVG/HTML).
 """
 
+import re
 from io import BytesIO
 
 import matplotlib as mpl
@@ -35,6 +36,38 @@ PALETTE_CYCLE = [
 # Domain-specific color assignments
 MANHATTAN_COLORS = [PALETTE["blue"], PALETTE["cyan"]]
 SIG_LINE_COLOR = PALETTE["red"]
+
+# Haplotype (MLG) colours, shared by the block-level plots and the lead-SNP box plot.
+HAPLOTYPE_OTHER_COLOR = "#bdbdbd"
+_HAP_LABEL = re.compile(r"^H(\d+)$")
+
+
+def hap_sort_key(label):
+    """Numeric sort for H1, H2, ..., H10, H11; non-H labels sort last."""
+    m = _HAP_LABEL.match(str(label))
+    return (0, int(m.group(1))) if m else (1, str(label))
+
+
+def haplotype_color_map(labels):
+    """{label: colour} for haplotype labels, the same in every plot.
+
+    H<n> takes PALETTE_CYCLE[(n - 1) % 6] from its own number, so a plot that shows
+    H1, H3 and H7 colours H3 as every other plot does; "Other" is always grey
+    (HAPLOTYPE_OTHER_COLOR) and always in the map. A label that is not H<n> takes the
+    next colours after the H labels, in hap_sort_key order.
+    """
+    present = sorted({str(h) for h in labels if str(h) != "Other"}, key=hap_sort_key)
+    n_h = sum(1 for h in present if _HAP_LABEL.match(h))
+    cmap, j = {}, 0
+    for h in present:
+        m = _HAP_LABEL.match(h)
+        if m:
+            cmap[h] = PALETTE_CYCLE[(int(m.group(1)) - 1) % len(PALETTE_CYCLE)]
+        else:
+            cmap[h] = PALETTE_CYCLE[(n_h + j) % len(PALETTE_CYCLE)]
+            j += 1
+    cmap["Other"] = HAPLOTYPE_OTHER_COLOR
+    return cmap
 
 # Colormaps
 LD_HEATMAP_CMAP = "YlOrBr"           # r² heatmaps (genetics convention)
