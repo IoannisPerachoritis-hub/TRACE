@@ -88,6 +88,52 @@ FIGSIZE = {
     "line":           (8, 4),
 }
 
+# ── On-screen plot sizes ─────────────────────────────────────
+# Display only: downloads, ZIPs and reports never read these.
+PLOT_WIDTH_MEDIUM = 700
+PLOT_WIDTH_SMALL = 450
+PLOT_WIDTHS = {"wide": "stretch", "medium": PLOT_WIDTH_MEDIUM, "small": PLOT_WIDTH_SMALL}
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def show_plot(obj, size, *, key=None):
+    """Show a plot on screen in one of three size classes.
+
+    ``obj`` is a matplotlib Figure, PNG bytes or a Plotly figure. ``size`` is "wide"
+    (the container width), "medium" (at most PLOT_WIDTH_MEDIUM px) or "small" (at most
+    PLOT_WIDTH_SMALL px). ``key`` is for Plotly figures only. The object is not
+    modified, so the export helpers write the same files whether or not it was shown.
+    A wide matplotlib figure or PNG must not sit inside a fixed-width container.
+    """
+    if size not in PLOT_WIDTHS:
+        raise ValueError(f"size must be one of {sorted(PLOT_WIDTHS)}, got {size!r}")
+    from contextlib import nullcontext
+
+    from matplotlib.figure import Figure
+
+    if isinstance(obj, (bytes, bytearray)):
+        if bytes(obj[:8]) != _PNG_SIGNATURE:
+            raise TypeError("show_plot: bytes must be a PNG image")
+        kind = "png"
+    elif isinstance(obj, go.Figure):
+        kind = "plotly"
+    elif isinstance(obj, Figure):
+        kind = "mpl"
+    else:
+        raise TypeError(f"show_plot: unsupported plot type {type(obj).__name__}")
+    if key is not None and kind != "plotly":
+        raise ValueError("show_plot: key applies to Plotly figures only")
+    width = PLOT_WIDTHS[size]
+    # medium and small sit in a fixed-width box (Streamlit 1.50's plotly_chart has no
+    # width); wide fills the container
+    with (nullcontext() if width == "stretch" else st.container(width=width)):
+        if kind == "plotly":
+            st.plotly_chart(obj, use_container_width=True, key=key)
+        elif kind == "png":
+            st.image(bytes(obj), width="stretch")
+        else:
+            st.pyplot(obj, width="stretch")
+
 
 # ── Matplotlib theme ─────────────────────────────────────────
 

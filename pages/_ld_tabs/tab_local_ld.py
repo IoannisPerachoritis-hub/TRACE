@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
-from utils.pub_theme import LD_HEATMAP_CMAP, FIGSIZE, export_plotly  # noqa: F401 (export_plotly kept for parity)
+from utils.pub_theme import LD_HEATMAP_CMAP, FIGSIZE, export_plotly, show_plot  # noqa: F401 (export_plotly kept for parity)
 
 from gwas.ld import extract_block_geno_for_paper
 from gwas.plotting import (
@@ -279,7 +279,7 @@ def render(ctx: LDContext, get_r2_cached, window):
             local_cached = _lead_snp_heatmap(
                 r2, region_pos, region_sids, chr_sel, start_bp, end_bp, lead_snp)
 
-        st.image(local_cached["display"])
+        show_plot(local_cached["display"], "medium")
         local_fname = f"LD_heatmap_{lead_snp}_Chr{chr_sel}_{start_bp}_{end_bp}"
         lcol_png, lcol_svg, lcol_pdf = st.columns(3)
         lcol_png.download_button(

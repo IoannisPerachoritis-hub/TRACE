@@ -12,7 +12,8 @@ import seaborn as sns
 import plotly.graph_objects as go
 from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
-from utils.pub_theme import PALETTE_CYCLE, FIGSIZE, export_matplotlib, haplotype_color_map, hap_sort_key
+from utils.pub_theme import (PALETTE_CYCLE, FIGSIZE, export_matplotlib, haplotype_color_map,
+                             hap_sort_key, show_plot)
 
 from gwas.ld import (
     find_ld_clusters_genomewide,
@@ -63,7 +64,7 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
         }
         cache[cache_key] = cached
 
-    st.image(cached["display"])
+    show_plot(cached["display"], "medium")
     col_png, col_svg, col_pdf = st.columns(3)
     col_png.download_button(
         f"{label_prefix} PNG", cached["png"],
@@ -136,8 +137,6 @@ def _render_haplotype_pca(
             "cannot colour by haplotype. Skipping PCA panel."
         )
         return
-
-    st.markdown("#### Population structure (PC1 vs PC2, coloured by haplotype)")
 
     # Per-point arrays + colour map shared by both visualisation variants
     present = list(pd.unique(labels))
@@ -268,7 +267,7 @@ def _render_haplotype_pca(
 
     @st.fragment
     def _pca_toggle_fragment():
-        with st.expander("Plot style", expanded=True):
+        with st.expander("Plot style", expanded=False):
             viz_type = st.radio(
                 "Visualization",
                 ("Interactive", "Static"),
@@ -284,9 +283,8 @@ def _render_haplotype_pca(
             )
 
         if viz_type == "Interactive":
-            st.plotly_chart(
-                _build_interactive_pca_fig(),
-                use_container_width=True,
+            show_plot(
+                _build_interactive_pca_fig(), "medium",
                 key=(
                     f"hap_pca_plotly_{block_chr}_"
                     f"{int(block_start)}_{int(block_end)}"
@@ -313,7 +311,7 @@ def _render_haplotype_pca(
                 }
                 cache[static_cache_key] = cached
 
-            st.image(cached["display"])
+            show_plot(cached["display"], "medium")
             fname = f"haplotype_pca_{block_chr}_{block_start}_{block_end}"
             col_png, col_svg, col_pdf = st.columns(3)
             col_png.download_button(
@@ -332,7 +330,9 @@ def _render_haplotype_pca(
                 key=f"dl_pca_pdf_{fname}",
             )
 
-    _pca_toggle_fragment()
+    with st.expander("Population structure (PC1 vs PC2, coloured by haplotype)",
+                     expanded=False):
+        _pca_toggle_fragment()
 
 
 def render(
@@ -932,7 +932,7 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
 
     _fig = render_snp_boxplot(str(snp_id), geno_col, y, beta_mlm=_bm, se_mlm=_se, beta_ols=_bo,
                               **(hap_kwargs or {}))
-    st.pyplot(_fig)
+    show_plot(_fig, "small")
     _plt.close(_fig)
 
     # Marginal genotype-class rank test -- adjusts for NEITHER population structure NOR
@@ -1855,7 +1855,7 @@ def _render_tukey_and_boxplot(
 
     @st.fragment
     def _viz_toggle_fragment():
-        with st.expander("Plot style", expanded=True):
+        with st.expander("Plot style", expanded=False):
             viz_type = st.radio(
                 "Visualization",
                 ("Raincloud", "Interactive raincloud", "Boxplot"),
@@ -1883,9 +1883,8 @@ def _render_tukey_and_boxplot(
                 build_fig_fn=_build_box_fig,
             )
         elif viz_type == "Interactive raincloud":
-            st.plotly_chart(
-                _build_interactive_raincloud_fig(),
-                use_container_width=True,
+            show_plot(
+                _build_interactive_raincloud_fig(), "medium",
                 key=f"hap_plotly_{block_chr}_{int(block_start)}_{int(block_end)}_{trait_col}",
             )
         else:
@@ -1905,105 +1904,105 @@ def _render_tukey_and_boxplot(
     # --------------------------------------------------------
     # Forest plot
     # --------------------------------------------------------
-    st.markdown("#### Haplotype Effect Sizes (Forest Plot)")
+    with st.expander("Haplotype effect sizes (forest plot)", expanded=False):
 
-    import scipy.stats as _scipy_st_forest
-    _forest_data = []
-    for _h in mlg_order:
-        _vals = (
-            mlg_df.loc[mlg_df["MLG_label"] == _h, trait_col]
-            .astype(float).dropna().values
-        )
-        if len(_vals) >= 2:
-            _mean_h = float(np.mean(_vals))
-            _se_h = float(_scipy_st_forest.sem(_vals))
-            _forest_data.append({
-                "Haplotype": _h,
-                "n": len(_vals),
-                "Mean": _mean_h,
-                "SE": _se_h,
-                "CI95_lo": _mean_h - 1.96 * _se_h,
-                "CI95_hi": _mean_h + 1.96 * _se_h,
-            })
-
-    if len(_forest_data) >= 2:
-        _forest_df = pd.DataFrame(_forest_data)
-
-        _y_all_f = mlg_df[trait_col].astype(float).dropna().values
-        _gm_f = float(np.mean(_y_all_f))
-        _ss_tot_f = float(np.sum((_y_all_f - _gm_f) ** 2))
-        _ss_bet_f = float(sum(
-            r["n"] * (r["Mean"] - _gm_f) ** 2
-            for _, r in _forest_df.iterrows()
-        ))
-        _eta2_vis = _ss_bet_f / _ss_tot_f if _ss_tot_f > 0 else float("nan")
-
-        if np.isfinite(_eta2_vis):
-            st.metric("Effect size (η²)", f"{_eta2_vis:.3f}",
-                      help="Proportion of phenotypic variance explained by haplotype group")
-
-        _x_range = (
-            _forest_df["CI95_hi"].max() - _forest_df["CI95_lo"].min()
-        ) or 1.0
-        _fig_forest, _ax_forest = plt.subplots(
-            figsize=(FIGSIZE["forest"][0], max(3, len(_forest_data) * 0.75))
-        )
-        for _i, _r in _forest_df.iterrows():
-            _col_f = _hap_colors[_r["Haplotype"]]
-            _y_pos = len(_forest_data) - 1 - _i
-            _ax_forest.plot(
-                [_r["CI95_lo"], _r["CI95_hi"]], [_y_pos, _y_pos],
-                color=_col_f, linewidth=2.5, solid_capstyle="round"
+        import scipy.stats as _scipy_st_forest
+        _forest_data = []
+        for _h in mlg_order:
+            _vals = (
+                mlg_df.loc[mlg_df["MLG_label"] == _h, trait_col]
+                .astype(float).dropna().values
             )
-            _ax_forest.plot(
-                _r["Mean"], _y_pos, "o",
-                color=_col_f, markersize=9, zorder=5
-            )
-            _ax_forest.text(
-                _r["CI95_hi"] + 0.03 * _x_range,
-                _y_pos,
-                f"n={_r['n']}",
-                va="center", fontsize=9, color="grey"
-            )
+            if len(_vals) >= 2:
+                _mean_h = float(np.mean(_vals))
+                _se_h = float(_scipy_st_forest.sem(_vals))
+                _forest_data.append({
+                    "Haplotype": _h,
+                    "n": len(_vals),
+                    "Mean": _mean_h,
+                    "SE": _se_h,
+                    "CI95_lo": _mean_h - 1.96 * _se_h,
+                    "CI95_hi": _mean_h + 1.96 * _se_h,
+                })
 
-        _ax_forest.axvline(
-            _gm_f, color="grey", linestyle="--",
-            linewidth=1, alpha=0.7, label="Grand mean"
-        )
-        _ax_forest.set_yticks(
-            range(len(_forest_data) - 1, -1, -1)
-        )
-        _ax_forest.set_yticklabels(
-            _forest_df["Haplotype"].tolist(),
-        )
-        _ax_forest.set_xlabel(trait_label)
-        _title_f = (
-            f"Haplotype Effect Sizes: \u03b7\u00b2 = {_eta2_vis:.3f}"
-            if np.isfinite(_eta2_vis)
-            else "Haplotype Effect Sizes"
-        )
-        _ax_forest.set_title(_title_f)
-        _ax_forest.legend()
-        for _sp in _ax_forest.spines.values():
-            _sp.set_visible(False)
-        _ax_forest.tick_params(axis="both", length=0)
-        plt.tight_layout()
-        st.pyplot(_fig_forest)
-        export_matplotlib(_fig_forest,
-                          f"haplotype_forest_{block_chr}_{block_start}_{block_end}",
-                          label_prefix="Download forest plot")
-        plt.close(_fig_forest)
+        if len(_forest_data) >= 2:
+            _forest_df = pd.DataFrame(_forest_data)
 
-        st.download_button(
-            "Download haplotype effects (CSV)",
-            _forest_df.to_csv(index=False).encode("utf-8"),
-            file_name=(
-                f"Haplotype_effects_{block_chr}"
-                f"_{block_start}_{block_end}.csv"
-            ),
-            mime="text/csv",
-            key=f"dl_forest_{selected_block}",
-        )
+            _y_all_f = mlg_df[trait_col].astype(float).dropna().values
+            _gm_f = float(np.mean(_y_all_f))
+            _ss_tot_f = float(np.sum((_y_all_f - _gm_f) ** 2))
+            _ss_bet_f = float(sum(
+                r["n"] * (r["Mean"] - _gm_f) ** 2
+                for _, r in _forest_df.iterrows()
+            ))
+            _eta2_vis = _ss_bet_f / _ss_tot_f if _ss_tot_f > 0 else float("nan")
+
+            if np.isfinite(_eta2_vis):
+                st.metric("Effect size (η²)", f"{_eta2_vis:.3f}",
+                          help="Proportion of phenotypic variance explained by haplotype group")
+
+            _x_range = (
+                _forest_df["CI95_hi"].max() - _forest_df["CI95_lo"].min()
+            ) or 1.0
+            _fig_forest, _ax_forest = plt.subplots(
+                figsize=(FIGSIZE["forest"][0], max(3, len(_forest_data) * 0.75))
+            )
+            for _i, _r in _forest_df.iterrows():
+                _col_f = _hap_colors[_r["Haplotype"]]
+                _y_pos = len(_forest_data) - 1 - _i
+                _ax_forest.plot(
+                    [_r["CI95_lo"], _r["CI95_hi"]], [_y_pos, _y_pos],
+                    color=_col_f, linewidth=2.5, solid_capstyle="round"
+                )
+                _ax_forest.plot(
+                    _r["Mean"], _y_pos, "o",
+                    color=_col_f, markersize=9, zorder=5
+                )
+                _ax_forest.text(
+                    _r["CI95_hi"] + 0.03 * _x_range,
+                    _y_pos,
+                    f"n={_r['n']}",
+                    va="center", fontsize=9, color="grey"
+                )
+
+            _ax_forest.axvline(
+                _gm_f, color="grey", linestyle="--",
+                linewidth=1, alpha=0.7, label="Grand mean"
+            )
+            _ax_forest.set_yticks(
+                range(len(_forest_data) - 1, -1, -1)
+            )
+            _ax_forest.set_yticklabels(
+                _forest_df["Haplotype"].tolist(),
+            )
+            _ax_forest.set_xlabel(trait_label)
+            _title_f = (
+                f"Haplotype Effect Sizes: \u03b7\u00b2 = {_eta2_vis:.3f}"
+                if np.isfinite(_eta2_vis)
+                else "Haplotype Effect Sizes"
+            )
+            _ax_forest.set_title(_title_f)
+            _ax_forest.legend()
+            for _sp in _ax_forest.spines.values():
+                _sp.set_visible(False)
+            _ax_forest.tick_params(axis="both", length=0)
+            plt.tight_layout()
+            show_plot(_fig_forest, "small")
+            export_matplotlib(_fig_forest,
+                              f"haplotype_forest_{block_chr}_{block_start}_{block_end}",
+                              label_prefix="Download forest plot")
+            plt.close(_fig_forest)
+
+            st.download_button(
+                "Download haplotype effects (CSV)",
+                _forest_df.to_csv(index=False).encode("utf-8"),
+                file_name=(
+                    f"Haplotype_effects_{block_chr}"
+                    f"_{block_start}_{block_end}.csv"
+                ),
+                mime="text/csv",
+                key=f"dl_forest_{selected_block}",
+            )
 
 
 def _render_zip_export(haplo_df_auto, hap_gwas_df, trait_col):

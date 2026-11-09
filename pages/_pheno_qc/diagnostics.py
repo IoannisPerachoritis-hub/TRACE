@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy import stats
 
-from utils.pub_theme import FIGSIZE, PALETTE, export_matplotlib, export_plotly
+from utils.pub_theme import FIGSIZE, PALETTE, export_matplotlib, export_plotly, show_plot
 
 from . import PhenoQCContext
 from .stats import (
@@ -81,11 +81,11 @@ def _panel(vals, trait, tag):
         st.warning(f"{tag}: fewer than 3 finite values; cannot plot.")
         return
     hist = _hist_fig(finite, f"{trait}: {tag}")
-    st.plotly_chart(hist, use_container_width=True)
+    show_plot(hist, "small")
     export_plotly(hist, f"hist_{trait}_{tag}".replace(" ", "_"),
                   label_prefix=f"Download {tag} histogram")
     qq = _qq_fig(finite, f"{trait}: {tag}")
-    st.pyplot(qq)
+    show_plot(qq, "small")
     export_matplotlib(qq, f"qq_{trait}_{tag}".replace(" ", "_"),
                       label_prefix=f"Download {tag} Q-Q")
     _metrics_block(finite, tag)

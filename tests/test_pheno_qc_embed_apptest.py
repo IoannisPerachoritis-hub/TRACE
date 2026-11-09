@@ -90,3 +90,24 @@ def test_embedded_panel_refuses_log_on_nonpositive():
     assert np.all(np.isfinite(at.session_state["_transformed"]))
     assert any(("not applicable" in str(w.value).lower())
                or ("non-positive" in str(w.value).lower()) for w in at.warning)
+
+
+def test_the_panels_plots_are_small():
+    """Reviewer point 2-INT.8: the histogram and Q-Q of both columns (raw | transformed)
+    are small plots, each in a 450 px box, still side by side in the two columns."""
+    at = AppTest.from_string(_SCRIPT.replace("__ROOT__", str(_ROOT).replace("\\", "/")),
+                             default_timeout=120).run()
+    assert not at.exception or _only_harness_error(at)
+    boxes = []
+
+    def _walk(node):
+        for child in getattr(node, "children", {}).values():
+            if getattr(getattr(child, "proto", None), "width_config", None) is not None \
+                    and child.proto.width_config.pixel_width:
+                boxes.append(child)
+            _walk(child)
+
+    _walk(at.main)
+    assert [b.proto.width_config.pixel_width for b in boxes] == [450] * 4
+    assert sorted(next(iter(b.children.values())).type for b in boxes) == [
+        "imgs", "imgs", "plotly_chart", "plotly_chart"]

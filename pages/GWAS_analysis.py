@@ -3,7 +3,7 @@ import os
 import logging
 import plotly.express as px
 import matplotlib.pyplot as plt
-from utils.pub_theme import apply_matplotlib_theme, build_plotly_template
+from utils.pub_theme import apply_matplotlib_theme, build_plotly_template, show_plot
 apply_matplotlib_theme()
 build_plotly_template()
 from fastlmm.association import single_snp
@@ -277,12 +277,9 @@ def _render_last_run_results(stale=False):
         try:
             if _name.endswith(".png"):
                 if "QQ" in _name:
-                    # QQ reads best constrained; wrap only QQ (Manhattan/scree stay full width).
-                    _qq_c = st.columns([1, 2, 1])
-                    with _qq_c[1]:
-                        st.pyplot(_obj)
+                    show_plot(_obj, "small")
                 else:
-                    st.pyplot(_obj)
+                    show_plot(_obj, "wide")     # the Manhattan and scree plots
             elif _name.endswith(".html"):
                 import streamlit.components.v1 as _components
                 _html = _obj.decode("utf-8") if isinstance(_obj, (bytes, bytearray)) else str(_obj)
@@ -1235,7 +1232,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             _freq = _geno_imp.mean(axis=0) / 2.0
             _maf_vals = np.minimum(_freq, 1.0 - _freq)
             _fig_maf = plot_maf_histogram(_maf_vals, maf_threshold=maf_thresh)
-            st.pyplot(_fig_maf)
+            show_plot(_fig_maf, "small")
             plt.close(_fig_maf)
 
             # Per-chromosome SNP summary
@@ -1260,7 +1257,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             if _qc_report:
                 st.markdown(_qcr.render_qc_report_markdown(_qc_report))
                 for _qc_fn, _qc_fig in _qcr.qc_report_figures(_qc_report).items():
-                    st.pyplot(_qc_fig)
+                    show_plot(_qc_fig, "wide")      # a 1 x 3 strip: unreadable when small
                     plt.close(_qc_fig)
 
         # ================================================================
@@ -1295,7 +1292,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                         height=280, margin=dict(t=30, b=30),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     )
-                    st.plotly_chart(_figd, use_container_width=True)
+                    show_plot(_figd, "small")
                     # Spectrum table: 10 rows, plain names, % variance + cumulative share.
                     _disp = _sp.head(10)[["rank", "pct_of_trace", "cumulative_pct"]].copy()
                     _disp.columns = ["PC", "Variance explained", "Cumulative"]
@@ -2129,7 +2126,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 labels={"PC1": _pc1_label, "PC2": _pc2_label},
             )
             fig_pc.update_traces(marker=dict(size=8))
-            st.plotly_chart(fig_pc, use_container_width=True)
+            show_plot(fig_pc, "medium")
             st.session_state["gwas_figures"][f"PCA_{trait_col}.html"] = (
                 fig_pc.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
             )
@@ -2145,7 +2142,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 from gwas.plotting import plot_pca_scree
                 _fig_scree = plot_pca_scree(pca_eigenvalues, n_pcs_used=n_pcs,
                                              title="PCA Scree Plot")
-                st.pyplot(_fig_scree)
+                show_plot(_fig_scree, "small")
                 download_matplotlib_fig(_fig_scree, filename=f"PCA_scree_{trait_col}.png",
                                          label="Download scree plot")
                 plt.close(_fig_scree)
@@ -2440,7 +2437,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             ax_bh.axvline(0.5, color=SIG_LINE_COLOR, linestyle="--", label="50% threshold")
             ax_bh.legend()
             plt.tight_layout()
-            st.pyplot(fig_boot_hist)
+            show_plot(fig_boot_hist, "medium")
             _exp_mpl(fig_boot_hist, f"subsampling_discovery_freq_{trait_col}",
                       label_prefix="Download histogram")
 
@@ -2476,7 +2473,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 coloraxis_colorbar_title="Discovery<br>frequency",
                 height=500,
             )
-            st.plotly_chart(fig_boot_manh, use_container_width=True)
+            show_plot(fig_boot_manh, "wide")
             download_plotly_fig(fig_boot_manh, filename=f"Subsampling_Manhattan_{trait_col}.html", label="Download subsampling Manhattan")
 
             # ---- LD block aggregation ----
@@ -2609,7 +2606,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             xaxis=dict(tickmode="array", tickvals=tick_pos_i, ticktext=tick_lab_i),
             height=500,
         )
-        st.plotly_chart(fig_int, use_container_width=True)
+        show_plot(fig_int, "wide")
         st.session_state["gwas_figures"][f"Interactive_Manhattan_MLM_{trait_col}.html"] = (
             fig_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
         )
@@ -2663,9 +2660,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             _gc_cols[3].metric("Bonferroni threshold", f"{bonf_thresh:.2e}")
 
         fig_qq = plot_qq(gwas_df["PValue"].values, lambda_gc_used=lambda_gc)
-        _qq_cols = st.columns([1, 2, 1])
-        with _qq_cols[1]:
-            st.pyplot(fig_qq)
+        show_plot(fig_qq, "small")
         st.session_state["gwas_figures"][f"QQ_{trait_col}.png"] = fig_qq
 
         download_matplotlib_fig(
@@ -2699,9 +2694,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         ax_hist.set_xlabel("P-value")
         ax_hist.set_ylabel("Count")
         ax_hist.set_title("Distribution of GWAS P-values")
-        _hist_cols = st.columns([1, 2, 1])
-        with _hist_cols[1]:
-            st.pyplot(fig_hist)
+        show_plot(fig_hist, "medium")
         export_matplotlib(fig_hist, f"pvalue_hist_{trait_col}",
                           label_prefix="Download p-value histogram")
         plt.close(fig_hist)
@@ -2877,7 +2870,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 xaxis=dict(tickmode="array", tickvals=tick_pos_m, ticktext=tick_lab_m, showgrid=False),
                 height=500,
             )
-            st.plotly_chart(fig_plotly_mlmm, use_container_width=True)
+            show_plot(fig_plotly_mlmm, "wide")
             st.session_state["gwas_figures"][f"Interactive_Manhattan_MLMM_{trait_col}.html"] = (
                 fig_plotly_mlmm.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
             )
@@ -2893,9 +2886,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             lambda_gc_mlmm = compute_lambda_gc(gwas_mlmm["PValue"].values)
             fig_qq_mlmm = plot_qq(gwas_mlmm["PValue"].values, lambda_gc_used=lambda_gc_mlmm)
             st.write(f"**MLMM λGC (bulk 5–95%):** {lambda_gc_mlmm:.3f}")
-            _qq_cols = st.columns([1, 2, 1])
-            with _qq_cols[1]:
-                st.pyplot(fig_qq_mlmm)
+            show_plot(fig_qq_mlmm, "small")
             st.session_state["gwas_figures"][f"QQ_MLMM_{trait_col}.png"] = fig_qq_mlmm
 
     # ============================================================
@@ -2982,7 +2973,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 xaxis=dict(tickmode="array", tickvals=tick_pos_fc, ticktext=tick_lab_fc, showgrid=False),
                 height=500,
             )
-            st.plotly_chart(fig_plotly_fc, use_container_width=True)
+            show_plot(fig_plotly_fc, "wide")
             st.session_state["gwas_figures"][f"Interactive_Manhattan_FarmCPU_{trait_col}.html"] = (
                 fig_plotly_fc.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
             )
@@ -2998,9 +2989,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             lambda_gc_fc = compute_lambda_gc(gwas_farmcpu["PValue"].values)
             fig_qq_fc = plot_qq(gwas_farmcpu["PValue"].values, lambda_gc_used=lambda_gc_fc)
             st.write(f"**FarmCPU λGC (bulk 5–95%):** {lambda_gc_fc:.3f}")
-            _qq_cols = st.columns([1, 2, 1])
-            with _qq_cols[1]:
-                st.pyplot(fig_qq_fc)
+            show_plot(fig_qq_fc, "small")
             st.session_state["gwas_figures"][f"QQ_FarmCPU_{trait_col}.png"] = fig_qq_fc
 
     # ============================================================
@@ -3097,7 +3086,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 xaxis=dict(tickmode="array", tickvals=tick_pos_multi, ticktext=tick_lab_multi, showgrid=False),
                 height=520,
             )
-            st.plotly_chart(fig_overlay, use_container_width=True)
+            show_plot(fig_overlay, "wide")
             download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html", label="Download overlay Manhattan")
 
             # --- Cross-model consensus: which SNPs detected by which models? ---

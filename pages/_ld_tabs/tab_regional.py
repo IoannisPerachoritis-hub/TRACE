@@ -28,7 +28,7 @@ from gwas.plotting import (
     MAX_REGIONAL_SNPS,
 )
 from gwas.significance import rule_from_streamlit
-from utils.pub_theme import export_matplotlib
+from utils.pub_theme import export_matplotlib, show_plot
 from . import LDContext
 
 
@@ -229,7 +229,7 @@ def render(ctx: LDContext, window):
     # change and keep zoom within one. The key MUST be constant: a key that varies
     # with the window is a new widget that re-inits its value= default and forces
     # an extra rerun (that was the round-1 stale-render bug).
-    st.plotly_chart(fig_i, use_container_width=True, key="regional_chart")
+    show_plot(fig_i, "wide", key="regional_chart")
 
     st.caption(
         f"r² is computed from your own genotypes (not a reference panel). Threshold: "
@@ -269,7 +269,7 @@ def render(ctx: LDContext, window):
             genes=genes, seed_threshold=seed_threshold, gene_labels=gene_labels)
         buf = BytesIO()
         fig_s.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-        st.image(buf.getvalue())
+        show_plot(buf.getvalue(), "wide")
         stem = f"Regional_{window.lead_snp}_Chr{window.chr}_{window.start_bp}_{window.end_bp}"
         export_matplotlib(fig_s, stem, label_prefix="Download regional plot")
         plt.close(fig_s)

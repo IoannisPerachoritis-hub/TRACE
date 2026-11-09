@@ -5,6 +5,16 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Plots on screen have three sizes.** In wide mode the Manhattan, overlay,
+  subsampling Manhattan and regional plots and the QC report strip fill the
+  page; the LD heatmaps, PCA, haplotype box/raincloud plots, haplotype PCA and
+  the p-value and subsampling histograms are at most 700 px wide; the QQ, scree,
+  MAF, PC spectrum, lead-SNP box, forest and phenotype-QC plots at most 450 px.
+  In Post-GWAS's LD Blocks & Haplotypes tab, the forest plot and the haplotype
+  PCA sit in collapsed expanders, and both "Plot style" choices start collapsed.
+  One helper shows every plot (`utils.pub_theme.show_plot`), and a test fails if
+  a page shows a plot without it. Display only: downloads, ZIPs and reports are
+  unchanged.
 - **The lead-SNP box plots colour each dot by its sample's haplotype.** In the
   report's per-SNP plots (CLI and One-Click) and in Post-GWAS's "Lead SNP
   genotype effect" panel, each dot takes the colour of its sample's haplotype in
