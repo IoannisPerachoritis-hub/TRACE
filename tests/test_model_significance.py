@@ -241,8 +241,71 @@ def test_fdr_rule_judges_each_model_by_its_own_fdr_in_the_consensus(planted):
     consensus = res.tables["CrossModel_Consensus.csv"]
     detected = consensus["Detected_by"].str.split(",")
     for model, df in _tables(res, "T_chr2").items():
-        own = set(df.loc[df["FDR"] < 0.05, "SNP"].astype(str))
+        own = set(df.loc[df["Significant_FDR"].astype(bool), "SNP"].astype(str))
         got = set(consensus.loc[detected.apply(lambda ms, m=model: m in ms), "SNP"].astype(str))
         assert got == own, model
     # MLMM and FarmCPU now also get their significant-SNP tables under the FDR rule
     assert {"Significant_SNPs_MLMM.csv", "Significant_SNPs_FarmCPU.csv"} <= set(res.tables)
+
+
+def _mlmm_with_pvalues(monkeypatch, set_p):
+    """Run the real MLMM, then give its table the p-values set_p(snp_ids) returns."""
+    import gwas.models as gm
+    real = gm.run_mlmm_research_grade_fast
+
+    def _wrapped(*a, **k):
+        table, cof = real(*a, **k)
+        table = table.copy()
+        table["PValue"] = set_p(table["SNP"].astype(str).to_numpy())
+        return table, cof
+
+    monkeypatch.setattr(gm, "run_mlmm_research_grade_fast", _wrapped)
+
+
+def test_fdr_consensus_counts_a_snp_exactly_on_its_benjamini_hochberg_step(planted, monkeypatch):
+    """The consensus follows the tables' FDR decision. Benjamini-Hochberg rejects a p-value
+    at or below its step (rank/m x 0.05), so a SNP exactly on its step is significant in
+    its model's table and in the consensus too. Here its q-value is exactly 0.05, and the
+    consensus used to test q < 0.05 and left it out."""
+    n = 180
+    e = np.arange(1, n + 1) / float(n)
+    p_tie = e[2] * 0.05                                   # rank 3 of 180: q == 0.05 exactly
+
+    def _set_p(snps):
+        p = np.ones(len(snps))
+        p[np.isin(snps, ["chr3_10", "chr3_11"])] = 1e-10
+        p[snps == "chr3_30"] = p_tie
+        return p
+
+    _mlmm_with_pvalues(monkeypatch, _set_p)
+    res = _run(planted, model=["mlm", "mlmm"], sig_thresh="fdr", no_plots=True)
+    mlmm = res.tables["GWAS_MLMM_T_chr1.csv"].set_index("SNP")
+    assert len(mlmm) == n
+    assert mlmm.loc["chr3_30", "FDR"] == 0.05 and bool(mlmm.loc["chr3_30", "Significant_FDR"])
+    tie = mlmm.index[mlmm["Significant_FDR"].astype(bool) != (mlmm["FDR"] < 0.05)]
+    assert list(tie) == ["chr3_30"]
+    consensus = res.tables["CrossModel_Consensus.csv"]
+    detected = consensus["Detected_by"].str.split(",")
+    for model, name in (("MLM", "GWAS_T_chr1.csv"), ("MLMM", "GWAS_MLMM_T_chr1.csv")):
+        df = res.tables[name]
+        own = set(df.loc[df["Significant_FDR"].astype(bool), "SNP"].astype(str))
+        got = set(consensus.loc[detected.apply(lambda ms, m=model: m in ms), "SNP"].astype(str))
+        assert got == own, model
+    assert "chr3_30" in set(consensus["SNP"].astype(str))
+
+
+def test_bonferroni_consensus_leaves_out_a_p_value_equal_to_the_threshold(planted, monkeypatch):
+    """Strict '<' at a p-value threshold, in the tables and the consensus alike."""
+    def _set_p(snps):
+        p = np.ones(len(snps))
+        p[snps == "chr3_10"] = 1e-10
+        p[snps == "chr3_30"] = 0.05 / 180                  # exactly MLM's Bonferroni threshold
+        return p
+
+    _mlmm_with_pvalues(monkeypatch, _set_p)
+    res = _run(planted, model=["mlm", "mlmm"], sig_thresh="bonferroni", no_plots=True)
+    mlmm = res.tables["GWAS_MLMM_T_chr1.csv"].set_index("SNP")
+    assert not bool(mlmm.loc["chr3_30", "Significant_Bonf"])
+    consensus = res.tables["CrossModel_Consensus.csv"]
+    detected = consensus["Detected_by"].str.split(",")
+    assert set(consensus.loc[detected.apply(lambda ms: "MLMM" in ms), "SNP"].astype(str)) == {"chr3_10"}

@@ -68,6 +68,26 @@ All notable changes to TRACE are documented in this file.
   for a detected block still cover its member SNPs.
 
 ### Fixed
+- **A numeric `--sig-thresh` no longer crashes the CLI when plots are on.** The
+  bare number reached plot code that needs a text label, so every such run
+  stopped at the MLM Manhattan plot and wrote no results (with several traits,
+  every trait failed and the CLI exited non-zero); the MLMM and FarmCPU
+  Manhattan plots had the same fault. The threshold line is now labelled with
+  the threshold ("p < 1.0e-05"), as in the report and the GUI.
+- **Post-GWAS works under the FDR rule with MLM as the downstream model.** The
+  single-trait view hands MLM's table over without significance columns, so the
+  Significant SNPs tab could not build its table and the lead-SNP gallery
+  stopped the page, whether FDR was the GWAS page's rule or was chosen in the
+  tab's or the gallery's own threshold selector. Both now apply
+  Benjamini-Hochberg within that table, as the GWAS tables do; the GWAS page's
+  own table and downloads are unchanged.
+- **The cross-model consensus decides a tie at a threshold as the tables do.**
+  Under `--sig-thresh fdr` it tested q < 0.05, while `Significant_FDR` is the
+  Benjamini-Hochberg decision (a p-value at or below its step, rank/m × 0.05).
+  Each model is now judged by its own significance column for the analysis
+  rule. Only a SNP whose p-value sits exactly on its Benjamini-Hochberg step is
+  affected (its q-value is then 0.05 up to rounding), and such a SNP can only be
+  added to the consensus.
 - **The CLI and One-Click report's significant-SNP count follows the analysis
   rule.** It counted the rows of the primary model's significant-SNP table, so
   when that table was empty (no SNP passes the rule) or not built
@@ -79,7 +99,7 @@ All notable changes to TRACE are documented in this file.
   computation fails.
 - **Under `--sig-thresh fdr`, `CrossModel_Consensus.csv` judged MLMM and FarmCPU
   SNPs by the M_eff threshold**, because their tables had no FDR column. Each
-  model is now judged by its own FDR.
+  model is now judged by its own FDR decision.
 - **The single-trait run's results ZIP could hold an earlier run's tables.** It
   was cached under the trait, the models, the SNP count and λGC, so a re-run
   after changing the significance rule served the first run's tables and

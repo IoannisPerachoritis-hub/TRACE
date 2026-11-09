@@ -196,15 +196,25 @@ def add_significance_columns(df, *, bonf_thresh, meff_thresh=None, custom_thresh
 
 
 def frame_for_rule(df, rule):
-    """The table to judge ``rule`` on when its threshold was chosen here, not by the run
-    that wrote the table's columns (a Post-GWAS tab's own custom p-value).
+    """The table to judge ``rule`` on in a Post-GWAS tab, whose rule may differ from the
+    one the run that wrote the table's columns used.
 
     ``significant_mask`` prefers a stored ``Significant_*`` column. A stored
     ``Significant_Custom`` was written with the run's custom threshold, so for a custom
     rule it is dropped and the p-values are judged against the rule's own threshold.
-    Other rules keep their column (their thresholds do not depend on the tab). The
+    A table without its FDR decision (the single-trait view hands MLM's table over with
+    SNP, Chr, ChrNum, Pos and PValue only) gets ``FDR`` and ``Significant_FDR`` from
+    Benjamini-Hochberg within its own p-values, as ``add_significance_columns`` writes
+    them. Other rules keep their column (their thresholds do not depend on the tab). The
     input frame is not modified.
     """
     if rule.rule == "custom" and rule.boolean_column in df.columns:
         return df.drop(columns=[rule.boolean_column])
+    if rule.rule == "fdr" and rule.boolean_column not in df.columns:
+        bh = add_significance_columns(df[["PValue"]], bonf_thresh=0.0)
+        out = df.copy()
+        if "FDR" not in out.columns:
+            out["FDR"] = bh["FDR"].to_numpy()
+        out[rule.boolean_column] = bh["Significant_FDR"].to_numpy()
+        return out
     return df

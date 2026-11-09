@@ -302,3 +302,20 @@ def test_frame_for_rule_lets_a_tab_custom_threshold_judge_the_pvalues():
     assert "Significant_Custom" in df.columns                                       # input unchanged
     bonf = rule_from_streamlit("Bonferroni (alpha=0.05)", 4, None)
     assert frame_for_rule(df, bonf) is df
+
+
+def test_frame_for_rule_adds_the_fdr_decision_to_a_table_without_it():
+    """The single-trait view hands MLM's table to Post-GWAS without significance columns;
+    under the FDR rule the tab gets BH within that table, as add_significance_columns
+    writes it. significant_mask itself stays strict (AC-40.3)."""
+    from gwas.significance import add_significance_columns, frame_for_rule
+    df = pd.DataFrame({"SNP": list("abcde"), "PValue": [1e-9, 1e-4, 0.012, 0.3, 0.9], "Model": "MLM"})
+    fdr = rule_from_streamlit("FDR (q < 0.05)", 5, None)
+    with pytest.raises(ValueError):
+        fdr.significant_mask(df)
+    framed = frame_for_rule(df, fdr)
+    ref = add_significance_columns(df, bonf_thresh=0.0)
+    assert fdr.significant_mask(framed).tolist() == ref["Significant_FDR"].tolist() == [True, True, True, False, False]
+    np.testing.assert_array_equal(framed["FDR"].to_numpy(), ref["FDR"].to_numpy())
+    assert list(df.columns) == ["SNP", "PValue", "Model"]
+    assert frame_for_rule(ref, fdr) is ref               # a table that has the column is unchanged

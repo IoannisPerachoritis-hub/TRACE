@@ -464,6 +464,10 @@ def _run_trait(parsed, pheno, args):
     # and custom thresholds, with Benjamini-Hochberg FDR within each model's own p-values.
     _sig_cols = {"bonf_thresh": bonf_thresh_naive, "meff_thresh": meff_thresh,
                  "custom_thresh": primary_thresh if _sig_is_numeric else None}
+    # The analysis rule, resolved once: the cross-model consensus, the isolated-SNP
+    # rescue, the significant-SNP tables and the report read each model's own column.
+    from gwas.significance import rule_from_cli_args
+    _sig_rule_obj = rule_from_cli_args(args, geno_df.shape[1], _meff_val)
 
     if "mlm" in args.model:
         log.info("Running MLM (LOCO)…")
@@ -547,14 +551,11 @@ def _run_trait(parsed, pheno, args):
         try:
             _sig_by_model = {}
             for _mname, _mdf in _consensus_models:
-                if _sig_is_numeric:
-                    _sig_by_model[_mname] = set(_mdf.loc[_mdf["PValue"] < primary_thresh, "SNP"].astype(str))
-                elif sig_rule == "fdr" and "FDR" in _mdf.columns:
-                    _sig_by_model[_mname] = set(_mdf.loc[_mdf["FDR"] < 0.05, "SNP"].astype(str))
-                elif sig_rule == "bonferroni":
-                    _sig_by_model[_mname] = set(_mdf.loc[_mdf["PValue"] < bonf_thresh_naive, "SNP"].astype(str))
-                else:  # meff (default)
-                    _sig_by_model[_mname] = set(_mdf.loc[_mdf["PValue"] < meff_thresh, "SNP"].astype(str))
+                # each model's own column for the analysis rule (add_significance_columns),
+                # so a tie at a threshold is decided as in the tables (FDR: the
+                # Benjamini-Hochberg decision, p <= rank/m x 0.05)
+                _sig_by_model[_mname] = set(
+                    _mdf.loc[_sig_rule_obj.significant_mask(_mdf), "SNP"].astype(str))
 
             _all_sig = sorted(set().union(*_sig_by_model.values()))
             if _all_sig:
@@ -653,8 +654,6 @@ def _run_trait(parsed, pheno, args):
     # positional set difference against the FINAL emitted block table and NEVER
     # calls the block detector (gwas/isolated.py has no gwas.ld import).
     from gwas import isolated as _iso
-    from gwas.significance import rule_from_cli_args
-    _sig_rule_obj = rule_from_cli_args(args, geno_df.shape[1], _meff_val)
     _do_rescue = not getattr(args, "no_isolated_rescue", False)
     _iso_edge_flank_bp = (
         int(args.isolated_edge_flank_kb) * 1000 if getattr(args, "isolated_edge_flank_kb", None)
@@ -1077,6 +1076,10 @@ def _run_trait(parsed, pheno, args):
         import matplotlib.pyplot as plt
 
         _thresh_labels = {"meff": f"M_eff (M={_meff_val:,})", "bonferroni": "Bonferroni", "fdr": "FDR"}
+        # a numeric --sig-thresh is the custom rule: its own label ("p < 1.0e-05"), as in the
+        # report and the GUI (the bare number used to reach plot code that needs a string)
+        _man_label = (_sig_rule_obj.label if _sig_is_numeric
+                      else _thresh_labels.get(sig_rule, sig_rule))
         _man_lod = -np.log10(primary_thresh) if primary_thresh is not None else None
         # GUI-only option: a second, informational threshold line (Bonferroni and
         # M_eff shown together). It changes no significance call.
@@ -1088,8 +1091,7 @@ def _run_trait(parsed, pheno, args):
             elif sig_rule == "meff":
                 _sec = {"secondary_lod": -np.log10(bonf_thresh_naive),
                         "secondary_label": "Bonferroni α=0.05"}
-        fig_man = plot_manhattan_static(df_plot, _man_lod,
-                                        _thresh_labels.get(sig_rule, sig_rule),
+        fig_man = plot_manhattan_static(df_plot, _man_lod, _man_label,
                                         f"Manhattan (MLM): {args.trait}", **_sec)
         plt.figure(fig_man.number)
         plt.xticks(tick_pos, tick_lab, fontsize=8)
@@ -1105,8 +1107,7 @@ def _run_trait(parsed, pheno, args):
                 _mdf_plot, _mtp, _mtl = compute_cumulative_positions(_mdf_plot)
                 _lam_m = compute_lambda_gc(_m_df["PValue"].values)
                 _fig_m = plot_manhattan_static(
-                    _mdf_plot, _man_lod,
-                    _thresh_labels.get(sig_rule, sig_rule),
+                    _mdf_plot, _man_lod, _man_label,
                     f"Manhattan ({_m_name}): {args.trait}", **_sec,
                 )
                 plt.figure(_fig_m.number)

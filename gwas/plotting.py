@@ -130,7 +130,7 @@ def plot_manhattan_static(
     # Primary significance line + significant-SNP amplification
     has_threshold = (active_lod is not None
                      and not np.isnan(active_lod)
-                     and not active_label.startswith("FDR"))
+                     and not str(active_label).startswith("FDR"))
     if has_threshold:
         plt.axhline(active_lod, linestyle="--", label=active_label,
                      color=SIG_LINE_COLOR, linewidth=1.0, zorder=3)
@@ -220,7 +220,7 @@ def plot_manhattan_interactive(
         )
 
     # Primary threshold line
-    if active_lod is not None and not active_label.startswith("FDR"):
+    if active_lod is not None and not str(active_label).startswith("FDR"):
         fig.add_hline(
             y=active_lod,
             line_dash="dash",

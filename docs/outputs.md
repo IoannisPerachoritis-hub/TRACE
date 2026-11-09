@@ -26,7 +26,7 @@ model, when the M_eff rule is chosen.
 | column | type | meaning |
 |--------|------|---------|
 | `FDR` | float | Benjamini–Hochberg q-value, computed within this model's own p-values. |
-| `Significant_FDR` | bool | The Benjamini–Hochberg decision at 0.05 within this model (`FDR` ≤ 0.05). |
+| `Significant_FDR` | bool | The Benjamini–Hochberg decision at 0.05 within this model: a p-value at or below its step (rank/m × 0.05), which is `FDR` ≤ 0.05 up to rounding. |
 | `Significant_Bonf` | bool | `PValue < 0.05 / m`, where m is the number of SNPs tested (MLM's Bonferroni threshold). |
 | `Significant_Meff` | bool | `PValue < 0.05 / M_eff` (MLM's M_eff threshold, Li & Ji). |
 | `Significant_Custom` | bool | `PValue < t` for a numeric threshold t (`--sig-thresh 5e-8`, or the single-trait run's Custom p-value); written only when one is set. |
@@ -39,7 +39,8 @@ and Benjamini–Hochberg counts only the SNPs that have one.
 
 **What uses them.** The column for the analysis rule (`--sig-thresh`) selects
 the SNPs of each model's `Significant_SNPs_<model>.csv`, the report's per-model
-count of significant SNPs, and the blocks that get an LD heatmap.
+count of significant SNPs, the cross-model consensus (`CrossModel_Consensus.csv`),
+and the blocks that get an LD heatmap.
 
 **LD heatmaps.** A heatmap (`figures/LD_heatmap_Chr<c>_<start>_<end>.png`) is
 drawn for each LD block whose lead SNP is significant in its model. A block is
@@ -92,7 +93,7 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 | 16 | `Passes_Seed_Threshold` | bool | `PValue < Seed_Threshold`, i.e. this SNP was eligible to seed a block. |
 | 17 | `Passes_Meff` | bool | Significant under M_eff (blank if that column was not computed). |
 | 18 | `Passes_Bonf` | bool | Significant under Bonferroni. |
-| 19 | `Passes_FDR` | bool | Significant under FDR (q ≤ 0.05). |
+| 19 | `Passes_FDR` | bool | Significant under FDR (the model's `Significant_FDR`). |
 | 20 | `FDR` | float | Benjamini–Hochberg q-value; blank if not computed. |
 | 21 | `Block_ID` | str | `chr:start-end` of the containing LD block, or empty when unblocked. |
 | 22 | `Block_Status` | str | One of five values (see below). |
