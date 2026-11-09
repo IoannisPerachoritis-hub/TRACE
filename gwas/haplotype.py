@@ -745,16 +745,14 @@ def haplotype_assignments(hap_result, hap_tables, geno_df, pheno_df, trait_col, 
     return pd.concat(frames, ignore_index=True)[columns]
 
 
-def snp_haplotype_labels(blocks_df, assignments, chrom, pos, sample_ids):
-    """The haplotype labels of the LD block that contains a SNP, for its box plot.
+def snp_block_assignments(blocks_df, assignments, chrom, pos, sample_ids):
+    """The rows of a haplotype_assignments table for the LD block that contains a SNP.
 
-    The block is the first row of ``blocks_df`` (the LD blocks) on the SNP's chromosome
-    with Start <= pos <= End, the rule the significant-SNP table's Block_ID uses. Its
-    labels come from ``assignments`` (a haplotype_assignments table), aligned to
-    ``sample_ids``; a sample without a haplotype there counts as "Other". Returns
-    ``(labels, block_key, reason)``: ``labels`` is None and ``reason`` says why when
-    the dots cannot be coloured: "no_block" (no LD block contains the SNP) or
-    "no_groups" (its block has no tested haplotype group).
+    The block is the first LD block on the SNP's chromosome with Start <= pos <= End (the
+    significant-SNP table's Block_ID rule). Returns ``(rows, block_key, reason)``:
+    ``rows`` has ``Haplotype`` (blank when the sample has none) and ``in_haplotype_test``,
+    aligned to ``sample_ids``; it is None, with ``reason`` "no_block" or "no_groups", when
+    no block contains the SNP or its block has no tested haplotype group.
     """
     from annotation import canon_chr
 
@@ -776,9 +774,31 @@ def snp_haplotype_labels(blocks_df, assignments, chrom, pos, sample_ids):
                     & (assignments["Block_end"].astype(int) == end)]
     if a.empty or not a["Haplotype"].astype(str).str.match(r"^H\d+$").any():
         return None, key, "no_groups"
-    by_sample = pd.Series(a["Haplotype"].astype(str).to_numpy(),
-                          index=a["Sample"].astype(str).to_numpy())
-    labels = by_sample.reindex(np.asarray(sample_ids, dtype=str)).fillna("").to_numpy(dtype=object)
+    a = a.set_index(a["Sample"].astype(str))
+    ids = np.asarray(sample_ids, dtype=str)
+    rows = pd.DataFrame({
+        "Haplotype": a["Haplotype"].reindex(ids).fillna("").astype(str).to_numpy(dtype=object),
+        "in_haplotype_test": (a["in_haplotype_test"].reindex(ids).astype("boolean")
+                              .fillna(False).to_numpy(dtype=bool)),
+    }, index=pd.Index(ids, name="Sample"))
+    return rows, key, None
+
+
+def snp_haplotype_labels(blocks_df, assignments, chrom, pos, sample_ids):
+    """The haplotype labels of the LD block that contains a SNP, for its box plot.
+
+    The block is the first row of ``blocks_df`` (the LD blocks) on the SNP's chromosome
+    with Start <= pos <= End, the rule the significant-SNP table's Block_ID uses. Its
+    labels come from ``assignments`` (a haplotype_assignments table), aligned to
+    ``sample_ids``; a sample without a haplotype there counts as "Other". Returns
+    ``(labels, block_key, reason)``: ``labels`` is None and ``reason`` says why when
+    the dots cannot be coloured: "no_block" (no LD block contains the SNP) or
+    "no_groups" (its block has no tested haplotype group).
+    """
+    rows, key, reason = snp_block_assignments(blocks_df, assignments, chrom, pos, sample_ids)
+    if rows is None:
+        return None, key, reason
+    labels = rows["Haplotype"].to_numpy(dtype=object)
     labels[labels == ""] = "Other"
     return labels, key, None
 

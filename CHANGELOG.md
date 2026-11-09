@@ -121,6 +121,17 @@ All notable changes to TRACE are documented in this file.
   for a detected block still cover its member SNPs.
 
 ### Added
+- **The Post-GWAS lead-SNP box plot is interactive, with its data as CSV.** A
+  "Plot style" choice (collapsed; Interactive by default) shows the "Lead SNP
+  genotype effect" plot in Plotly: a box per genotype class with the same
+  jittered points, coloured by haplotype as the static plot, and on hover each
+  sample's ID, genotype (dosage and alleles, e.g. "1 (A/G)"), plotted value and
+  haplotype. The values, title (MLM effect and η²) and y axis are the static
+  plot's. "Download plotted data (CSV)" under the plot gives one row per plotted
+  sample: Sample, Genotype_dosage, Genotype_alleles, Phenotype (the values
+  plotted), Phenotype_scale (raw, or e.g. rank-INT), Haplotype and
+  In_haplotype_test, as `lead_snp_<SNP>_<trait>.csv`. The static plot and every
+  export are unchanged.
 - **Sample-to-haplotype assignments.** `Haplotype_assignments_<trait>.csv` (CLI
   and One-Click ZIP, `tables/`) lists, for every tested LD block of the primary
   model (MLM), every analysis sample of the trait with its haplotype label

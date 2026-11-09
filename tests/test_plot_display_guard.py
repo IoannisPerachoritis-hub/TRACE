@@ -101,6 +101,7 @@ _PINNED = Counter({
     ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']", "medium", False): 2,
     ("pages/_ld_tabs/tab_genome_wide.py", "_build_interactive_pca_fig()", "medium", True): 1,
     ("pages/_ld_tabs/tab_genome_wide.py", "_fig", "small", False): 1,   # lead-SNP box plot
+    ("pages/_ld_tabs/tab_genome_wide.py", "_pfig", "small", True): 1,   # ... interactive
     ("pages/_ld_tabs/tab_genome_wide.py", "_build_interactive_raincloud_fig()", "medium", True): 1,
     ("pages/_ld_tabs/tab_genome_wide.py", "_fig_forest", "small", False): 1,
     ("pages/_ld_tabs/tab_local_ld.py", "local_cached['display']", "medium", False): 1,
@@ -127,5 +128,5 @@ def test_every_plot_has_its_size_class():
                 if rel.endswith("tab_regional.py") and key is not None:
                     keys.append(ast.literal_eval(key))
     assert calls == _PINNED
-    assert sum(calls.values()) == 28
+    assert sum(calls.values()) == 29
     assert keys == ["regional_chart"]       # a constant key: a varying one forced reruns

@@ -895,7 +895,7 @@ def _render_haplotype_gwas(
 
 
 def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, geno_df, n_perm,
-                       hap_kwargs=None):
+                       hap_kwargs=None, data_kwargs=None):
     """Render one SNP's genotype-class boxplot + one marginal rank-test caption.
 
     ``geno_col`` / ``y`` are already masked to the SNP's non-missing, phenotyped samples.
@@ -907,8 +907,12 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
     signature but unused now that the per-SNP Freedman-Lane test and its PC covariates are gone.
     ``hap_kwargs`` goes to ``render_snp_boxplot``: the haplotype labels of the block that
     contains the SNP (or the note why there are none) and the phenotype axis label.
+    ``data_kwargs`` goes to ``snp_boxplot_data`` (the samples' haplotypes, test flags,
+    alleles and the phenotype's scale): the interactive plot and the CSV under it show
+    exactly the samples and values the static plot draws.
     """
-    from gwas.snpplots import render_snp_boxplot
+    from gwas.snpplots import (plotly_snp_boxplot, render_snp_boxplot, snp_boxplot_data,
+                               snp_boxplot_title)
     import matplotlib.pyplot as _plt
 
     # Effect sizes READ from the GWAS results (guard each column -> None where absent); they
@@ -930,10 +934,33 @@ def _render_snp_effect(ctx, snp_id, chrom, pos, trait_col, geno_col, y, samp, ge
                     return None
             _bm, _se, _bo = _num("Beta_MLM"), _num("SE_MLM"), _num("Beta_OLS")
 
-    _fig = render_snp_boxplot(str(snp_id), geno_col, y, beta_mlm=_bm, se_mlm=_se, beta_ols=_bo,
-                              **(hap_kwargs or {}))
-    show_plot(_fig, "small")
-    _plt.close(_fig)
+    with st.expander("Plot style", expanded=False):
+        _style = st.radio(
+            "Visualization", ("Interactive", "Static"), horizontal=True,
+            key="lead_snp_viz_type",
+            help=("Interactive (Plotly) shows each sample's ID, genotype, plotted value and "
+                  "haplotype on hover. Static (matplotlib) is the report's figure."),
+        )
+    _hk = dict(hap_kwargs or {})
+    _data = snp_boxplot_data(geno_col, y, samp, **(data_kwargs or {}))
+    if _style == "Interactive":
+        _pfig = plotly_snp_boxplot(
+            _data, snp_boxplot_title(str(snp_id), geno_col, y, beta_mlm=_bm, se_mlm=_se,
+                                     beta_ols=_bo),
+            y_label=_hk.get("y_label"), hap_color_map=_hk.get("hap_color_map"))
+        show_plot(_pfig, "small", key=f"lead_snp_plotly_{snp_id}")
+        if _hk.get("hap_note"):
+            st.caption(_hk["hap_note"])
+    else:
+        _fig = render_snp_boxplot(str(snp_id), geno_col, y, beta_mlm=_bm, se_mlm=_se,
+                                  beta_ols=_bo, **_hk)
+        show_plot(_fig, "small")
+        _plt.close(_fig)
+    st.download_button(
+        "Download plotted data (CSV)", _data.to_csv(index=False).encode("utf-8"),
+        file_name=f"lead_snp_{snp_id}_{trait_col}.csv", mime="text/csv",
+        key=f"dl_lead_snp_{snp_id}",
+    )
 
     # Marginal genotype-class rank test -- adjusts for NEITHER population structure NOR
     # kinship. Mann-Whitney U for two non-empty classes, Kruskal-Wallis for three; no minimum
@@ -1101,22 +1128,33 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=No
 
         # the haplotype labels of the LD block that contains the SNP (by position, as the
         # significant-SNP table's Block_ID), the same labels as the assignments table
-        from gwas.haplotype import snp_haplotype_labels
+        from gwas.haplotype import snp_block_assignments
         from gwas.snpplots import HAP_NOTE_NO_BLOCK, HAP_NOTE_NO_GROUPS, phenotype_axis_label
+        _rows = None
         try:
-            _hl, _hb, _why = snp_haplotype_labels(
+            _rows, _hb, _why = snp_block_assignments(
                 haplo_df_auto, hap_assignments, np.asarray(ctx.chroms)[_ci], _pos, _samp)
-            _hk = ({"hap_labels": _hl} if _hl is not None else
-                   {"hap_note": HAP_NOTE_NO_BLOCK if _why == "no_block" else HAP_NOTE_NO_GROUPS})
+            if _rows is not None:     # a sample without a haplotype counts as "Other"
+                _hk = {"hap_labels": np.asarray(
+                    [h if h else "Other" for h in _rows["Haplotype"].tolist()], dtype=object)}
+            else:
+                _hk = {"hap_note": HAP_NOTE_NO_BLOCK if _why == "no_block"
+                       else HAP_NOTE_NO_GROUPS}
         except Exception:
-            _hk = {}
+            _rows, _hk = None, {}
         # the axis names the values plotted (the GWAS's phenotype, transformed or raw)
         _hk["y_label"] = phenotype_axis_label(ctx.ld_trait, _plotted_norm)
+        _allele_map = _gctx.get("allele_map") or {}
+        _data_kw = {
+            "haplotypes": None if _rows is None else _rows["Haplotype"].to_numpy(dtype=object),
+            "in_test": None if _rows is None else _rows["in_haplotype_test"].to_numpy(dtype=bool),
+            "alleles": _allele_map.get(_chosen), "norm": _plotted_norm,
+        }
 
         st.markdown(f"#### {_chosen} genotype effect")
         _render_snp_effect(
             ctx, _chosen, _chr, _pos, ctx.trait_col, _g, _y, _samp, ctx.geno_df, _n_perm,
-            hap_kwargs=_hk)
+            hap_kwargs=_hk, data_kwargs=_data_kw)
 
 
 def _render_block_visualization(

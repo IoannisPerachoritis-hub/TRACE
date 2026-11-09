@@ -54,6 +54,132 @@ def select_snps_for_plotting(sig_table, *, mode="capped", max_plots=24):
     return ids if mode == "all" else ids[: int(max_plots)]
 
 
+def _title_lines(snp_id, summary, flag, beta_mlm, se_mlm):
+    """The box plot's three title lines: the SNP, beta_MLM (+- SE) or the unadjusted note
+    (+ missing count), and the effect flag with the per-SNP eta2."""
+    if beta_mlm is not None and np.isfinite(float(beta_mlm)):
+        se_txt = (f" ± {float(se_mlm):.3g}"
+                  if se_mlm is not None and np.isfinite(float(se_mlm)) else "")
+        beta_txt = f"β_MLM = {float(beta_mlm):.3g}{se_txt}"
+    else:
+        beta_txt = "structure-unadjusted (p-values unaffected)"
+    if summary["n_missing"]:
+        beta_txt += f" | {summary['n_missing']} missing"
+    return [str(snp_id), beta_txt, f"{flag} | η² = {summary['eta2']:.2f}"]
+
+
+def snp_boxplot_title(snp_id, geno_col, y, *, beta_mlm=None, se_mlm=None, beta_ols=None):
+    """The title lines of ``render_snp_boxplot`` for these inputs (the MLM effect and the
+    per-SNP eta2), for the interactive plot."""
+    return _title_lines(snp_id, genotype_class_summary(geno_col, y),
+                        effect_flag(beta_mlm, beta_ols), beta_mlm, se_mlm)
+
+
+def phenotype_scale_name(norm=None):
+    """'raw', or the name of the GWAS's normalisation (e.g. 'rank-INT')."""
+    if norm in (None, "", "none"):
+        return "raw"
+    return NORM_AXIS_NAMES.get(str(norm), str(norm))
+
+
+SNP_BOXPLOT_DATA_COLUMNS = ["Sample", "Genotype_dosage", "Genotype_alleles", "Phenotype",
+                            "Phenotype_scale", "Haplotype", "In_haplotype_test"]
+
+
+def snp_boxplot_data(geno_col, y, sample_ids, *, haplotypes=None, in_test=None,
+                     alleles=None, norm=None):
+    """The samples a SNP's box plot draws, one row each, in input order.
+
+    A sample is drawn when its genotype and phenotype are finite and its rounded dosage
+    is 0, 1 or 2, as in ``render_snp_boxplot``. ``Phenotype`` is the value plotted (the
+    GWAS's y; ``norm`` names its scale). ``haplotypes`` / ``in_test`` (aligned with
+    ``sample_ids``) are the sample's label and test flag in the SNP's tested block
+    (blank / False when the sample has none or the SNP is in no tested block).
+    ``alleles`` is (REF, ALT): the genotype then reads e.g. "A/G" for dosage 1.
+    """
+    g = np.asarray(geno_col, dtype=float)
+    yy = np.asarray(y, dtype=float)
+    ids = np.asarray(sample_ids, dtype=str)
+    if not (g.shape[0] == yy.shape[0] == ids.shape[0]):
+        raise ValueError(f"{g.shape[0]} genotypes, {yy.shape[0]} phenotypes and "
+                         f"{ids.shape[0]} sample IDs")
+    drawn = (np.isfinite(g) & np.isfinite(yy)
+             & np.isin(np.rint(np.where(np.isfinite(g), g, -1)), (0, 1, 2)))
+    dose = np.rint(g[drawn]).astype(int)
+    if alleles is not None and all(a not in (None, "", ".") for a in alleles):
+        ref, alt = (str(a) for a in alleles)
+        names = {0: f"{ref}/{ref}", 1: f"{ref}/{alt}", 2: f"{alt}/{alt}"}
+        gt = [names[d] for d in dose]
+    else:
+        gt = [""] * int(drawn.sum())
+    hap = (np.asarray(["" if h is None or (isinstance(h, float) and np.isnan(h)) else str(h)
+                       for h in haplotypes], dtype=object)[drawn]
+           if haplotypes is not None else np.full(int(drawn.sum()), "", dtype=object))
+    flag = (np.asarray(in_test, dtype=bool)[drawn] if in_test is not None
+            else np.zeros(int(drawn.sum()), dtype=bool))
+    return pd.DataFrame({
+        "Sample": ids[drawn], "Genotype_dosage": dose, "Genotype_alleles": gt,
+        "Phenotype": yy[drawn], "Phenotype_scale": phenotype_scale_name(norm),
+        "Haplotype": hap, "In_haplotype_test": flag,
+    })[SNP_BOXPLOT_DATA_COLUMNS]
+
+
+def plotly_snp_boxplot(data, title_lines, *, y_label=None, hap_color_map=None):
+    """The interactive form of ``render_snp_boxplot`` from ``snp_boxplot_data`` rows.
+
+    A box per genotype class and the same jittered points (same seed, same draws per
+    class), coloured by haplotype as the static plot (a blank label counts as "Other";
+    no label at all: one colour). Hover shows the sample, its genotype, the phenotype
+    plotted and its haplotype. ``title_lines`` are ``snp_boxplot_title``'s.
+    """
+    import plotly.graph_objects as go
+
+    from utils.pub_theme import hap_sort_key, haplotype_color_map
+
+    rng = np.random.default_rng(0)                 # the static plot's jitter
+    labelled = bool((data["Haplotype"].astype(str) != "").any())
+    hap = data["Haplotype"].astype(str).where(data["Haplotype"].astype(str) != "", "Other")
+    cmap = haplotype_color_map(sorted(set(hap), key=hap_sort_key)) if labelled else {}
+    cmap.update(hap_color_map or {})
+    fig = go.Figure()
+    ticks, x_all = [], np.full(len(data), np.nan)
+    for cls in (0, 1, 2):
+        m = (data["Genotype_dosage"] == cls).to_numpy()
+        n = int(m.sum())
+        alle = data.loc[m, "Genotype_alleles"].iloc[0] if n and data.loc[m, "Genotype_alleles"].iloc[0] else ""
+        ticks.append(f"{cls}{f' ({alle})' if alle else ''}<br>(n={n})")
+        if not n:
+            continue
+        fig.add_trace(go.Box(x=np.full(n, cls), y=data.loc[m, "Phenotype"], width=0.5,
+                             boxpoints=False, fillcolor="rgba(0,0,0,0)",
+                             line=dict(color="#333333", width=1), hoverinfo="skip",
+                             showlegend=False))
+        x_all[m] = cls + (rng.random(n) - 0.5) * 0.18
+    hover = ("<b>%{customdata[0]}</b><br>Genotype: %{customdata[1]}<br>"
+             "Phenotype: %{y:.4g}<br>Haplotype: %{customdata[2]}<extra></extra>")
+    gt_txt = [f"{d} ({a})" if a else f"{d}" for d, a in
+              zip(data["Genotype_dosage"], data["Genotype_alleles"])]
+    groups = ((["Other"] if "Other" in set(hap) else [])
+              + sorted({h for h in hap if h != "Other"}, key=hap_sort_key)) if labelled else [None]
+    for h in groups:
+        k = (hap == h).to_numpy() if h is not None else np.ones(len(data), dtype=bool)
+        fig.add_trace(go.Scatter(
+            x=x_all[k], y=data.loc[k, "Phenotype"], mode="markers",
+            marker=dict(size=6, opacity=0.6, color=cmap.get(h, "#0072B2") if h else "#0072B2"),
+            name=h or "samples", showlegend=labelled,
+            customdata=np.column_stack([data.loc[k, "Sample"].astype(str),
+                                        np.asarray(gt_txt, dtype=object)[k],
+                                        data.loc[k, "Haplotype"].astype(str).replace("", "none")]),
+            hovertemplate=hover))
+    fig.update_layout(
+        title=dict(text="<br>".join(title_lines), font=dict(size=11)),
+        xaxis=dict(title="Genotype class (alt dosage)", tickvals=[0, 1, 2], ticktext=ticks,
+                   range=[-0.6, 2.6]),
+        yaxis=dict(title=y_label or "Phenotype"),
+        legend=dict(title="Haplotype"), height=460, margin=dict(t=90))
+    return fig
+
+
 def render_snp_boxplot(snp_id, geno_col, y, *, beta_mlm=None, se_mlm=None,
                        beta_ols=None, dpi=110, hap_labels=None, hap_color_map=None,
                        hap_note=None, y_label=None):
@@ -129,16 +255,7 @@ def render_snp_boxplot(snp_id, geno_col, y, *, beta_mlm=None, se_mlm=None,
     ax.set_xlabel("Genotype class (alt dosage)")
     ax.set_ylabel(y_label if y_label else "Phenotype")
 
-    if beta_mlm is not None and np.isfinite(float(beta_mlm)):
-        se_txt = (f" ± {float(se_mlm):.3g}"
-                  if se_mlm is not None and np.isfinite(float(se_mlm)) else "")
-        beta_txt = f"β_MLM = {float(beta_mlm):.3g}{se_txt}"
-    else:
-        beta_txt = "structure-unadjusted (p-values unaffected)"
-    if s["n_missing"]:
-        beta_txt += f" | {s['n_missing']} missing"
-    ax.set_title(f"{snp_id}\n{beta_txt}\n{flag} | η² = {s['eta2']:.2f}",
-                 fontsize=8)
+    ax.set_title("\n".join(_title_lines(snp_id, s, flag, beta_mlm, se_mlm)), fontsize=8)
     if labels is not None and present:
         from matplotlib.lines import Line2D
         handles = [Line2D([], [], ls="", marker="o", ms=4, color=cmap[h], label=h)

@@ -795,7 +795,7 @@ def gwas_pipeline(
     genotypes, samples, chroms, positions, vid, ref, alt, info_scores, info_field = \
         _pipeline_parse_vcf_biallelic(callset)
 
-    geno_df, pheno, chroms, positions, sid, info_scores, _ = \
+    geno_df, pheno, chroms, positions, sid, info_scores, allele_map = \
         _pipeline_harmonize_ids(genotypes, samples, chroms, positions,
                                 vid, ref, alt, pheno, info_scores)
 
@@ -861,6 +861,7 @@ def gwas_pipeline(
         "kinship_model": kinship_model,
         "info_scores": info_scores,
         "info_field": info_field,
+        "allele_map": allele_map,         # {SNP: (REF, ALT)}, for the lead-SNP box plot
     }
 
 if st is not None:

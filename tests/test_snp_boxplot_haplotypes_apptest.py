@@ -211,6 +211,7 @@ def _assert_clean(at):
 def _start(norm):
     at = AppTest.from_string(_SCRIPT.replace("__ROOT__", str(_ROOT).replace("\\", "/"))
                              .replace("__NORM__", norm), default_timeout=240)
+    at.session_state["lead_snp_viz_type"] = "Static"    # the static plot's colours
     at.run()
     _assert_clean(at)
     for name in _WRAPPED:      # the script restored what it wrapped

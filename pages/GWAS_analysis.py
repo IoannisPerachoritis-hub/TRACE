@@ -1386,6 +1386,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         "y": st.session_state["y"],
         "pcs": st.session_state["pcs"],
         "covar_reader": st.session_state["covar_reader"],
+        # {SNP: (REF, ALT)}: the lead-SNP box plot names the genotypes (A/A, A/G, G/G)
+        "allele_map": (results.get("allele_map") if isinstance(results, dict) else None),
     }
 
     # ================================================================
