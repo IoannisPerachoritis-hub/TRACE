@@ -382,6 +382,9 @@ def run_haplotype_block_gwas(
         })
         block_key = f"{chr_sel}:{start_bp}-{end_bp}"
         hap_tables[block_key] = mlg_df.copy()
+        # the markers of Allele_sequence, in its order (after the call-rate filter and
+        # the r2 >= 0.9 thinning); read by haplotype_assignments
+        hap_tables[block_key]["SNP_order"] = "|".join(block_sids.astype(str))
 
         # phenotype frame
         haplo_pheno_df = pd.DataFrame({
@@ -454,6 +457,18 @@ def run_haplotype_block_gwas(
             k_target = pcs_block.shape[1] if n_pcs_used is None else int(n_pcs_used)
             k_used = int(min(k_target, pcs_block.shape[1]))
             pcs_use = pcs_block.iloc[:, :k_used].values if k_used > 0 else None
+
+        # Which labelled samples the test below takes (df_test is final here), and why
+        # the others are left out; read by haplotype_assignments, changes nothing else.
+        _ht = hap_tables[block_key]
+        _in_test = _ht["Sample"].astype(str).isin(set(df_test["Sample"].astype(str))).to_numpy()
+        _ht["in_haplotype_test"] = _in_test
+        _ht["exclusion_reason"] = np.select(
+            [_in_test, (_ht["Haplotype"] == "Other").to_numpy(),
+             ~_ht["Haplotype"].isin(valid_haps).to_numpy()],
+            ["", "rare haplotype (Other)", "group below minimum size"],
+            default="missing covariate",
+        )
 
         # Append user covariates AFTER the PC truncation above (n_pcs_used slices only the
         # PC columns, so covariates stacked before it would be sliced off). Aligned to the
@@ -626,6 +641,108 @@ if st is not None:
     run_haplotype_block_gwas_cached = st.cache_data(
         show_spinner=False, max_entries=5
     )(run_haplotype_block_gwas_cached)
+
+
+# Columns of the sample-to-haplotype assignments table, in file order; "Phenotype_raw"
+# follows "Phenotype_used" only when the test's phenotype is not the raw values.
+HAP_ASSIGNMENT_COLUMNS = [
+    "Trait", "Chr", "Block_start", "Block_end", "Lead_SNP", "Sample", "Haplotype",
+    "Allele_sequence", "SNP_order", "in_haplotype_test", "exclusion_reason",
+    "Phenotype_used",
+]
+# Why a sample of the panel is not in a block's test. A sample with neither a usable
+# genotype nor a phenotype is reported as "missing phenotype".
+HAP_EXCLUSION_REASONS = (
+    # the first two do not occur in TRACE's own files: the callers pass the imputed
+    # genotype matrix and the trait's analysis samples
+    "missing genotype",          # over 30% of the block's markers missing
+    "missing phenotype",         # no finite trait value
+    "rare haplotype (Other)",    # its haplotype has fewer than min_hap_count samples
+    "group below minimum size",  # its haplotype group has fewer than min_group_size
+    "missing covariate",         # a PC value is missing (not seen with genotype PCs)
+)
+
+
+def haplotype_assignments(hap_result, hap_tables, geno_df, pheno_df, trait_col, *,
+                          blocks=None, pheno_raw=None):
+    """Sample-to-haplotype assignments: one row per sample of the panel per tested block.
+
+    ``hap_result`` and ``hap_tables`` are the two return values of one
+    run_haplotype_block_gwas call; ``geno_df``, ``pheno_df`` and ``trait_col`` are that
+    call's arguments. The panel is the samples in both ``geno_df`` and ``pheno_df``, in
+    genotype order: in TRACE's callers, the trait's analysis samples (after phenotype QC,
+    --ind-miss and covariate drops), so a sample without a trait value is not listed.
+    Blocks follow ``hap_result`` (the tested blocks); ``blocks`` keeps only those keys
+    ("<Chr>:<Start>-<End>").
+
+    Each row gives the sample's haplotype label (H1..Hk by descending count, or
+    "Other"), its allele sequence (the rounded dosages the test used, "|"-separated, in
+    the order of SNP_order) and whether the test took it. A sample without a haplotype
+    (missing genotype or phenotype) has an empty Haplotype and Allele_sequence; every
+    sample left out has its reason (HAP_EXCLUSION_REASONS). Phenotype_used is the trait
+    value the test takes for the sample (blank when missing); only rows with
+    in_haplotype_test True enter the test. ``pheno_raw`` (a Series by sample; a repeated
+    sample keeps its first value, as the ID harmonisation does) adds Phenotype_raw when,
+    for some sample of the panel, both values are present and differ, so the per-block
+    and all-blocks tables always have the same columns. TRACE's callers pass none: the
+    test uses the uploaded values. Inputs are not modified.
+    """
+    columns = list(HAP_ASSIGNMENT_COLUMNS)
+    geno_ids = pd.Index(np.asarray(geno_df.index, dtype=str))
+    pheno = pheno_df.copy()
+    pheno.index = pheno.index.astype(str)
+    panel = geno_ids[geno_ids.isin(pheno.index)]
+    used = pd.to_numeric(pheno[trait_col], errors="coerce").astype(float).reindex(panel)
+    used = used.where(np.isfinite(used.to_numpy()))
+    raw = None
+    if pheno_raw is not None:
+        raw_s = pd.Series(pheno_raw).copy()
+        raw_s.index = raw_s.index.astype(str)
+        raw_s = raw_s[~raw_s.index.duplicated(keep="first")]
+        raw = pd.to_numeric(raw_s, errors="coerce").astype(float).reindex(panel)
+        _r, _u = raw.to_numpy(), used.to_numpy()
+        _both = np.isfinite(_r) & np.isfinite(_u)
+        if not (_r[_both] != _u[_both]).any():
+            raw = None
+        else:
+            columns.append("Phenotype_raw")
+
+    frames = []
+    for _, row in (hap_result if hap_result is not None else pd.DataFrame()).iterrows():
+        key = f"{row['Chr']}:{int(row['Start'])}-{int(row['End'])}"
+        table = (hap_tables or {}).get(key)
+        # a tested block's table always has the test's columns (run_haplotype_block_gwas)
+        if (table is None or "in_haplotype_test" not in table.columns
+                or (blocks is not None and key not in blocks)):
+            continue
+        tab = table.copy()
+        tab["Sample"] = tab["Sample"].astype(str)
+        tab = tab.set_index("Sample").reindex(panel)
+        labelled = tab["Haplotype"].notna().to_numpy()
+        reason = np.where(labelled, tab["exclusion_reason"].fillna("").astype(str).to_numpy(),
+                          np.where(used.isna().to_numpy(), "missing phenotype", "missing genotype"))
+        snp_order = table["SNP_order"].iloc[0] if len(table) else ""
+        frame = pd.DataFrame({
+            "Trait": str(trait_col),
+            "Chr": str(row["Chr"]),
+            "Block_start": np.int64(int(row["Start"])),
+            "Block_end": np.int64(int(row["End"])),
+            "Lead_SNP": str(row.get("lead_snp", "")),
+            "Sample": panel.to_numpy(dtype=str),
+            "Haplotype": tab["Haplotype"].fillna("").astype(str).to_numpy(),
+            "Allele_sequence": tab["Allele_sequence"].fillna("").astype(str).to_numpy(),
+            "SNP_order": str(snp_order),
+            "in_haplotype_test": tab["in_haplotype_test"].astype("boolean").fillna(False)
+                                 .to_numpy(dtype=bool),
+            "exclusion_reason": reason.astype(str),
+            "Phenotype_used": used.to_numpy(dtype=float),
+        }, index=pd.RangeIndex(len(panel)))
+        if raw is not None:
+            frame["Phenotype_raw"] = raw.to_numpy(dtype=float)
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame({c: pd.Series(dtype=object) for c in columns})
+    return pd.concat(frames, ignore_index=True)[columns]
 
 
 def block_test_lm_with_pcs(y, groups, pcs=None):

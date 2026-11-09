@@ -754,6 +754,7 @@ def _run_trait(parsed, pheno, args):
     for model_name, model_df in post_gwas_models:
         log.info("Post-GWAS: %s", model_name)
         m_hap_gwas = None
+        m_hap_tables = {}   # the haplotype test's per-block sample tables
         m_ld_annotated = None
         m_ld_blocks = pd.DataFrame()   # always defined; empty => no blocks (rescue still runs)
 
@@ -885,7 +886,7 @@ def _run_trait(parsed, pheno, args):
         # Haplotype testing
         try:
             _hap_pcs = pcs_full[:, :n_pcs_mlm] if pcs_full is not None and n_pcs_mlm > 0 else None
-            m_hap_gwas, _ = run_haplotype_block_gwas(
+            m_hap_gwas, m_hap_tables = run_haplotype_block_gwas(
                 haplo_df=m_ld_blocks, chroms=chroms, positions=positions,
                 geno_imputed=_geno_float, sid=sid,
                 geno_df=geno_df, pheno_df=pheno_clean, trait_col=args.trait,
@@ -969,6 +970,18 @@ def _run_trait(parsed, pheno, args):
                 log.info("  Triage: %d blocks -> LD_triage_%s.csv", len(_m), model_name)
             except Exception as e:
                 log.warning("  LD-quality triage failed for %s: %s", model_name, e)
+
+        # Sample-to-haplotype assignments of the primary model's tested blocks: one row
+        # per sample per block (the same table as the Post-GWAS downloads)
+        if model_name == _primary_model and m_hap_gwas is not None and not m_hap_gwas.empty:
+            try:
+                from gwas.haplotype import haplotype_assignments
+                _assign = haplotype_assignments(m_hap_gwas, m_hap_tables, geno_df,
+                                                pheno_clean, args.trait)
+                if not _assign.empty:
+                    extra_csvs[f"Haplotype_assignments_{args.trait}.csv"] = _assign
+            except Exception as e:
+                log.warning("  Haplotype assignments failed for %s: %s", model_name, e)
 
         # Capture per-model annotation/haplotype frames for the HTML report (T-80)
         _mp = {}

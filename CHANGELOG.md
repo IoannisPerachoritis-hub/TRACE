@@ -96,6 +96,24 @@ All notable changes to TRACE are documented in this file.
   MLMM and FarmCPU heatmaps and columns, see above); the Local LD r² downloads
   for a detected block still cover its member SNPs.
 
+### Added
+- **Sample-to-haplotype assignments.** `Haplotype_assignments_<trait>.csv` (CLI
+  and One-Click ZIP, `tables/`) lists, for every tested LD block of the primary
+  model (MLM), every analysis sample of the trait with its haplotype label
+  (H1..Hk or Other), its allele sequence and the markers in that sequence
+  (`SNP_order`), whether the haplotype test took it, why it was left out, and
+  the phenotype value the test used. One function builds it from the test's
+  own per-sample tables (`gwas.haplotype.haplotype_assignments`). In Post-GWAS
+  the LD Blocks tab has "Download sample-to-haplotype assignments (CSV)" for the
+  selected block and "Download assignments for all blocks (CSV)", next to the
+  block selector; they replace the per-sample MLG ledger. The tab's MLG plots,
+  tables and Tukey test now show the groups the haplotype test tested (its
+  samples, labels and allele sequences): before, the tab re-derived the groups
+  from the polymorphic SNPs in the block's coordinate window (without the test's
+  call-rate filter and r² thinning), which for many blocks gave other groups than
+  the test's. The haplotype results, the LD block tables and
+  every other ZIP member are unchanged. See `docs/outputs.md`.
+
 ### Fixed
 - **A numeric `--sig-thresh` no longer crashes the CLI when plots are on.** The
   bare number reached plot code that needs a text label, so every such run

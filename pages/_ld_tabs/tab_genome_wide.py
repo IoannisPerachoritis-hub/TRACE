@@ -18,9 +18,6 @@ from gwas.ld import (
     find_ld_clusters_genomewide,
     filter_contained_blocks,
 )
-from gwas.haplotype import (
-    mlg_labels_for_block,
-)
 from . import LDContext
 
 
@@ -733,9 +730,18 @@ def _render_haplotype_gwas(
             st.session_state["hap_tables"] = hap_tables
             st.session_state["hap_gwas_df"] = hap_gwas_df
         st.session_state[hap_key] = hap_gwas_df
+        # the per-block sample tables of THIS result, kept with it (the assignments
+        # table, the downloads and the MLG plots read them); an earlier result's tables
+        # and assignments are dropped
+        for _old in [k for k in st.session_state.keys()
+                     if isinstance(k, str) and k.startswith("HAPGWAS::")
+                     and k.endswith(("::tables", "::assign"))]:
+            del st.session_state[_old]
+        st.session_state[f"{hap_key}::tables"] = hap_tables
 
     else:
         hap_gwas_df = st.session_state[hap_key]
+    hap_tables = st.session_state.get(f"{hap_key}::tables", {})
 
     # ------------------------------------------------------------
     # Block-level multiple testing correction (FDR)
@@ -749,6 +755,22 @@ def _render_haplotype_gwas(
             "for association testing."
         )
         return
+
+    # Sample-to-haplotype assignments of the tested blocks, from the test's own tables
+    # and inputs: the same function and inputs as the CLI and One-Click ZIP member (the
+    # test uses the uploaded values, so no Phenotype_raw). Built once per result.
+    _assign_key = f"{hap_key}::assign"
+    if _assign_key not in st.session_state:
+        try:
+            from gwas.haplotype import haplotype_assignments as _hap_assign
+            _frame = _hap_assign(hap_gwas_df, hap_tables, geno_df, pheno_for_hap, ld_trait)
+            st.session_state[_assign_key] = (
+                _frame, _frame.to_csv(index=False).encode("utf-8"), None)
+        except Exception as _assign_err:
+            st.session_state[_assign_key] = (None, None, str(_assign_err))
+    hap_assignments, hap_assign_csv, hap_assign_error = st.session_state[_assign_key]
+    if hap_assign_error:
+        st.caption(f"Sample-to-haplotype assignments unavailable: {hap_assign_error}")
 
     pvals = hap_gwas_df["PValue"].astype(float).values
     _, qvals, _, _ = multipletests(pvals, method="fdr_bh")
@@ -871,6 +893,9 @@ def _render_haplotype_gwas(
         min_hap_count=int(min_hap_count),
         min_group_size=int(min_group_size),
         cached_extract_block_geno=cached_extract_block_geno,
+        hap_assignments=hap_assignments,
+        hap_assign_csv=hap_assign_csv,
+        hap_assign_error=hap_assign_error,
     )
 
 
@@ -1083,8 +1108,18 @@ def _render_block_visualization(
     min_hap_count,
     min_group_size,
     cached_extract_block_geno,
+    hap_assignments=None,
+    hap_assign_csv=None,
+    hap_assign_error=None,
 ):
-    """Block-level MLG boxplots, Tukey HSD, forest plot, and expression panel selection."""
+    """Block-level MLG boxplots, Tukey HSD, forest plot, and expression panel selection.
+
+    The groups shown are the haplotype test's own: ``hap_assignments`` is
+    gwas.haplotype.haplotype_assignments of the test on screen, and the selected block's
+    rows with in_haplotype_test give the samples, labels, allele sequences and phenotype
+    values (PC-adjusted for display). Its two downloads sit below the block selector.
+    ``cached_extract_block_geno`` is kept for callers; the panel no longer re-derives
+    the groups from a coordinate window."""
     st.markdown("### Haplotype / MLG Effect Visualization")
 
     trait_col = ctx.trait_col
@@ -1158,84 +1193,56 @@ def _render_block_visualization(
     st.info(f"Selected block: Chr{block_chr}:{block_start:,}-{block_end:,}")
 
     # --------------------------------------------------------
-    # Prepare phenotype
+    # This block's sample-to-haplotype assignments: the haplotype test's own samples,
+    # labels and allele sequences, so the plots below show exactly the groups it tested
     # --------------------------------------------------------
-    if "pheno_used_for_hap" not in st.session_state:
-        st.error("No phenotype stored for haplotype analysis. Run haplotype analysis first.")
-        st.stop()
+    _blk = None
+    if isinstance(hap_assignments, pd.DataFrame) and not hap_assignments.empty:
+        _blk = hap_assignments[
+            (hap_assignments["Chr"].astype(str) == block_chr)
+            & (hap_assignments["Block_start"].astype(int) == block_start)
+            & (hap_assignments["Block_end"].astype(int) == block_end)
+        ]
+    if _blk is None or _blk.empty:
+        # the plots need the test's groups; the results downloads below do not
+        st.warning("The haplotype plots for this block are not shown: "
+                   + (f"its sample-to-haplotype assignments could not be built "
+                      f"({hap_assign_error})." if hap_assign_error else
+                      "the haplotype test kept no per-sample table for it."))
+        _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col)
+        return
 
-    ph_used = st.session_state["pheno_used_for_hap"]
-    trait_col_vis = ld_trait
-
-    ph_ser = pd.to_numeric(ph_used[trait_col_vis], errors="coerce")
-    ph_ser.index = ph_ser.index.astype(str)
-    # Sample axis of ctx.geno_hard, which is the matrix extracted from below: one
-    # source for both, so the phenotype mask can never be sized for a different
-    # sample set than the genotypes it selects (WO-HAPMASK-01). dtype=str because
-    # LDContext only types geno_df as a DataFrame -- an integer index would reindex
-    # a string-indexed phenotype to all-NaN silently.
-    geno_sample_ids = np.asarray(ctx.geno_df.index, dtype=str)
-
-    if geno_sample_ids.size == 0:
-        st.error(
-            "The loaded genotype table has no sample IDs.\n"
-            "Run the GWAS page again so LD analysis can align samples correctly."
+    _dl_block, _dl_all = st.columns(2)
+    with _dl_block:
+        st.download_button(
+            "Download sample-to-haplotype assignments (CSV)",
+            _blk.to_csv(index=False).encode("utf-8"),
+            file_name=(f"haplotype_assignments_block_{block_chr}_{block_start}_{block_end}"
+                       f"_{ld_trait}.csv"),
+            mime="text/csv",
+            key=f"dl_hap_assign_{selected_block}",
         )
-        st.stop()
+    with _dl_all:
+        # the ZIP member's name for MLM; another downstream model's blocks are named so
+        _model = str(st.session_state.get("downstream_model") or "MLM")
+        st.download_button(
+            "Download assignments for all blocks (CSV)",
+            (hap_assign_csv if hap_assign_csv is not None
+             else hap_assignments.to_csv(index=False).encode("utf-8")),
+            file_name=(f"Haplotype_assignments_{ld_trait}.csv" if _model == "MLM"
+                       else f"Haplotype_assignments_{ld_trait}_{_model}.csv"),
+            mime="text/csv",
+            key="dl_hap_assign_all",
+        )
 
-    pheno_selected = ph_ser.reindex(geno_sample_ids)
-    keep_pheno = np.isfinite(pheno_selected.values)
-
-    if keep_pheno.sum() < 5:
-        st.warning("Too few non-missing phenotype values for haplotype visualization.")
-        st.stop()
-
-    # --------------------------------------------------------
-    # Extract SNPs using phenotype mask
-    # --------------------------------------------------------
-    block_geno, _, block_sids = cached_extract_block_geno(
-        ctx.geno_hard,
-        ctx.chroms,
-        ctx.positions,
-        ctx.sid,
-        block_chr,
-        block_start,
-        block_end,
-        sample_keep_mask=keep_pheno,
-        maf_threshold=st.session_state.get("maf_ld", 0.01),
-        cache_key=f"{trait_col}::{block_chr}:{block_start}-{block_end}",
-        snp_ids=block_row.get("SNP_IDs", None),
-    )
-
-    if block_geno.shape[1] < 1:
-        st.warning("No SNPs found in this block window.")
-        st.stop()
-
-    block_geno_vis = block_geno
-    sample_vis = pd.Index(geno_sample_ids)[keep_pheno]
-    pheno_vis = pheno_selected.values[keep_pheno]
-
-    # ---- build MLG labels AND propagate filtering mask ----
-    mlg_labels_vis, keep_mlg = mlg_labels_for_block(
-        block_geno_vis,
-        min_hap_count=int(min_hap_count),
-        return_mask=True,
-        strict_selfing=st.session_state.get("selfing_mode", False),
-        geno_encoding=st.session_state.get("geno_encoding", "dosage012"),
-    )
-
-    block_geno_vis = block_geno_vis[keep_mlg]
-    sample_vis = sample_vis[keep_mlg]
-    pheno_vis = pheno_vis[keep_mlg]
-
-    # -------------------------------------------------
-    # Rebuild haplotype strings after final filtering
-    # -------------------------------------------------
-    hap_strings = pd.Series(
-        ["|".join(map(str, np.rint(row).astype(int))) for row in block_geno_vis],
-        index=sample_vis,
-        name="Allele_sequence"
-    )
+    _tested = _blk[_blk["in_haplotype_test"].astype(bool)]
+    geno_sample_ids = np.asarray(ctx.geno_df.index, dtype=str)
+    sample_vis = pd.Index(_tested["Sample"].astype(str))
+    pheno_vis = _tested["Phenotype_used"].to_numpy(dtype=float)
+    mlg_labels_vis = _tested["Haplotype"].astype(str).to_numpy()
+    hap_strings = pd.Series(_tested["Allele_sequence"].astype(str).to_numpy(),
+                            index=sample_vis, name="Allele_sequence")
+    block_sids = np.asarray(str(_blk["SNP_order"].iloc[0]).split("|"), dtype=str)
 
     # --------------------------------------------------------
     # PC-adjusted phenotype for visualization
@@ -1245,13 +1252,12 @@ def _render_block_visualization(
 
     if pcs_vis is not None:
         try:
-            pcs_df = pd.DataFrame(pcs_vis, index=geno_df.index)
+            pcs_df = pd.DataFrame(pcs_vis, index=geno_df.index.astype(str))
             pcs_block = pcs_df.loc[sample_vis]
 
-            valid_pc = ~pcs_block.isna().any(axis=1)
+            valid_pc = (~pcs_block.isna().any(axis=1)).to_numpy()
             pheno_vis = pheno_vis[valid_pc]
             sample_vis = sample_vis[valid_pc]
-            block_geno_vis = block_geno_vis[valid_pc]
             mlg_labels_vis = mlg_labels_vis[valid_pc]
             pcs_block = pcs_block.loc[valid_pc]
 
@@ -1265,52 +1271,26 @@ def _render_block_visualization(
             trait_label = trait_col
 
     # --------------------------------------------------------
-    # Build MLG dataframe
+    # Build MLG dataframe: the tested groups, with the test's labels
     # --------------------------------------------------------
-    mlg_df = pd.DataFrame({
-        "Sample": sample_vis,
-        "MLG": mlg_labels_vis,
-        trait_col: pheno_vis,
-    })
-
-    group_counts = mlg_df["MLG"].value_counts()
-
-    valid_groups = [
-        g for g in group_counts.index
-        if (group_counts[g] >= int(min_group_size)) and g != "Other"
-    ]
-
-    if len(valid_groups) < 2:
+    unique_mlg_sorted = sorted(set(mlg_labels_vis.tolist()), key=_hap_sort_key)
+    if len(unique_mlg_sorted) < 2:
         st.warning("Too few haplotypes remain after filtering.")
         st.stop()
 
-    # Only surface a notice when groups were actually dropped (short, not a paragraph).
-    _dropped = [g for g in group_counts.index if g not in valid_groups]
-    if _dropped:
-        _bits = []
-        _n_small = sum(1 for g in _dropped if g != "Other")
-        if _n_small:
-            _bits.append(f"{_n_small} group(s) with < {int(min_group_size)} samples")
-        if "Other" in group_counts.index:
-            _bits.append("an 'Other' bucket of rare haplotypes")
-        st.caption(f"{len(valid_groups)} haplotype groups tested; excluded: {', '.join(_bits)}.")
+    # the samples the test left out, by reason (from the assignments table)
+    _why = _blk.loc[~_blk["in_haplotype_test"].astype(bool), "exclusion_reason"].value_counts()
+    if len(_why):
+        st.caption(
+            f"{len(unique_mlg_sorted)} haplotype groups tested; excluded: "
+            + "; ".join(f"{int(_n)} sample(s), {_r}" for _r, _n in _why.items()) + ".")
 
-    mlg_df = mlg_df.loc[mlg_df["MLG"].isin(valid_groups)].copy()
-    mlg_df["MLG"] = pd.Categorical(mlg_df["MLG"])
-    mlg_df["MLG"] = mlg_df["MLG"].cat.remove_unused_categories()
-
-    # --------------------------------------------------------
-    # Assign H1, H2, H3… labels
-    # --------------------------------------------------------
-    unique_mlg_sorted = (
-        mlg_df["MLG"].value_counts()
-        .loc[lambda s: (s.index != "Other") & (s >= int(min_group_size))]
-        .sort_values(ascending=False)
-        .index
-    )
-
-    mlg_label_map = {mlg: f"H{idx + 1}" for idx, mlg in enumerate(unique_mlg_sorted)}
-    mlg_df["MLG_label"] = mlg_df["MLG"].map(mlg_label_map)
+    mlg_df = pd.DataFrame({
+        "Sample": sample_vis,
+        "MLG": pd.Categorical(mlg_labels_vis, categories=unique_mlg_sorted),
+        trait_col: pheno_vis,
+    })
+    mlg_df["MLG_label"] = mlg_df["MLG"].astype(str)
 
     # ---------------------------------------------------------
     # Save haplotype assignments
@@ -1389,19 +1369,8 @@ def _render_block_visualization(
         if _n_other is not None and pd.notna(_n_other) and int(_n_other) > 0:
             _bits.append(f"with {int(_n_other)} sample(s) in rare genotypes ('Other') excluded")
         st.caption(" ".join(_bits) + ".")
-    # per-sample MLG ledger: which accession -> which MLG -> in the haplotype test?
-    _valid_groups = set(
-        hap_counts.loc[lambda s: (s.index != "Other") & (s >= int(min_group_size))].index)
-    _ledger = mlg_df[["Sample", "MLG_label", "Allele_sequence"]].rename(
-        columns={"MLG_label": "Haplotype"}).copy()
-    _ledger["in_haplotype_test"] = _ledger["Haplotype"].isin(_valid_groups)
-    st.download_button(
-        "Download per-sample MLG ledger (CSV)",
-        _ledger.to_csv(index=False).encode(),
-        file_name=f"sample_ledger_block_{block_chr}_{block_start}_{block_end}.csv",
-        mime="text/csv",
-        key=f"dl_ledger_{selected_block}",
-    )
+    # (the per-sample assignments, with every sample of the panel and the reason a
+    # sample was left out, are the downloads below the block selector)
 
     # --------------------------------------------------------
     # Tukey HSD + CLD
@@ -1410,7 +1379,7 @@ def _render_block_visualization(
         mlg_df=mlg_df,
         trait_col=trait_col,
         trait_label=trait_label,
-        mlg_order=[f"H{i + 1}" for i in range(len(unique_mlg_sorted))],
+        mlg_order=list(unique_mlg_sorted),
         hap_counts=hap_counts,
         selected_block=selected_block,
         block_chr=block_chr,
@@ -1430,6 +1399,11 @@ def _render_block_visualization(
     st.session_state["pheno_vis"] = pheno_vis
     st.session_state["sample_vis"] = sample_vis
 
+    _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col)
+
+
+def _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col):
+    """The block panel's ZIP export and haplotype results download."""
     # ZIP export
     _render_zip_export(
         haplo_df_auto=haplo_df_auto,

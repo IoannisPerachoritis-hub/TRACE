@@ -15,10 +15,13 @@ bare numpy broadcast error.
 
 Two blind spots in ``test_block_tables_apptest`` let this ship, and this harness
 removes both: it does NOT stub ``_render_block_visualization`` (except in the one case
-that isolates the gallery), and its extractor forwards every argument to the REAL
-``gwas.ld.extract_block_geno_for_paper``, so ld.py's mask-length contract is genuinely
-exercised. Only upstream compute is stubbed (LD detection, haplotype GWAS, eta2
-enrichment) -- no real GWAS runs and no core statistical module is re-implemented.
+that isolates the gallery), and the block panel's samples come from the REAL haplotype
+test run on ctx's genotype table (the panel shows the groups the test tested, from its
+per-sample assignments, reviewer point 2-INT.10), so a stale session mirror cannot size
+them. The panel no longer calls the block extractor, so the extractor passed in (which
+forwards to the real ``gwas.ld.extract_block_geno_for_paper``) is not reached. Only LD
+detection and eta2 enrichment are stubbed -- no real GWAS runs and no core statistical
+module is re-implemented.
 
 The cases are parameterised by the four counts that can disagree:
 (ctx rows / ctx ids / ``ld_geno_hard`` rows / ``geno_row_ids`` length).
@@ -121,19 +124,23 @@ ctx = LDContext(
     ld_decay_kb=100.0, adj_r2_min_global=0.2, ld_trait="t",
 )
 
-_fake_hap = pd.DataFrame({
-    "Chr": ["2"], "Start": [1_000_000], "End": [1_040_000],
-    "lead_snp": [sid[0]], "n_snps": [5], "PValue": [0.001],
-})
-def _hap_stub(*a, **k):
-    return _fake_hap.copy(), {}
+# The REAL haplotype test (the block panel shows the groups it tested, from its own
+# per-sample tables), with fewer permutations; the call is the tab's positional one.
+from gwas.haplotype import run_haplotype_block_gwas
+def _hap_real(blocks_, chroms_, positions_, geno_, sid_, geno_df_, pheno_, trait_, pcs_,
+              min_hap_count, min_group_size, n_perm, geno_encoding, n_pcs_used):
+    return run_haplotype_block_gwas(
+        haplo_df=blocks_, chroms=chroms_, positions=positions_, geno_imputed=geno_,
+        sid=sid_, geno_df=geno_df_, pheno_df=pheno_, trait_col=trait_, pcs=pcs_,
+        min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=99,
+        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used)
 def _qc_stub(hap_gwas_df=None, **k):
     return hap_gwas_df
 def _r2_stub(*a, **k):
     return np.zeros((5, 5))
 
-# The REAL extractor, every argument forwarded -> ld.py's sample-mask contract is
-# genuinely exercised (the stub in test_block_tables_apptest ignored its arguments).
+# The REAL extractor, every argument forwarded. The block panel no longer calls it (its
+# samples are the haplotype test's), so this is passed only to satisfy render().
 def _extract_real(geno_hard, chroms_, positions_, sid_,
                   block_chr, block_start, block_end,
                   sample_keep_mask=None, maf_threshold=0.01,
@@ -164,7 +171,7 @@ tgw.render(
     get_r2_cached=_r2_stub,
     cached_extract_block_geno=_extract_real,
     compute_block_qc_effects=_qc_stub,
-    run_haplotype_block_gwas_cached_fn=_hap_stub,
+    run_haplotype_block_gwas_cached_fn=_hap_real,
 )
 '''
 
@@ -211,15 +218,15 @@ def test_happy_path_renders():
 
 
 # --- (a): the tab takes its sample axis and its matrix from ONE source (ctx), so a
-# stale session mirror can no longer mis-pair rows or blow up the extractor. ---
+# stale session mirror can no longer mis-pair rows. ---
 def test_block_panel_ignores_stale_session_mirrors():
-    # the gallery is stubbed out so this exercises the block panel -- i.e. the REAL
-    # extract_block_geno_for_paper, whose size-only mask guard produced the reported
-    # "G has 140 samples, but sample_keep_mask has 130" ValueError.
+    # the gallery is stubbed out so this exercises the block panel alone: its samples
+    # are the haplotype test's on ctx's axis, never the 140-row session mirror that gave
+    # the reported "G has 140 samples, but sample_keep_mask has 130" ValueError.
     at = _run(130, 130 + 10, 130, stub_gallery=True)
     _assert_clean(at)
     assert any(_MLG_PANEL in m.value for m in at.markdown), \
-        "block panel did not render past the extractor"
+        "block panel did not render on the stale session mirror"
     # and it used the analysed trait's samples -- not the 140-row session mirror
     assert len(at.session_state["sample_vis"]) == _expected_tested(130)
 

@@ -1,8 +1,9 @@
 # Post-GWAS output CSVs
 
 This page documents the tabular outputs added to TRACE **after the v1.0.1
-release**: the complete significant-SNP tables, the LD r² exports behind the
-Local LD heatmap, and the per-SNP data behind the regional plot. It starts with
+release**: the complete significant-SNP tables, the sample-to-haplotype assignments
+of the haplotype test, the LD r² exports behind the Local LD heatmap, and the
+per-SNP data behind the regional plot. It starts with
 the significance columns of the per-model GWAS tables: MLM's shipped in v1.0.1
 (`Significant_Custom` in 1.1.0, with the numeric `--sig-thresh` described at the
 end), and MLMM and FarmCPU now carry the same ones under the same rule. The GWAS,
@@ -158,6 +159,56 @@ This table exists precisely so those SNPs are visible as data rather than droppe
 block-only view. The `Interval_Start_bp`/`Interval_End_bp` columns give each such SNP a
 flanking-marker candidate interval whose width reflects marker density, not association
 strength.
+
+---
+
+## `Haplotype_assignments_<trait>.csv`
+
+**What it contains.** Which haplotype each sample carries in each tested LD block, and
+whether the block's haplotype test took it: one function
+(`gwas.haplotype.haplotype_assignments`) builds it from the test's own per-sample
+tables, so the labels are the ones the test compared and the Post-GWAS MLG plots show.
+
+**One row per** sample of the panel **per tested block** of the primary model (MLM),
+blocks in the order of `LD_blocks_annotated_MLM.csv`. The panel is the trait's analysis
+samples, in genotype order: genotyped, with a finite trait value, after `--ind-miss`
+and any covariate drops. So a sample without a trait value, or one removed by sample
+QC, is not listed. The blocks of MLMM and FarmCPU are not covered.
+
+**When it's emitted.** CLI and One-Click ZIP as `tables/Haplotype_assignments_<trait>.csv`
+(every tested block; no file when no block was tested, while
+`LD_blocks_annotated_<model>.csv` is still written for the detected blocks).
+GUI **Post-GWAS Analysis → LD Blocks & Haplotypes**, next to the
+block selector: "Download sample-to-haplotype assignments (CSV)" gives the selected
+block's rows as `haplotype_assignments_block_<chr>_<start>_<end>_<trait>.csv`, and
+"Download assignments for all blocks (CSV)" gives every tested block as
+`Haplotype_assignments_<trait>.csv`. For the same inputs the all-blocks file and the ZIP
+member are byte-identical, and a block's file is its rows of the all-blocks file. The GUI
+files follow the model chosen for downstream analysis on the GWAS page; for MLMM or
+FarmCPU the all-blocks file is named `Haplotype_assignments_<trait>_<model>.csv`.
+
+**Columns** (12, in this order; a 13th only as described below):
+
+| Column | Type | Meaning |
+|---|---|---|
+| `Trait` | str | The trait analysed. |
+| `Chr` | str | The block's chromosome. |
+| `Block_start` | int | The block's start (bp). |
+| `Block_end` | int | The block's end (bp). |
+| `Lead_SNP` | str | The block's lead SNP. |
+| `Sample` | str | The sample ID. |
+| `Haplotype` | str | `H1`..`Hk` (by descending count) or `Other` (a haplotype seen in fewer than `--hap-min-count` samples); empty for a sample without a haplotype (missing genotype or phenotype; does not occur in TRACE's own files). |
+| `Allele_sequence` | str | The sample's alleles at the block's markers, `\|`-separated alternate-allele counts (0, 1, 2) in `SNP_order`: the rounded dosages the test used. TRACE passes the run's imputed genotypes, so a missing call carries its imputed dosage (`--impute`: the per-SNP mean or the LD-kNNi value), rounded; empty with `Haplotype`. |
+| `SNP_order` | str | The markers of `Allele_sequence`, `\|`-separated: the block's SNPs after the call-rate filter, dropping markers constant among the block's samples and the r² ≥ 0.9 thinning; at least two are kept (when thinning leaves one, the block's first two markers are used). `n_snps` of the haplotype results; can be fewer than the block's SNP_IDs. |
+| `in_haplotype_test` | bool | The test took this sample (its group is one of the tested haplotype groups). |
+| `exclusion_reason` | str | Empty when in the test; else `missing genotype` (over 30% of the block's markers missing), `missing phenotype` (no finite trait value; also when both are missing), `rare haplotype (Other)`, `group below minimum size` (a haplotype with fewer than `--hap-min-group-size` samples) or `missing covariate` (a missing PC value; does not occur with genotype PCs). `missing genotype` and `missing phenotype` do not occur in TRACE's own files either: the genotypes are imputed and the panel holds only the trait's analysis samples. |
+| `Phenotype_used` | float | The trait value the haplotype test takes for this sample (blank when missing). Only rows with `in_haplotype_test` enter the test; the PCs are covariates of the F-test, not subtracted from this value (the GUI's MLG plots show PC-adjusted values). |
+| `Phenotype_raw` | float | Only when the test's phenotype differs from the uploaded values: the uploaded value. The haplotype test uses the uploaded values (a phenotype QC transformation applies to the GWAS scan, as `--norm` does), so the column does not appear in current outputs. |
+
+**Counts.** A block's number of rows with `in_haplotype_test` equals its
+`n_samples_tested` (in `LD_triage_MLM.csv` and the GUI's haplotype results table), which
+is not `Hap_n_samples` (the samples with a usable block genotype, before samples without
+a phenotype, rare haplotypes and small groups are left out).
 
 ---
 

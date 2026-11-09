@@ -9,10 +9,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The suite runs twice (tests, then coverage). The multi-trait, same-window and
-    # significance-parity AppTests (One-Click, the single-trait view and Post-GWAS run
-    # for real) add a few minutes to each pass.
-    timeout-minutes: 60
+    # The suite runs twice (tests, then coverage). The AppTests that run real scans
+    # (One-Click multi-trait, the single-trait view, Post-GWAS, the phenotype
+    # transformation Apply flow and the haplotype assignments) add several minutes to
+    # each pass; one pass took about 23 minutes locally.
+    timeout-minutes: 90
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
