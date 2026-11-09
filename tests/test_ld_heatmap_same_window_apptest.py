@@ -244,6 +244,7 @@ def _assert_same(a, b, ids_a, ids_b, what):
         f"{what}: r2 matrices differ (max |diff| {diff})")
 
 
+@pytest.mark.slow_gui
 @pytest.mark.skipif(not _VCF.exists(), reason="examples/example.vcf.gz not present")
 def test_cli_one_click_and_local_ld_draw_the_same_window(rec, tmp_path):
     cli_pngs = _run_cli(rec, tmp_path / "cli")

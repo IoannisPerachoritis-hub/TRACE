@@ -18,6 +18,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
+import pytest  # noqa: E402
 
 _PAGE = str(_ROOT / "pages" / "GWAS_analysis.py")
 
@@ -64,6 +65,7 @@ def test_page_loads_cold():
     assert not at.exception
 
 
+@pytest.mark.slow_gui
 def test_run_from_memory_produces_results():
     """T-09 regression: with the uploaded file gone but inputs persisted, a Run
     proceeds from memory and yields gwas_df (no re-upload)."""
@@ -79,6 +81,7 @@ def test_run_from_memory_produces_results():
         "FDR", "Significant_FDR", "Significant_Bonf"]
 
 
+@pytest.mark.slow_gui
 def test_covariate_from_memory_runs():
     """A covariate (seeded via _persist_covar) is aligned + applied in a
     from-memory run without crashing. Covariate correctness is covered by the
@@ -106,6 +109,7 @@ def test_clear_session_data_releases_memory():
     assert "_persist_pheno" not in at.session_state
 
 
+@pytest.mark.slow_gui
 def test_custom_sig_thresh_runs_from_memory():
     """The Custom-p-value path (selectbox -> number_input -> Significant_Custom
     column -> active threshold) runs end-to-end without a real error. Column
@@ -144,6 +148,7 @@ def test_covar_persist_decision():
     assert d(False, False, False) == "none"
 
 
+@pytest.mark.slow_gui
 def test_stale_scan_notice():
     """Commit 2: after a completed run, an input change without re-clicking Run
     re-displays the last results WITH a staleness notice; an unchanged rerun shows none."""
@@ -166,6 +171,7 @@ def test_stale_scan_notice():
     assert any(_msg in w.value for w in at.warning)
 
 
+@pytest.mark.slow_gui
 def test_meff_failure_writes_no_meff_column_for_any_model(monkeypatch):
     """When M_eff cannot be computed the page warns and falls back to Bonferroni, and, as
     at 7062830 for MLM, writes no Significant_Meff column: for MLM and for FarmCPU (on by

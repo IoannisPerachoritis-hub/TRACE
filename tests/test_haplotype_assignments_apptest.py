@@ -33,6 +33,9 @@ import gwas.ld as _ld  # noqa: E402
 import gwas.pipeline as _pl  # noqa: E402
 import pages._ld_tabs.tab_genome_wide as _tgw  # noqa: E402
 
+# over about 30 s: run once per batch, not per task (-m 'not slow_gui')
+pytestmark = pytest.mark.slow_gui
+
 _VCF = _ROOT / "examples" / "example.vcf.gz"
 _PHENO = _ROOT / "examples" / "example_pheno.csv"
 _TRAIT = "Trait2"

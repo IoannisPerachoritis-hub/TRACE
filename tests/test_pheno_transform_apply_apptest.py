@@ -56,6 +56,9 @@ from pages._pheno_qc.stats import (  # noqa: E402
     TRANSFORM_YEOJOHNSON,
 )
 
+# over about 30 s: run once per batch, not per task (-m 'not slow_gui')
+pytestmark = pytest.mark.slow_gui
+
 _PAGE = str(_ROOT / "pages" / "GWAS_analysis.py")
 _VCF = _ROOT / "examples" / "example.vcf.gz"
 _PHENO = _ROOT / "examples" / "example_pheno.csv"

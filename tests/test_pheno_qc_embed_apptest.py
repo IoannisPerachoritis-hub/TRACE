@@ -24,6 +24,7 @@ from pages._pheno_qc.stats import (  # noqa: E402
     TRANSFORM_NONE,
     TRANSFORM_YEOJOHNSON,
 )
+import pytest  # noqa: E402
 
 _SCRIPT = '''
 import sys
@@ -53,6 +54,7 @@ def _only_harness_error(at):
     return all("url_pathname" in str(e.value) for e in at.exception)
 
 
+@pytest.mark.slow_gui
 def test_embedded_panel_updates_on_transform_switch():
     at = AppTest.from_string(_SCRIPT.replace("__ROOT__", str(_ROOT).replace("\\", "/")),
                              default_timeout=120).run()

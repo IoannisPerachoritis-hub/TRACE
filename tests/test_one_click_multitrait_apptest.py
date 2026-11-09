@@ -41,6 +41,9 @@ import gwas.pipeline as _pl  # noqa: E402
 import gwas.plotting as _gp  # noqa: E402
 from tests import _multitrait_data as mt  # noqa: E402
 
+# over about 30 s: run once per batch, not per task (-m 'not slow_gui')
+pytestmark = pytest.mark.slow_gui
+
 _PAGE = str(_ROOT / "pages" / "GWAS_analysis.py")
 _GENERATED = b"<strong>Generated:</strong>"
 _PLANTED = list(mt.CAUSAL)

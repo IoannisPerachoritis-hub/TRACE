@@ -35,6 +35,9 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from tests import _multitrait_data as mt  # noqa: E402
 
+# over about 30 s: run once per batch, not per task (-m 'not slow_gui')
+pytestmark = pytest.mark.slow_gui
+
 _PAGE = str(_ROOT / "pages" / "GWAS_analysis.py")
 _POST = str(_ROOT / "pages" / "Post_GWAS_Analysis.py")
 TRAIT = "T_chr1"
