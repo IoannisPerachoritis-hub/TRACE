@@ -103,7 +103,8 @@ def show_plot(obj, size, *, key=None, data=None, data_name=None):
     (the container width), "medium" (at most PLOT_WIDTH_MEDIUM px) or "small" (at most
     PLOT_WIDTH_SMALL px). ``key`` is for Plotly figures only. The object is not
     modified, so the export helpers write the same files whether or not it was shown.
-    A wide matplotlib figure or PNG must not sit inside a fixed-width container.
+    A static figure (matplotlib or PNG) takes its width directly, with no box around it.
+    A medium or small Plotly figure sits in a fixed-width box, keyed ``<key>_box``.
 
     ``data`` (a table, or CSV bytes) is the data the figure draws: "Download data (CSV)"
     sits directly under it as ``<data_name>.csv``. ``data_name`` must be unique on the
@@ -130,15 +131,24 @@ def show_plot(obj, size, *, key=None, data=None, data_name=None):
     if key is not None and kind != "plotly":
         raise ValueError("show_plot: key applies to Plotly figures only")
     width = PLOT_WIDTHS[size]
-    # medium and small sit in a fixed-width box (Streamlit 1.50's plotly_chart has no
-    # width); wide fills the container
-    with (nullcontext() if width == "stretch" else st.container(width=width)):
+    if kind == "plotly":
+        # Streamlit 1.50's plotly_chart has no pixel width: medium and small sit in a
+        # fixed-width box, keyed after the figure so that switching a plot between its
+        # static and interactive views mounts a new element; wide fills the container
+        box = (nullcontext() if width == "stretch" else
+               st.container(width=width, key=None if key is None else f"{key}_box"))
+    else:
+        # a static figure takes its width directly (450 / 700 px, or the container's).
+        # Stretched inside a fixed-width box, it could be drawn before the browser had
+        # measured the box (after a style switch, or in a collapsed expander): tiny.
+        box = nullcontext()
+    with box:
         if kind == "plotly":
             st.plotly_chart(obj, use_container_width=True, key=key)
         elif kind == "png":
-            st.image(bytes(obj), width="stretch")
+            st.image(bytes(obj), width=width)
         else:
-            st.pyplot(obj, width="stretch")
+            st.pyplot(obj, width=width)
         if data is not None:
             from utils.plot_data import csv_bytes
 

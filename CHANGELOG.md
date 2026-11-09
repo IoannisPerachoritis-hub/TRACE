@@ -223,6 +223,13 @@ All notable changes to TRACE are documented in this file.
   every other ZIP member are unchanged. See `docs/outputs.md`.
 
 ### Fixed
+- **Static plots are no longer drawn tiny after a switch from Interactive.** A small or
+  medium static figure (for example the lead-SNP and haplotype plots in Static, the
+  forest plot and the haplotype PCA) is now drawn at its size class's width directly,
+  450 or 700 px, instead of stretching inside a fixed-width box that the browser could
+  draw before measuring (after a style switch, or in a collapsed expander). Interactive
+  figures keep their fixed-width box, now keyed after the figure, so switching styles
+  draws a new element. Display only: no exported figure changes.
 - **The static Manhattan plots highlight only the SNPs that pass the
   threshold.** They enlarged every SNP with p at or below it, and counted those
   in the legend's "Significant (n)", while every table counts p below it. A

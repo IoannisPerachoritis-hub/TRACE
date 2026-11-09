@@ -94,20 +94,26 @@ def test_embedded_panel_refuses_log_on_nonpositive():
 
 def test_the_panels_plots_are_small():
     """Reviewer point 2-INT.8: the histogram and Q-Q of both columns (raw | transformed)
-    are small plots, each in a 450 px box, still side by side in the two columns."""
+    are small plots, still side by side in the two columns. A Plotly chart sits in a
+    450 px box; a static figure takes its 450 px width itself, with no box (show_plot;
+    test_show_plot checks that width, as AppTest does not expose an image's width)."""
     at = AppTest.from_string(_SCRIPT.replace("__ROOT__", str(_ROOT).replace("\\", "/")),
                              default_timeout=120).run()
     assert not at.exception or _only_harness_error(at)
-    boxes = []
+    boxes, images_in_a_box = [], []
 
-    def _walk(node):
+    def _walk(node, in_box=False):
         for child in getattr(node, "children", {}).values():
-            if getattr(getattr(child, "proto", None), "width_config", None) is not None \
-                    and child.proto.width_config.pixel_width:
+            boxed = bool(getattr(getattr(child, "proto", None), "width_config", None) is not None
+                         and child.proto.width_config.pixel_width)
+            if boxed:
                 boxes.append(child)
-            _walk(child)
+            if getattr(child, "type", None) == "imgs":
+                images_in_a_box.append(in_box)
+            _walk(child, in_box or boxed)
 
     _walk(at.main)
-    assert [b.proto.width_config.pixel_width for b in boxes] == [450] * 4
+    assert [b.proto.width_config.pixel_width for b in boxes] == [450] * 2
     assert sorted(next(iter(b.children.values())).type for b in boxes) == [
-        "imgs", "imgs", "plotly_chart", "plotly_chart"]
+        "plotly_chart", "plotly_chart"]
+    assert images_in_a_box == [False, False]       # the two static figures, in no box
