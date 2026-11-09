@@ -14,6 +14,7 @@ from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
 from utils.pub_theme import (PALETTE_CYCLE, FIGSIZE, export_matplotlib, haplotype_color_map,
                              hap_sort_key, show_plot)
+from utils.plot_data import pca_points_table
 
 from gwas.ld import (
     find_ld_clusters_genomewide,
@@ -289,6 +290,8 @@ def _render_haplotype_pca(
                     f"hap_pca_plotly_{block_chr}_"
                     f"{int(block_start)}_{int(block_end)}"
                 ),
+                data=pca_points_table(geno_iids, pcs_2, labels.to_numpy()),
+                data_name=f"haplotype_pca_{block_chr}_{int(block_start)}_{int(block_end)}",
             )
         else:
             cached = cache.get(static_cache_key)
@@ -311,7 +314,9 @@ def _render_haplotype_pca(
                 }
                 cache[static_cache_key] = cached
 
-            show_plot(cached["display"], "medium")
+            show_plot(cached["display"], "medium",
+                      data=pca_points_table(geno_iids, pcs_2, labels.to_numpy()),
+                      data_name=f"haplotype_pca_{block_chr}_{int(block_start)}_{int(block_end)}")
             fname = f"haplotype_pca_{block_chr}_{block_start}_{block_end}"
             col_png, col_svg, col_pdf = st.columns(3)
             col_png.download_button(
@@ -1268,28 +1273,24 @@ def _render_block_visualization(
         _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col)
         return
 
-    _dl_block, _dl_all = st.columns(2)
-    with _dl_block:
-        st.download_button(
-            "Download sample-to-haplotype assignments (CSV)",
-            _blk.to_csv(index=False).encode("utf-8"),
-            file_name=(f"haplotype_assignments_block_{block_chr}_{block_start}_{block_end}"
-                       f"_{ld_trait}.csv"),
-            mime="text/csv",
-            key=f"dl_hap_assign_{selected_block}",
-        )
-    with _dl_all:
-        # the ZIP member's name for MLM; another downstream model's blocks are named so
-        _model = str(st.session_state.get("downstream_model") or "MLM")
-        st.download_button(
-            "Download assignments for all blocks (CSV)",
-            (hap_assign_csv if hap_assign_csv is not None
-             else hap_assignments.to_csv(index=False).encode("utf-8")),
-            file_name=(f"Haplotype_assignments_{ld_trait}.csv" if _model == "MLM"
-                       else f"Haplotype_assignments_{ld_trait}_{_model}.csv"),
-            mime="text/csv",
-            key="dl_hap_assign_all",
-        )
+    # the block's own file sits under its box/raincloud plot (the plot's data); the
+    # all-blocks file stays here, under the block selector
+    _block_csv = (
+        _blk.to_csv(index=False).encode("utf-8"),
+        f"haplotype_assignments_block_{block_chr}_{block_start}_{block_end}_{ld_trait}.csv",
+        f"dl_hap_assign_{selected_block}",
+    )
+    # the ZIP member's name for MLM; another downstream model's blocks are named so
+    _model = str(st.session_state.get("downstream_model") or "MLM")
+    st.download_button(
+        "Download assignments for all blocks (CSV)",
+        (hap_assign_csv if hap_assign_csv is not None
+         else hap_assignments.to_csv(index=False).encode("utf-8")),
+        file_name=(f"Haplotype_assignments_{ld_trait}.csv" if _model == "MLM"
+                   else f"Haplotype_assignments_{ld_trait}_{_model}.csv"),
+        mime="text/csv",
+        key="dl_hap_assign_all",
+    )
 
     _tested = _blk[_blk["in_haplotype_test"].astype(bool)]
     geno_sample_ids = np.asarray(ctx.geno_df.index, dtype=str)
@@ -1332,6 +1333,7 @@ def _render_block_visualization(
     unique_mlg_sorted = sorted(set(mlg_labels_vis.tolist()), key=_hap_sort_key)
     if len(unique_mlg_sorted) < 2:
         st.warning("Too few haplotypes remain after filtering.")
+        _block_assignments_button(_block_csv)
         st.stop()
 
     # the samples the test left out, by reason (from the assignments table)
@@ -1441,6 +1443,7 @@ def _render_block_visualization(
         block_chr=block_chr,
         block_start=block_start,
         block_end=block_end,
+        block_csv=_block_csv,
     )
 
     _render_haplotype_pca(
@@ -1478,11 +1481,21 @@ def _render_results_downloads(haplo_df_auto, hap_gwas_df, trait_col):
 
 
 
+def _block_assignments_button(block_csv):
+    """The selected block's sample-to-haplotype assignments: the data of its box plot."""
+    if block_csv is not None:
+        st.download_button(
+            "Download sample-to-haplotype assignments (CSV)", block_csv[0],
+            file_name=block_csv[1], mime="text/csv", key=block_csv[2],
+        )
+
+
 def _render_tukey_and_boxplot(
     mlg_df, trait_col, trait_label, mlg_order, hap_counts,
-    selected_block, block_chr, block_start, block_end,
+    selected_block, block_chr, block_start, block_end, block_csv=None,
 ):
-    """Tukey HSD + CLD + boxplot + forest plot."""
+    """Tukey HSD + CLD + boxplot + forest plot. ``block_csv`` is the block's assignments
+    CSV (bytes, file name, key), offered under the box plot as its data."""
     # one colour per haplotype label, the same as the PCA panel and the lead-SNP box plot
     _hap_colors = haplotype_color_map(mlg_order)
     st.markdown("#### Tukey HSD post-hoc test")
@@ -1936,6 +1949,7 @@ def _render_tukey_and_boxplot(
                 label_prefix="Download raincloud",
                 build_fig_fn=_build_raincloud_fig,
             )
+        _block_assignments_button(block_csv)
 
     _viz_toggle_fragment()
 

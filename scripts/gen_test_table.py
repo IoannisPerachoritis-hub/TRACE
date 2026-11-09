@@ -93,8 +93,8 @@ AREAS: list[tuple[str, str, list[str]]] = [
          "test_golden_lock", "test_defaults_pinned"]),
     ("Calibration & reproducibility", "null-phenotype calibration and LOCO reproducibility",
         ["test_null_calibration", "test_loco_reproducibility"]),
-    ("Utilities", "shared helpers",
-        ["test_utils"]),
+    ("Utilities", "shared helpers and the data behind the GUI's figures",
+        ["test_utils", "test_plot_data"]),
 ]
 
 _NODE_RE = re.compile(r"^(?:.*[/\\])?tests[/\\](test_[a-z0-9_]+)\.py::")

@@ -4,7 +4,9 @@ A static scan of the app's sources: no st.pyplot, st.image or st.plotly_chart ou
 show_plot itself (on any receiver: st, st.sidebar, a column, an alias, a getattr or a
 `from streamlit import`). The dead pages/_ld_tabs/tab_block_heatmaps.py is left alone.
 Each show_plot call in pages/ has a literal size class, pinned below, so a plot cannot
-change class unnoticed.
+change class unnoticed. And each offers the data it draws: it passes ``data=`` (a
+"Download data (CSV)" button under it), or its data already has a download, named in
+_DATA_ELSEWHERE with that button's label, which must appear in the same file.
 """
 import ast
 from collections import Counter
@@ -76,7 +78,7 @@ def test_show_plot_is_the_renderer():
               if isinstance(n, ast.FunctionDef) and n.name == "show_plot")
     used = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)
             and isinstance(n.value, ast.Name) and n.value.id == "st"}
-    assert used == {"pyplot", "image", "plotly_chart", "container"}
+    assert used == {"pyplot", "image", "plotly_chart", "container", "download_button"}
 
 
 # (file, plotted expression, size class, has a key), one entry per call
@@ -130,3 +132,49 @@ def test_every_plot_has_its_size_class():
     assert calls == _PINNED
     assert sum(calls.values()) == 29
     assert keys == ["regional_chart"]       # a constant key: a varying one forced reruns
+
+
+# figures whose data already has a download: (file, plotted expression) -> its label
+_DATA_ELSEWHERE = {
+    ("pages/GWAS_analysis.py", "_obj"): "Download GWAS results (ZIP)",   # restored images
+    ("pages/GWAS_analysis.py", "fig_pc"): "Download PCA scores (CSV)",
+    ("pages/GWAS_analysis.py", "fig_boot_manh"): "Download per-SNP subsampling results (CSV)",
+    ("pages/GWAS_analysis.py", "fig_int"): "Download GWAS results (ZIP)",      # genome-wide
+    ("pages/GWAS_analysis.py", "fig_qq"): "Download GWAS results (ZIP)",
+    ("pages/GWAS_analysis.py", "fig_plotly_mlmm"): "Download GWAS results (ZIP)",
+    ("pages/GWAS_analysis.py", "fig_qq_mlmm"): "Download GWAS results (ZIP)",
+    ("pages/GWAS_analysis.py", "fig_plotly_fc"): "Download GWAS results (ZIP)",
+    ("pages/GWAS_analysis.py", "fig_qq_fc"): "Download GWAS results (ZIP)",
+    ("pages/GWAS_analysis.py", "fig_overlay"): "Download cross-model results (CSV)",
+    # the haplotype box/raincloud: the block's assignments, under the plot
+    ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']"):
+        "Download sample-to-haplotype assignments (CSV)",
+    ("pages/_ld_tabs/tab_genome_wide.py", "_build_interactive_raincloud_fig()"):
+        "Download sample-to-haplotype assignments (CSV)",
+    ("pages/_ld_tabs/tab_genome_wide.py", "_fig"): "Download plotted data (CSV)",   # lead SNP
+    ("pages/_ld_tabs/tab_genome_wide.py", "_pfig"): "Download plotted data (CSV)",
+    ("pages/_ld_tabs/tab_genome_wide.py", "_fig_forest"): "Download haplotype effects (CSV)",
+    ("pages/_ld_tabs/tab_local_ld.py", "local_cached['display']"): "Download r² (long",
+    ("pages/_ld_tabs/tab_regional.py", "fig_i"): "Download regional data (CSV)",
+    ("pages/_ld_tabs/tab_regional.py", "buf.getvalue()"): "Download regional data (CSV)",
+}
+
+
+def test_every_plot_offers_its_data():
+    missing, sources = [], dict(_sources())
+    for rel, src in sources.items():
+        if not rel.startswith("pages/"):
+            continue
+        for node in ast.walk(ast.parse(src)):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "show_plot"):
+                kw = {k.arg for k in node.keywords}
+                if "data" in kw:
+                    assert "data_name" in kw, (rel, node.lineno)
+                    continue
+                label = _DATA_ELSEWHERE.get((rel, ast.unparse(node.args[0])))
+                if label is None:
+                    missing.append((rel, node.lineno, ast.unparse(node.args[0])))
+                else:
+                    assert label in src, (rel, label)      # the download it points to exists
+    assert missing == [], f"figures without their data: {missing}"

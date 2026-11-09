@@ -96,7 +96,7 @@ PLOT_WIDTHS = {"wide": "stretch", "medium": PLOT_WIDTH_MEDIUM, "small": PLOT_WID
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def show_plot(obj, size, *, key=None):
+def show_plot(obj, size, *, key=None, data=None, data_name=None):
     """Show a plot on screen in one of three size classes.
 
     ``obj`` is a matplotlib Figure, PNG bytes or a Plotly figure. ``size`` is "wide"
@@ -104,9 +104,15 @@ def show_plot(obj, size, *, key=None):
     PLOT_WIDTH_SMALL px). ``key`` is for Plotly figures only. The object is not
     modified, so the export helpers write the same files whether or not it was shown.
     A wide matplotlib figure or PNG must not sit inside a fixed-width container.
+
+    ``data`` (a table, or CSV bytes) is the data the figure draws: "Download data (CSV)"
+    sits directly under it as ``<data_name>.csv``. ``data_name`` must be unique on the
+    page (it keys the button).
     """
     if size not in PLOT_WIDTHS:
         raise ValueError(f"size must be one of {sorted(PLOT_WIDTHS)}, got {size!r}")
+    if data is not None and not data_name:
+        raise ValueError("show_plot: data needs a data_name")
     from contextlib import nullcontext
 
     from matplotlib.figure import Figure
@@ -133,6 +139,13 @@ def show_plot(obj, size, *, key=None):
             st.image(bytes(obj), width="stretch")
         else:
             st.pyplot(obj, width="stretch")
+        if data is not None:
+            from utils.plot_data import csv_bytes
+
+            st.download_button(
+                "Download data (CSV)", csv_bytes(data), file_name=f"{data_name}.csv",
+                mime="text/csv", key=f"dl_plot_data_{data_name}",
+            )
 
 
 # ── Matplotlib theme ─────────────────────────────────────────

@@ -121,6 +121,18 @@ All notable changes to TRACE are documented in this file.
   for a detected block still cover its member SNPs.
 
 ### Added
+- **Every figure in the GUI offers the data it draws.** A "Download data (CSV)"
+  button sits under each figure: the MAF spectrum, the QC report strip and the
+  p-value and subsampling histograms give their bars (bin start, end and count;
+  the strip names its three panels), the PC spectrum and scree plot their
+  components, the phenotype QC panel its values and Q-Q points, and the haplotype
+  PCA its samples (PC1, PC2, haplotype). Where a figure's data already had a
+  download, that button is the figure's: the haplotype box/raincloud plot's is
+  the block's "Download sample-to-haplotype assignments (CSV)", now under the
+  plot; the forest plot's, the lead-SNP plot's, the LD heatmap's (r²), the
+  regional plot's and the PCA's (scores) stay. The genome-wide Manhattan and QQ
+  plots point to the results download instead of making a second copy. The
+  figures, their image downloads and every export are unchanged.
 - **The Post-GWAS lead-SNP box plot is interactive, with its data as CSV.** A
   "Plot style" choice (collapsed; Interactive by default) shows the "Lead SNP
   genotype effect" plot in Plotly: a box per genotype class with the same
