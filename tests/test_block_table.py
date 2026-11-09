@@ -10,7 +10,8 @@ import pandas as pd
 import pytest
 
 from gwas.haplotype import run_haplotype_block_gwas
-from pages._ld_tabs.block_table import COMPACT_COLUMNS, compact_view, merge_block_table
+from pages._ld_tabs.block_table import (COMPACT_COLUMNS, CSV_ONLY_COLUMNS, compact_view,
+                                        merge_block_table, screen_view)
 
 BLOCKS = pd.DataFrame({
     "Chr": ["2", "2", "chr03"], "Start (bp)": [1000, 5000, 200], "End (bp)": [3000, 9000, 800],
@@ -75,6 +76,18 @@ def test_the_compact_view_and_untested_tables():
     none = merge_block_table(BLOCKS, None, COH, untested=WHY)      # nothing tested
     assert none["Tested"].tolist() == ["not tested", WHY["2:5000-9000"], "not tested"]
     assert len(none) == 3
+
+
+def test_the_window_eta2_is_in_the_csv_only():
+    t = merge_block_table(BLOCKS, HAP, COH, untested=WHY)     # EtaSq differs from eta2
+    window = "η² (all SNPs in the block window)"
+    assert CSV_ONLY_COLUMNS == [window] and window in t.columns       # the CSV keeps it
+    for all_columns in (False, True):
+        shown = screen_view(t, all_columns)
+        assert window not in shown.columns
+        assert "η² (haplotype test)" in shown.columns
+    assert list(screen_view(t, False).columns) == list(compact_view(t).columns)
+    assert list(screen_view(t, True).columns) == [c for c in t.columns if c != window]
 
 
 def _blocks_for_reasons():

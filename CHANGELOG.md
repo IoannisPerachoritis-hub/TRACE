@@ -5,6 +5,18 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The haplotype plot shows the values Tukey HSD uses.** On the LD Blocks &
+  Haplotypes tab, when the GWAS used PCs, the block's plot now shows the PC-adjusted
+  values that Tukey HSD, the compact letters and the forest plot use (the haplotype test
+  adjusts for the same PCs), with the axis "<trait> (PC-adjusted)"; with no PCs it shows
+  the uploaded values, as before. Each box carries its compact letters again, and
+  "Download plotted data (CSV)" under the plot gives each sample's haplotype, allele
+  sequence, uploaded and plotted values, their scale and its letters; the block's
+  assignments downloads sit with the block selector. The block table shows one η² on
+  screen, the haplotype test's; the window-based η² stays in its CSV. Its "?" no longer
+  explains β, which the lead-SNP plot's "?" now does: β_MLM is per standard deviation of
+  the SNP's ALT-allele dosage (FaST-LMM standardises each SNP), not per allele copy, and
+  β_OLS is per ALT copy, as Help → Effect Sizes and docs/outputs.md now say too.
 - **How-to text on the LD Blocks & Haplotypes tab moved into "?" tooltips.** The
   lead-SNP gallery's instructions are the "?" on "Lead SNP genotype effect"
   (they had named "two structure-aware tests"; the panel shows one rank test,

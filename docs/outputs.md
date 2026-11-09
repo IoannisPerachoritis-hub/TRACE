@@ -81,9 +81,9 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 | 3 | `Pos` | int | Position in base pairs (1-based, from the VCF). |
 | 4 | `PValue` | float | Association p-value from the model's final scan. |
 | 5 | `-log10p` | float | −log₁₀(`PValue`). |
-| 6 | `Beta_MLM` | float | Allele-substitution effect from the structure-adjusted MLM; blank if unavailable. |
+| 6 | `Beta_MLM` | float | Effect from the structure-adjusted MLM (kinship and the PC covariates), per standard deviation of the SNP's ALT-allele dosage: FaST-LMM standardises each SNP, so it is not a per-copy effect; blank if unavailable. |
 | 7 | `SE_MLM` | float | Standard error of `Beta_MLM`. |
-| 8 | `Beta_OLS` | float | Effect from the unadjusted OLS fit; blank if unavailable. |
+| 8 | `Beta_OLS` | float | Effect per copy of the ALT allele from an OLS fit with the same PC covariates and no kinship; blank if unavailable. |
 | 9 | `SE_OLS` | float | Standard error of `Beta_OLS`. |
 | 10 | `Effect_Source` | str | Which effect estimates are present: `both` / `MLM_only` / `OLS_only` / `unavailable`. |
 | 11 | `MAF` | float | Minor allele frequency (0–0.5) from the QC'd genotypes. |

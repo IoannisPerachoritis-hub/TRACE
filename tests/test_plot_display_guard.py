@@ -147,11 +147,10 @@ _DATA_ELSEWHERE = {
     ("pages/GWAS_analysis.py", "fig_plotly_fc"): "Download GWAS results (ZIP)",
     ("pages/GWAS_analysis.py", "fig_qq_fc"): "Download GWAS results (ZIP)",
     ("pages/GWAS_analysis.py", "fig_overlay"): "Download cross-model results (CSV)",
-    # the haplotype box/raincloud: the block's assignments, under the plot
-    ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']"):
-        "Download sample-to-haplotype assignments (CSV)",
-    ("pages/_ld_tabs/tab_genome_wide.py", "_hfig"):
-        "Download sample-to-haplotype assignments (CSV)",
+    # the haplotype box plot (static: cached['display'], an expression the PCA panel
+    # shares; interactive: _hfig): its plotted data, under the plot
+    ("pages/_ld_tabs/tab_genome_wide.py", "cached['display']"): "Download plotted data (CSV)",
+    ("pages/_ld_tabs/tab_genome_wide.py", "_hfig"): "Download plotted data (CSV)",
     ("pages/_ld_tabs/tab_genome_wide.py", "_fig"): "Download plotted data (CSV)",   # lead SNP
     ("pages/_ld_tabs/tab_genome_wide.py", "_pfig"): "Download plotted data (CSV)",
     ("pages/_ld_tabs/tab_genome_wide.py", "_fig_forest"): "Download haplotype effects (CSV)",

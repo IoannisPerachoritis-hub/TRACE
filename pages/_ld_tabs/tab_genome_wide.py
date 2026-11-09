@@ -631,7 +631,6 @@ def render(
 # LD-block coherence columns of the table under it.
 ASSOCIATION_RESULTS_HELP = (
     "**Effect sizes (η²)**\n\n"
-    "- **Effect (β)**: trait change per minor-allele copy (sign = direction).\n"
     "- **Variance explained (η²)** per LD block: the most interpretable measure "
     "of QTL importance for breeding:\n"
     "  - **> 10%** major QTL, strong marker-assisted-selection candidate\n"
@@ -832,12 +831,12 @@ def _render_haplotype_gwas(
 
     def _show_block_table(tested_df):
         """One row per detected block: the block, its haplotype test, its coherence."""
-        from .block_table import compact_view, merge_block_table
+        from .block_table import merge_block_table, screen_view
         _tbl = merge_block_table(haplo_df_auto, tested_df, _ldq_full, untested=_untested,
                                  seed_p=_seed_p)
         st.subheader("LD blocks and haplotype tests", help=ASSOCIATION_RESULTS_HELP)
         _all = st.toggle("Show all columns", value=False, key="block_table_all_columns")
-        st.dataframe(_tbl if _all else compact_view(_tbl), use_container_width=True)
+        st.dataframe(screen_view(_tbl, _all), use_container_width=True)
         st.download_button(
             "Download block table (CSV)", _tbl.to_csv(index=False).encode("utf-8"),
             file_name=f"LD_blocks_and_haplotype_tests_{ld_trait}.csv", mime="text/csv",
@@ -1064,9 +1063,17 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=No
     st.markdown(
         "### Lead SNP genotype effect",
         help=("Browse the genotype effect of any significant SNP: pick a SNP below. Its "
-              "box plot shows the phenotype per genotype class, coloured by haplotype "
-              "when the SNP lies in a tested LD block, with the MLM effect, η² and one "
-              "marginal rank test."),
+              "box plot shows the phenotype the GWAS used per genotype class (0, 1 or 2 "
+              "copies of the ALT allele), coloured by haplotype when the SNP lies in a "
+              "tested LD block.\n\n"
+              "**β_MLM ± SE** in the title is the GWAS's mixed-model effect, adjusted for "
+              "kinship and any PCs the GWAS used. FaST-LMM estimates it on the "
+              "standardised SNP, so it is the change in the plotted phenotype per "
+              "standard deviation of the SNP's ALT-allele dosage, not per allele copy. A "
+              "positive β means the ALT allele raises the trait.\n\n"
+              "**η²** in the title is the genotype classes' share of the plotted "
+              "phenotype's variance, not adjusted for kinship. The caption under the plot "
+              "gives one marginal rank test."),
     )
 
     # the rule is in the Settings panel (the GWAS page's rule unless changed there)
@@ -1202,7 +1209,9 @@ def _render_block_visualization(
     The groups shown are the haplotype test's own: ``hap_assignments`` is
     gwas.haplotype.haplotype_assignments of the test on screen, and the selected block's
     rows with in_haplotype_test give the samples, labels, allele sequences and phenotype
-    values (PC-adjusted for display). Its two downloads sit below the block selector.
+    values (PC-adjusted when the GWAS used PCs, gwas.snpplots.hap_plot_values; Tukey HSD,
+    the letters, the box plot and the forest plot all use them). Its two assignments
+    downloads sit below the block selector; the plot offers its plotted data.
     ``cached_extract_block_geno`` is kept for callers; the panel no longer re-derives
     the groups from a coordinate window."""
     st.markdown("### Haplotype / MLG Effect Visualization")
@@ -1296,13 +1305,14 @@ def _render_block_visualization(
                       "the haplotype test kept no per-sample table for it."))
         return
 
-    # the block's own file sits under its box/raincloud plot (the plot's data); the
-    # all-blocks file stays here, under the block selector
+    # the block's sample-to-haplotype assignments and every block's sit here, under the
+    # block selector; the plot below offers its own plotted data
     _block_csv = (
         _blk.to_csv(index=False).encode("utf-8"),
         f"haplotype_assignments_block_{block_chr}_{block_start}_{block_end}_{ld_trait}.csv",
         f"dl_hap_assign_{selected_block}",
     )
+    _block_assignments_button(_block_csv)
     # the ZIP member's name for MLM; another downstream model's blocks are named so
     _model = str(st.session_state.get("downstream_model") or "MLM")
     st.download_button(
@@ -1317,38 +1327,24 @@ def _render_block_visualization(
 
     _tested = _blk[_blk["in_haplotype_test"].astype(bool)]
     geno_sample_ids = np.asarray(ctx.geno_df.index, dtype=str)
-    sample_vis = pd.Index(_tested["Sample"].astype(str))
-    pheno_vis = _tested["Phenotype_used"].to_numpy(dtype=float)
-    mlg_labels_vis = _tested["Haplotype"].astype(str).to_numpy()
     hap_strings = pd.Series(_tested["Allele_sequence"].astype(str).to_numpy(),
-                            index=sample_vis, name="Allele_sequence")
+                            index=pd.Index(_tested["Sample"].astype(str)),
+                            name="Allele_sequence")
     block_sids = np.asarray(str(_blk["SNP_order"].iloc[0]).split("|"), dtype=str)
 
     # --------------------------------------------------------
-    # PC-adjusted phenotype for visualization
+    # The values the panel plots and tests (Tukey HSD, the letters, the box plot, the
+    # forest plot): PC-adjusted when the GWAS used PCs, as the haplotype test is, else
+    # the uploaded values
     # --------------------------------------------------------
-    pcs_vis = st.session_state.get("pcs_for_hap", None)
-    trait_label = trait_col
-
-    if pcs_vis is not None:
-        try:
-            pcs_df = pd.DataFrame(pcs_vis, index=geno_df.index.astype(str))
-            pcs_block = pcs_df.loc[sample_vis]
-
-            valid_pc = (~pcs_block.isna().any(axis=1)).to_numpy()
-            pheno_vis = pheno_vis[valid_pc]
-            sample_vis = sample_vis[valid_pc]
-            mlg_labels_vis = mlg_labels_vis[valid_pc]
-            pcs_block = pcs_block.loc[valid_pc]
-
-            X = np.column_stack([np.ones((pcs_block.shape[0], 1)), pcs_block.values])
-            beta, *_ = np.linalg.lstsq(X, pheno_vis.reshape(-1, 1), rcond=None)
-            pheno_vis = (pheno_vis.reshape(-1, 1) - X @ beta).ravel()
-
-            trait_label = f"{trait_col} (PC-adjusted)"
-
-        except Exception:
-            trait_label = trait_col
+    from gwas.snpplots import hap_plot_values
+    _vals = hap_plot_values(_blk, pcs=st.session_state.get("pcs_for_hap", None),
+                            pc_samples=geno_df.index)
+    _n_pcs = int(_vals.attrs.get("n_pcs", 0))
+    sample_vis = pd.Index(_vals["Sample"])
+    pheno_vis = _vals["Phenotype_plotted"].to_numpy(dtype=float)
+    mlg_labels_vis = _vals["Haplotype"].to_numpy()
+    trait_label = f"{trait_col} (PC-adjusted)" if _n_pcs else trait_col
 
     # --------------------------------------------------------
     # Build MLG dataframe: the tested groups, with the test's labels
@@ -1356,7 +1352,6 @@ def _render_block_visualization(
     unique_mlg_sorted = sorted(set(mlg_labels_vis.tolist()), key=_hap_sort_key)
     if len(unique_mlg_sorted) < 2:
         st.warning("Too few haplotypes remain after filtering.")
-        _block_assignments_button(_block_csv)
         st.stop()
 
     # the samples the test left out, by reason (from the assignments table)
@@ -1462,12 +1457,11 @@ def _render_block_visualization(
         block_chr=block_chr,
         block_start=block_start,
         block_end=block_end,
-        block_csv=_block_csv,
-        plot_rows=_tested,
+        plot_values=_vals,
         title_lines=_hap_title(block_chr, block_start, block_end,
                                block_row.get("P_perm", block_row.get("PValue")),
                                block_row.get("eta2")),
-        y_label=_hap_ylab(ctx.ld_trait),
+        y_label=_hap_ylab(ctx.ld_trait, _n_pcs),
         details_table=_details_table,
     )
 
@@ -1486,7 +1480,8 @@ def _render_block_visualization(
 
 
 def _block_assignments_button(block_csv):
-    """The selected block's sample-to-haplotype assignments: the data of its box plot."""
+    """The selected block's sample-to-haplotype assignments (every sample of the panel, and
+    why one was left out), under the block selector."""
     if block_csv is not None:
         st.download_button(
             "Download sample-to-haplotype assignments (CSV)", block_csv[0],
@@ -1499,22 +1494,17 @@ def _hap_title(chrom, start, end, p_perm, eta2):
     return hap_boxplot_title(chrom, start, end, p_perm, eta2)
 
 
-def _hap_ylab(trait):
-    """The haplotype plot's axis: the trait (the uploaded values the test compared)."""
-    from gwas.snpplots import phenotype_axis_label
-    return phenotype_axis_label(trait)
+def _hap_ylab(trait, n_pcs=0):
+    """The haplotype plot's axis: the trait, "(PC-adjusted)" when it shows PC-adjusted
+    values (the GWAS used PCs)."""
+    from gwas.snpplots import hap_axis_label
+    return hap_axis_label(trait, n_pcs)
 
 
-def _render_tukey_tables(tukey, mlg_df, trait_col):
-    """The details expander's Tukey HSD table and compact letter display (CLD)."""
+def _render_tukey_tables(tukey_df, cld_df):
+    """The details expander's Tukey HSD table and compact letter display (CLD), from
+    gwas.cld.tukey_cld (the letters on the plot come from the same call)."""
     st.markdown("#### Tukey HSD post-hoc test")
-    tukey_data = tukey.summary().data
-    headers = tukey_data[0]
-    rows = tukey_data[1:]
-
-    tukey_df = pd.DataFrame(rows, columns=headers)
-    tukey_df["reject"] = tukey_df["reject"].astype(bool)
-
     st.dataframe(tukey_df, use_container_width=True)
 
     # ------------------------------------------------------------
@@ -1528,55 +1518,51 @@ def _render_tukey_tables(tukey, mlg_df, trait_col):
               "overlapping non-differences), so no single letter can separate every "
               "group. See **Help → Interpreting Results** for how to read this."),
     )
-
-    groups = sorted(mlg_df["MLG_label"].unique())
-    sig_matrix = pd.DataFrame(False, index=groups, columns=groups)
-    for _, row in tukey_df.iterrows():
-        g1 = str(row["group1"])
-        g2 = str(row["group2"])
-        reject = bool(row["reject"])
-        sig_matrix.loc[g1, g2] = reject
-        sig_matrix.loc[g2, g1] = reject
-
     # Maximal-clique CLD (gwas/cld.py): two groups share a letter iff they are NOT
-    # significantly different. Replaces a greedy insert/absorb that could leave private
-    # seed letters unmerged (3 mutually non-sig groups -> a, ab, ac instead of a, a, a).
-    from gwas.cld import compact_letter_display
-
-    _cld_means = mlg_df.groupby("MLG_label")[trait_col].mean().to_dict()
-    cld_strings = compact_letter_display(groups, sig_matrix, means=_cld_means)
-
-    cld_df = pd.DataFrame({
-        "MLG_label": groups,
-        "CLD": [cld_strings[g] for g in groups],
-    })
+    # significantly different
     st.dataframe(cld_df, use_container_width=True)
 
 
 def _render_tukey_and_boxplot(
     mlg_df, trait_col, trait_label, mlg_order, hap_counts,
-    selected_block, block_chr, block_start, block_end, block_csv=None,
-    plot_rows=None, title_lines=None, y_label=None, details_table=None,
+    selected_block, block_chr, block_start, block_end,
+    plot_values=None, title_lines=None, y_label=None, details_table=None,
 ):
-    """The block's haplotype box plot, one details expander, then the forest plot.
+    """Tukey HSD, the block's haplotype box plot, one details expander, the forest plot.
 
-    The plot is drawn as the lead-SNP plot (``gwas.snpplots.plotly_hap_boxplot`` /
-    ``render_hap_boxplot``) from ``plot_rows``, the block's in-test assignment rows: the
-    samples, labels and uploaded values the haplotype test compared. ``block_csv`` is
-    the block's assignments CSV (bytes, file name, key), offered under the plot as its
-    data. The collapsed "Haplotype details" expander holds ``details_table`` (the MLG
-    sequence table: frame, CSV bytes, file name, key), Tukey HSD and the compact letters.
+    ``plot_values`` is ``gwas.snpplots.hap_plot_values`` of the block: the values Tukey
+    HSD, the compact letters, the box plot and the forest plot (``mlg_df`` holds the same
+    rows) all use, PC-adjusted when the GWAS used PCs. The plot is drawn as the lead-SNP
+    plot (``plotly_hap_boxplot`` / ``render_hap_boxplot``) with each group's compact
+    letters above its box, and "Download plotted data (CSV)" under it gives
+    ``hap_plot_data``. The collapsed "Haplotype details" expander holds ``details_table``
+    (the MLG sequence table: frame, CSV bytes, file name, key), Tukey HSD and the CLD.
     """
     # one colour per haplotype label, the same as the PCA panel and the lead-SNP box plot
     _hap_colors = haplotype_color_map(mlg_order)
 
-    from gwas.snpplots import hap_boxplot_data, plotly_hap_boxplot, render_hap_boxplot
-    _pdata = hap_boxplot_data(plot_rows) if plot_rows is not None else None
+    from gwas.cld import tukey_cld
+    from gwas.snpplots import hap_plot_data, plotly_hap_boxplot, render_hap_boxplot
+
+    # Tukey HSD first: its letters go on the plot. A failure's warning stays on the page;
+    # the plot (then without letters), the allele sequences and the forest plot do not
+    # need the test
+    tukey_df = cld_df = None
+    if plot_values is not None and len(plot_values):
+        try:
+            tukey_df, cld_df = tukey_cld(plot_values["Phenotype_plotted"],
+                                         plot_values["Haplotype"])
+        except Exception as e:
+            logging.exception("Tukey HSD test failed")
+            st.warning(
+                f"Tukey HSD failed (likely constant phenotype after PC adjustment): {e}")
+    _letters = dict(zip(cld_df["MLG_label"], cld_df["CLD"])) if cld_df is not None else {}
+    _pdata = hap_plot_data(plot_values, _letters) if plot_values is not None else None
     _title = list(title_lines or [f"Chr{block_chr}:{int(block_start):,}-{int(block_end):,}"])
     box_cache_base = (
         "HAP_BOX",
         block_chr, int(block_start), int(block_end),
-        (_hash_df(_pdata[["Haplotype", "Phenotype"]].copy())
+        (_hash_df(_pdata[["Haplotype", "Phenotype_plotted", "CLD_letters"]].copy())
          if _pdata is not None else "nodata"),
         tuple(_title),
         str(y_label),
@@ -1590,7 +1576,6 @@ def _render_tukey_and_boxplot(
     def _viz_toggle_fragment():
         if _pdata is None or _pdata.empty:
             st.caption("No haplotype plot: the block has no samples in the test.")
-            _block_assignments_button(block_csv)
             return
         with st.expander("Plot style", expanded=False):
             viz_type = st.radio(
@@ -1621,25 +1606,16 @@ def _render_tukey_and_boxplot(
                 label_prefix="Download box plot",
                 build_fig_fn=lambda: render_hap_boxplot(_pdata, _title, y_label=y_label),
             )
-        _block_assignments_button(block_csv)
+        # the plot's data: each sample's haplotype, allele sequence, uploaded and plotted
+        # values, their scale and its letters, in the order Tukey HSD took them
+        st.download_button(
+            "Download plotted data (CSV)", _pdata.to_csv(index=False).encode("utf-8"),
+            file_name=f"haplotype_plot_{block_chr}_{block_start}_{block_end}_{trait_col}.csv",
+            mime="text/csv",
+            key=f"dl_hap_plot_{block_chr}_{int(block_start)}_{int(block_end)}_{trait_col}",
+        )
 
     _viz_toggle_fragment()
-
-    # Tukey HSD runs before the details expander, so that a failure's warning stays on the
-    # page; the plot, the allele sequences, the forest plot and the PCA do not need it
-    from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
-    tukey = None
-    try:
-        tukey = pairwise_tukeyhsd(
-            endog=mlg_df[trait_col].astype(float),
-            groups=mlg_df["MLG_label"].astype(str),
-            alpha=0.05,
-        )
-    except Exception as e:
-        logging.exception("Tukey HSD test failed")
-        st.warning(
-            f"Tukey HSD failed (likely constant phenotype after PC adjustment): {e}")
 
     # --------------------------------------------------------
     # The details: allele sequences, Tukey HSD, compact letters
@@ -1654,8 +1630,8 @@ def _render_tukey_and_boxplot(
                 "Download MLG sequence table (CSV)", _mlg_csv, file_name=_mlg_name,
                 mime="text/csv", key=_mlg_key,
             )
-        if tukey is not None:
-            _render_tukey_tables(tukey, mlg_df, trait_col)
+        if tukey_df is not None:
+            _render_tukey_tables(tukey_df, cld_df)
         else:
             st.caption("No Tukey HSD or compact letters: the test failed (see the warning "
                        "above).")

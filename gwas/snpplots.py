@@ -297,26 +297,80 @@ def build_snp_view_index(sig_table, plotted_ids, collapse_df=None):
 
 
 # ── The LD block's haplotype box plot, in the lead-SNP plot's style ───────────────────
-HAP_BOXPLOT_DATA_COLUMNS = ["Sample", "Haplotype", "Phenotype", "In_haplotype_test"]
+# The plot's data and its "Download plotted data (CSV)": one row per plotted sample, in the
+# order Tukey HSD takes them
+HAP_PLOT_DATA_COLUMNS = ["Sample", "Haplotype", "Allele_sequence", "Phenotype_uploaded",
+                         "Phenotype_plotted", "Phenotype_scale", "CLD_letters",
+                         "In_haplotype_test"]
 
 
-def hap_boxplot_data(block_rows):
-    """The samples a block's haplotype box plot draws: its in-test rows of the
-    haplotype_assignments table (the samples, labels and values the haplotype test
-    compared), groups in H1, H2, ... order and samples in table order within a group."""
-    from utils.pub_theme import hap_sort_key
+def hap_plot_values(block_rows, pcs=None, pc_samples=None):
+    """The values a block's haplotype panel plots and tests: one row per in-test sample of
+    ``block_rows`` (the block's rows of the haplotype_assignments table), in table order,
+    with Sample, Haplotype, Allele_sequence, Phenotype_uploaded and Phenotype_plotted.
 
+    Tukey HSD, the compact letters, the box plot and the forest plot all use
+    Phenotype_plotted. With ``pcs`` (the GWAS's PC scores, one row per ``pc_samples`` ID)
+    it is the uploaded value's residual on an intercept plus the PCs, fitted over the
+    in-test samples whose PCs are all present (the others are left out), and
+    ``attrs["n_pcs"]`` is the number of PCs; the haplotype test adjusts for the same PCs.
+    Without PCs, or when the fit fails, it is the uploaded value and ``attrs["n_pcs"]``
+    is 0.
+    """
     r = block_rows[block_rows["in_haplotype_test"].astype(bool)]
     out = pd.DataFrame({
         "Sample": r["Sample"].astype(str).to_numpy(),
         "Haplotype": r["Haplotype"].astype(str).to_numpy(),
-        "Phenotype": pd.to_numeric(r["Phenotype_used"], errors="coerce").to_numpy(dtype=float),
-        "In_haplotype_test": True,
+        "Allele_sequence": r["Allele_sequence"].astype(str).to_numpy(),
+        "Phenotype_uploaded": pd.to_numeric(r["Phenotype_used"], errors="coerce")
+        .to_numpy(dtype=float),
     })
-    order = {h: k for k, h in enumerate(sorted(set(out["Haplotype"]), key=hap_sort_key))}
-    out["_o"] = out["Haplotype"].map(order)
-    return (out.sort_values("_o", kind="stable").drop(columns="_o")
-            .reset_index(drop=True)[HAP_BOXPLOT_DATA_COLUMNS])
+    out["Phenotype_plotted"] = out["Phenotype_uploaded"]
+    out.attrs["n_pcs"] = 0
+    if pcs is None or np.ndim(pcs) != 2 or np.shape(pcs)[1] == 0:
+        return out
+    try:
+        pcs_df = pd.DataFrame(pcs, index=pd.Index(pc_samples).astype(str))
+        pcs_block = pcs_df.loc[out["Sample"]]
+        valid_pc = (~pcs_block.isna().any(axis=1)).to_numpy()
+        adj = out.loc[valid_pc].reset_index(drop=True)
+        pcs_block = pcs_block.loc[valid_pc]
+        y = adj["Phenotype_uploaded"].to_numpy(dtype=float)
+        X = np.column_stack([np.ones((pcs_block.shape[0], 1)), pcs_block.values])
+        beta, *_ = np.linalg.lstsq(X, y.reshape(-1, 1), rcond=None)
+        adj["Phenotype_plotted"] = (y.reshape(-1, 1) - X @ beta).ravel()
+        adj.attrs["n_pcs"] = int(pcs_df.shape[1])
+        return adj
+    except Exception:
+        return out
+
+
+def hap_scale_name(n_pcs=0):
+    """The plotted values' scale: 'uploaded', or 'PC-adjusted (2 PCs)'."""
+    n = int(n_pcs or 0)
+    if n <= 0:
+        return "uploaded"
+    return f"PC-adjusted ({n} PC{'' if n == 1 else 's'})"
+
+
+def hap_axis_label(trait, n_pcs=0):
+    """The haplotype plot's phenotype axis: '<trait>', or '<trait> (PC-adjusted)'."""
+    if int(n_pcs or 0) > 0:
+        return f"{trait} (PC-adjusted)"
+    return phenotype_axis_label(trait)
+
+
+def hap_plot_data(values, letters=None):
+    """The block plot's data, its "Download plotted data (CSV)": one row per plotted sample
+    in ``values``'s order (``hap_plot_values``, the order Tukey HSD takes them), with the
+    values' scale, the group's compact letters (``letters``: group -> letters, from the CLD
+    table; blank without) and In_haplotype_test (every plotted sample is in the test)."""
+    out = values[["Sample", "Haplotype", "Allele_sequence", "Phenotype_uploaded",
+                  "Phenotype_plotted"]].copy()
+    out["Phenotype_scale"] = hap_scale_name(values.attrs.get("n_pcs", 0))
+    out["CLD_letters"] = out["Haplotype"].map(dict(letters or {})).fillna("").astype(str)
+    out["In_haplotype_test"] = True
+    return out[HAP_PLOT_DATA_COLUMNS]
 
 
 def hap_boxplot_title(chrom, start, end, p_perm=None, eta2=None):
@@ -334,15 +388,42 @@ def hap_boxplot_title(chrom, start, end, p_perm=None, eta2=None):
 
 
 def _hap_groups(data):
-    """The plotted groups, in H1, H2, ... order, with their rows."""
-    groups = list(dict.fromkeys(data["Haplotype"].tolist()))
-    return [(h, (data["Haplotype"] == h).to_numpy()) for h in groups]
+    """The plotted groups, in H1, H2, ... order whatever the rows' order, with their rows."""
+    from utils.pub_theme import hap_sort_key
+
+    labels = data["Haplotype"].astype(str)
+    return [(h, (labels == h).to_numpy()) for h in sorted(set(labels), key=hap_sort_key)]
+
+
+def _hap_letters(data, groups):
+    """Each plotted group's compact letters (its rows' CLD_letters); {} when there are none."""
+    if "CLD_letters" not in data.columns:
+        return {}
+    out = {}
+    for h, m in groups:
+        vals = [v for v in data.loc[m, "CLD_letters"] if isinstance(v, str) and v]
+        if vals:
+            out[h] = vals[0]
+    return out
+
+
+def _letter_layout(values):
+    """Where the letters sit and the axis range that holds them, as the old raincloud had:
+    5% of the values' range above the highest value, the axis from 5% below the lowest to
+    25% above the highest."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    lo, hi = (float(v.min()), float(v.max())) if v.size else (0.0, 1.0)
+    span = hi - lo if hi > lo else 1.0
+    return hi + 0.05 * span, (lo - 0.05 * span, hi + 0.25 * span)
 
 
 def render_hap_boxplot(data, title_lines, *, y_label=None, dpi=110):
     """The block's haplotype box plot as ``render_snp_boxplot`` draws a SNP's: a box per
-    haplotype group, the group's samples as jittered dots (seed 0, one draw per group,
-    in group order), coloured by utils.pub_theme.haplotype_color_map."""
+    haplotype group (H1, H2, ... from the left), the group's samples as jittered dots
+    (seed 0, one draw per group, in group order), coloured by
+    utils.pub_theme.haplotype_color_map. ``data`` is ``hap_plot_data``'s: the dots are its
+    Phenotype_plotted values, and each group's CLD_letters, when given, sit above its box."""
     import matplotlib
     matplotlib.use("Agg", force=False)
     import matplotlib.pyplot as plt
@@ -356,7 +437,7 @@ def render_hap_boxplot(data, title_lines, *, y_label=None, dpi=110):
     fig, ax = plt.subplots(figsize=(max(3.2, 0.55 * k + 1.6), 3.0), dpi=dpi)
     ticks = []
     for i, (h, m) in enumerate(groups):
-        yc = data.loc[m, "Phenotype"].to_numpy(dtype=float)
+        yc = data.loc[m, "Phenotype_plotted"].to_numpy(dtype=float)
         if len(yc):
             ax.boxplot([yc], positions=[i], widths=0.5, showfliers=False)
             jitter = i + (rng.random(len(yc)) - 0.5) * 0.18
@@ -365,6 +446,14 @@ def render_hap_boxplot(data, title_lines, *, y_label=None, dpi=110):
     ax.set_xticks(list(range(k)))
     ax.set_xticklabels(ticks)
     ax.set_xlim(-0.6, k - 0.4)
+    letters = _hap_letters(data, groups)
+    if letters:
+        y_text, y_range = _letter_layout(data["Phenotype_plotted"])
+        for i, (h, _m) in enumerate(groups):
+            if h in letters:
+                ax.text(i, y_text, letters[h], ha="center", va="bottom", fontsize=8,
+                        fontweight="bold")
+        ax.set_ylim(*y_range)
     ax.set_xlabel("Haplotype")
     ax.set_ylabel(y_label if y_label else "Phenotype")
     ax.set_title("\n".join(title_lines), fontsize=8)
@@ -374,8 +463,8 @@ def render_hap_boxplot(data, title_lines, *, y_label=None, dpi=110):
 
 def plotly_hap_boxplot(data, title_lines, *, y_label=None):
     """The interactive form of ``render_hap_boxplot``, as ``plotly_snp_boxplot``: the same
-    boxes and jittered points (same seed and draws), and on hover each sample's ID,
-    haplotype, value and whether the haplotype test took it."""
+    boxes, jittered points (same seed and draws) and letters, and on hover each sample's
+    ID, haplotype, plotted value and whether the haplotype test took it."""
     import plotly.graph_objects as go
 
     from utils.pub_theme import haplotype_color_map
@@ -390,7 +479,7 @@ def plotly_hap_boxplot(data, title_lines, *, y_label=None):
         ticks.append(f"{h}<br>(n={n})")
         if not n:
             continue
-        fig.add_trace(go.Box(x=np.full(n, i), y=data.loc[m, "Phenotype"], width=0.5,
+        fig.add_trace(go.Box(x=np.full(n, i), y=data.loc[m, "Phenotype_plotted"], width=0.5,
                              boxpoints=False, fillcolor="rgba(0,0,0,0)",
                              line=dict(color="#333333", width=1), hoverinfo="skip",
                              showlegend=False))
@@ -399,15 +488,24 @@ def plotly_hap_boxplot(data, title_lines, *, y_label=None):
              "Phenotype: %{y:.4g}<br>In the haplotype test: %{customdata[2]}<extra></extra>")
     for h, m in groups:
         fig.add_trace(go.Scatter(
-            x=x_all[m], y=data.loc[m, "Phenotype"], mode="markers",
+            x=x_all[m], y=data.loc[m, "Phenotype_plotted"], mode="markers",
             marker=dict(size=6, opacity=0.6, color=cmap[h]), name=h, showlegend=False,
             customdata=np.column_stack([
                 data.loc[m, "Sample"].astype(str), data.loc[m, "Haplotype"].astype(str),
                 np.where(data.loc[m, "In_haplotype_test"].astype(bool), "yes", "no")]),
             hovertemplate=hover))
+    yaxis = dict(title=y_label or "Phenotype")
+    letters = _hap_letters(data, groups)
+    if letters:
+        y_text, y_range = _letter_layout(data["Phenotype_plotted"])
+        for i, (h, _m) in enumerate(groups):
+            if h in letters:
+                fig.add_annotation(x=i, y=y_text, text=f"<b>{letters[h]}</b>",
+                                   showarrow=False, yanchor="bottom", font=dict(size=12))
+        yaxis["range"] = list(y_range)
     fig.update_layout(
         title=dict(text="<br>".join(title_lines), font=dict(size=11)),
         xaxis=dict(title="Haplotype", tickvals=list(range(len(groups))), ticktext=ticks,
                    range=[-0.6, len(groups) - 0.4]),
-        yaxis=dict(title=y_label or "Phenotype"), height=440, margin=dict(t=80))
+        yaxis=yaxis, height=440, margin=dict(t=80))
     return fig

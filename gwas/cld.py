@@ -80,3 +80,33 @@ def compact_letter_display(groups, sig_matrix, means=None):
             letters[g].add(ch)
 
     return {g: "".join(sorted(letters[g])) for g in groups}
+
+
+def tukey_cld(values, groups, *, alpha=0.05):
+    """Tukey HSD of ``values`` between ``groups``, and its compact letter display.
+
+    Returns ``(tukey_df, cld_df)``: statsmodels' pairwise table (``reject`` as bool), and
+    one row per group (MLG_label, CLD) with the groups sorted by name. Two groups share a
+    letter iff Tukey HSD does not separate them (``compact_letter_display`` over the
+    reject matrix, letters ordered by the group means). The haplotype panel's tables, the
+    letters on its box plot and its plotted-data CSV all come from this one call. Raises
+    what ``pairwise_tukeyhsd`` raises.
+    """
+    import pandas as pd
+    from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
+    y = pd.Series(np.asarray(values, dtype=float))
+    g = pd.Series(np.asarray(groups).astype(str))
+    tukey = pairwise_tukeyhsd(endog=y, groups=g, alpha=alpha)
+    table = tukey.summary().data
+    tukey_df = pd.DataFrame(table[1:], columns=table[0])
+    tukey_df["reject"] = tukey_df["reject"].astype(bool)
+
+    names = sorted(g.unique())
+    sig_matrix = pd.DataFrame(False, index=names, columns=names)
+    for _, row in tukey_df.iterrows():
+        g1, g2, reject = str(row["group1"]), str(row["group2"]), bool(row["reject"])
+        sig_matrix.loc[g1, g2] = reject
+        sig_matrix.loc[g2, g1] = reject
+    letters = compact_letter_display(names, sig_matrix, means=y.groupby(g).mean().to_dict())
+    return tukey_df, pd.DataFrame({"MLG_label": names, "CLD": [letters[n] for n in names]})

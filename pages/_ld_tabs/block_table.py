@@ -9,7 +9,8 @@ tested. Columns that repeat a value under two names are shown once:
 - the block's ``Mean r2`` is the coherence table's ``ldq_r2_mean``: "Mean r²".
 When a pair differs (it should not), both are kept, labelled. ``eta2`` (the haplotype
 test's, on its samples and markers) and ``EtaSq`` (every SNP in the block's coordinate
-window) are labelled apart unless they are equal.
+window) are labelled apart unless they are equal. ``screen_view`` is what the tab shows: the
+window's η², built from the older window-based groups, is in the CSV only.
 """
 import numpy as np
 import pandas as pd
@@ -140,3 +141,16 @@ def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, se
 def compact_view(table):
     """The table's default view: the COMPACT_COLUMNS it has, in that order."""
     return table[[c for c in COMPACT_COLUMNS if c in table.columns]]
+
+
+# in the CSV, not on screen: the window-based η² comes from the older coordinate-window
+# haplotype groups, which often differ from the test's, so on screen it only confuses
+CSV_ONLY_COLUMNS = ["η² (all SNPs in the block window)"]
+
+
+def screen_view(table, all_columns=False):
+    """What the tab shows: the compact view, or (all columns) every column except the
+    CSV_ONLY_COLUMNS. The CSV is written from the whole table."""
+    if not all_columns:
+        return compact_view(table)
+    return table.drop(columns=[c for c in CSV_ONLY_COLUMNS if c in table.columns])

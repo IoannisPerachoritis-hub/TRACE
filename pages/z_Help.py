@@ -56,9 +56,9 @@ st.markdown("""
 | **Pos** | Physical position (bp) on the chromosome |
 | **PValue** | Association p-value from the mixed linear model |
 | **-log10p** | Negative log10 of the p-value (higher = more significant) |
-| **Beta_MLM** | Effect size estimate from the mixed linear model. Positive means the minor allele increases the trait value. |
+| **Beta_MLM** | Effect size estimate from the mixed linear model (kinship and any PC covariates), per standard deviation of the SNP's ALT-allele dosage (FaST-LMM standardises each SNP). Positive means the ALT allele increases the trait value. |
 | **SE_MLM** | Standard error of the MLM effect estimate |
-| **Beta_OLS** | Marginal effect size from ordinary least squares (ignoring kinship) |
+| **Beta_OLS** | Effect size per copy of the ALT allele from ordinary least squares with the same PCs (ignoring kinship) |
 | **SE_OLS** | Standard error of the OLS effect estimate |
 | **FDR** | False discovery rate-adjusted p-value (Benjamini-Hochberg), computed within this model's own p-values. Values ≤ 0.05 are significant after multiple testing correction. |
 | **Significant_FDR** | True if the SNP passes Benjamini-Hochberg at 0.05 (FDR ≤ 0.05) |
@@ -190,8 +190,12 @@ covariates until lambda GC approaches 1 can remove real signal from a polygenic 
 
 st.subheader("Effect Sizes")
 st.markdown("""
-- **Effect (Beta)**: the estimated change in trait value per copy of the minor allele, on
-  the trait's own scale. A positive value means the minor allele increases the trait.
+- **Effect (Beta)**: two estimates, both on the scale of the phenotype the GWAS used.
+  **Beta_MLM**, from the mixed model (kinship and any PC covariates), is the change per
+  standard deviation of the SNP's ALT-allele dosage: FaST-LMM standardises each SNP before
+  fitting, so it is not a per-copy effect. **Beta_OLS**, from an ordinary least squares fit
+  with the same PCs and no kinship, is the change per copy of the ALT allele. A positive
+  value means the ALT allele increases the trait.
 - **eta-squared**: the proportion of phenotypic variance associated with haplotype
   differences at an LD block, computed on the phenotype after any principal-component
   covariates have been removed.
