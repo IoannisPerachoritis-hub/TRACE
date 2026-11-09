@@ -139,6 +139,13 @@ All notable changes to TRACE are documented in this file.
   every other ZIP member are unchanged. See `docs/outputs.md`.
 
 ### Fixed
+- **The static Manhattan plots highlight only the SNPs that pass the
+  threshold.** They enlarged every SNP with p at or below it, and counted those
+  in the legend's "Significant (n)", while every table counts p below it. A
+  p-value exactly on the threshold was highlighted but significant nowhere. The
+  plots now highlight the rule's own column (CLI, One-Click and the single-trait
+  view). No comparison run has a p-value on a threshold, so no figure changes
+  there.
 - **A numeric `--sig-thresh` no longer crashes the CLI when plots are on.** The
   bare number reached plot code that needs a text label, so every such run
   stopped at the MLM Manhattan plot and wrote no results (with several traits,

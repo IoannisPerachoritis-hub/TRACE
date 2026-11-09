@@ -1131,8 +1131,10 @@ def _run_trait(parsed, pheno, args):
             elif sig_rule == "meff":
                 _sec = {"secondary_lod": -np.log10(bonf_thresh_naive),
                         "secondary_label": "Bonferroni α=0.05"}
+        # the enlarged SNPs are the rule's own column, as in the tables (p < threshold)
         fig_man = plot_manhattan_static(df_plot, _man_lod, _man_label,
-                                        f"Manhattan (MLM): {args.trait}", **_sec)
+                                        f"Manhattan (MLM): {args.trait}",
+                                        sig_mask=_sig_rule_obj.significant_mask(df_plot), **_sec)
         plt.figure(fig_man.number)
         plt.xticks(tick_pos, tick_lab, fontsize=8)
         figures["Manhattan_MLM.png"] = fig_man
@@ -1148,7 +1150,8 @@ def _run_trait(parsed, pheno, args):
                 _lam_m = compute_lambda_gc(_m_df["PValue"].values)
                 _fig_m = plot_manhattan_static(
                     _mdf_plot, _man_lod, _man_label,
-                    f"Manhattan ({_m_name}): {args.trait}", **_sec,
+                    f"Manhattan ({_m_name}): {args.trait}",
+                    sig_mask=_sig_rule_obj.significant_mask(_mdf_plot), **_sec,
                 )
                 plt.figure(_fig_m.number)
                 plt.xticks(_mtp, _mtl, fontsize=8)

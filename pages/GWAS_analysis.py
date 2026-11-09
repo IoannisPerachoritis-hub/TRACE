@@ -2587,9 +2587,12 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
         # Static Manhattan (generated for ZIP export + download, not displayed inline)
         df_manh, tick_pos, tick_lab = compute_cumulative_positions(gwas_df)
+        # the enlarged SNPs are the active rule's column, as in the tables
         fig_manh = plot_manhattan_static(
             df_manh, active_lod, active_label, f"Manhattan (MLM): {trait_col}",
             secondary_lod=secondary_lod, secondary_label=secondary_label,
+            sig_mask=(df_manh[_active_sig_col].fillna(False).to_numpy(dtype=bool)
+                      if _active_sig_col in df_manh.columns else None),
         )
         plt.figure(fig_manh.number)
         plt.xticks(tick_pos, tick_lab, fontsize=8)
@@ -2851,6 +2854,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 title=f"Manhattan (MLMM): {trait_col}",
                 secondary_lod=secondary_lod,
                 secondary_label=secondary_label,
+                sig_mask=(df_mlmm[_active_sig_col].fillna(False).to_numpy(dtype=bool)
+                          if _active_sig_col in df_mlmm.columns else None),
             )
             plt.figure(fig_mlmm.number)
             plt.xticks(tick_pos_m, tick_lab_m, fontsize=8)
@@ -2954,6 +2959,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 title=f"Manhattan (FarmCPU): {trait_col}",
                 secondary_lod=secondary_lod,
                 secondary_label=secondary_label,
+                sig_mask=(df_fc[_active_sig_col].fillna(False).to_numpy(dtype=bool)
+                          if _active_sig_col in df_fc.columns else None),
             )
             plt.figure(fig_farmcpu.number)
             plt.xticks(tick_pos_fc, tick_lab_fc, fontsize=8)

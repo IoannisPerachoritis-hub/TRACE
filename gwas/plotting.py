@@ -82,6 +82,7 @@ def plot_manhattan_static(
     chr_col="Chr",
     secondary_lod=None,
     secondary_label=None,
+    sig_mask=None,
 ):
     """Static matplotlib Manhattan plot with signal amplification.
 
@@ -90,6 +91,11 @@ def plot_manhattan_static(
     Bonferroni and M_eff thresholds when a peak lies between them. The
     secondary line is informational only — it does NOT trigger SNP
     amplification (only the primary `active_lod` does).
+
+    The enlarged SNPs are ``sig_mask`` (one bool per row of ``df``): the callers pass
+    the rule's own significance column, so the figure counts the SNPs the tables
+    count. Without it, a SNP is enlarged when its p-value is below the threshold
+    (strictly, as the tables decide), never when it equals it.
     """
     fig = plt.figure(figsize=FIGSIZE["manhattan"])
 
@@ -136,7 +142,8 @@ def plot_manhattan_static(
                      color=SIG_LINE_COLOR, linewidth=1.0, zorder=3)
 
         # Signal amplification: enlarge + recolor significant SNPs
-        sig_mask = df["-log10p"] >= active_lod
+        sig_mask = (np.asarray(df["-log10p"] > active_lod) if sig_mask is None
+                    else np.asarray(sig_mask, dtype=bool))
         if sig_mask.any():
             plt.scatter(
                 df.loc[sig_mask, "CumPos"], df.loc[sig_mask, "-log10p"],
