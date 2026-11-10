@@ -5,6 +5,12 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **MLMM's cofactor window is the LD window.** In the CLI and One-Click, MLMM used its
+  250 kb default, while the GWAS page's single-trait run passed the LD window. Every
+  path now passes the run's LD window: `--ld-flank-kb` (One-Click's manual flank) when
+  given, else int(2 × the median LD decay), else 300 kb. The CLI estimates the decay
+  before the models for this. `run_metadata.json` records "MLMM cofactor window
+  (kb)" when MLMM runs. MLMM's results can change; MLM and FarmCPU results do not.
 - **One LD-window rule, the CLI's, in the GUI.** Every default LD window is now
   int(2 × the median LD decay), or 300 kb when the decay cannot be estimated, the
   rule the CLI and One-Click use (`gwas.windows.ld_window_kb`). This covers the LD Blocks &

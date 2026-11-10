@@ -509,6 +509,47 @@ def _run_trait(parsed, pheno, args):
         log.info("  MLM: %d significant (M_eff), %d (FDR<0.05)",
                  gwas_df["Significant_Meff"].sum(), gwas_df["Significant_FDR"].sum())
 
+    # ── LD decay estimation (ahead of the models: MLMM takes the LD window as its
+    #    cofactor window; the estimate needs only the genotypes) ──
+    import gwas.ld as ld
+    from gwas.windows import ld_window_kb
+    ld_flank_kb = args.ld_flank_kb
+    ld_decay_kb = None
+    ld_blocks_mlm = None  # track MLM blocks for subsampling aggregation
+
+    _ld_decay_n_censored = None  # LD-decay Tier 1b: grid-limited per-chr count (run_metadata)
+    if ld_flank_kb is None:
+        log.info("Estimating LD decay…")
+        ld_distances = []
+        _ld_decay_n_censored = 0
+        _geno_float = geno_imputed.astype(float)
+        for ch in np.unique(chroms):
+            ch_mask = chroms == ch
+            pos_ch = positions[ch_mask]
+            geno_ch = _geno_float[:, ch_mask]
+            if len(pos_ch) < 50:
+                continue
+            if len(pos_ch) > 1500:
+                idx = np.linspace(0, len(pos_ch) - 1, 1500, dtype=int)
+                pos_ch, geno_ch = pos_ch[idx], geno_ch[:, idx]
+            r2_mat = ld.pairwise_r2(geno_ch)
+            dk, _, _dfld = ld.ld_decay(pos_ch, r2_mat, ld_threshold=0.2, max_dist_kb=5000)
+            if np.isfinite(dk):
+                ld_distances.append(dk)
+                if _dfld.attrs.get("ld_decay_censored"):
+                    _ld_decay_n_censored += 1
+        if ld_distances:
+            ld_decay_kb = float(np.median(ld_distances))
+            ld_flank_kb = ld_window_kb(ld_decay_kb)    # int(2 x decay)
+            # LD-decay Tier 1b: N grid-limited -> the median is partly a median of floors
+            # (an upper bound). Display/logging only; ld_decay_kb / flank unchanged.
+            _cens = (f" ({_ld_decay_n_censored} of {len(ld_distances)} chromosomes "
+                     f"grid-limited <= floor)") if _ld_decay_n_censored else ""
+            log.info("  LD decay ~ %.0f kb -> flank = %d kb%s", ld_decay_kb, ld_flank_kb, _cens)
+        else:
+            ld_flank_kb = ld_window_kb(None)            # 300 kb
+            log.warning("  Could not estimate LD decay; using 300 kb")
+
     if "mlmm" in args.model and gwas_df is not None:
         from gwas.models import run_mlmm_research_grade_fast
         log.info("Running MLMM…")
@@ -516,9 +557,13 @@ def _run_trait(parsed, pheno, args):
         _mlmm_opts = {k: v for k, v in (("p_enter", getattr(args, "mlmm_p_enter", None)),
                                          ("max_cof", getattr(args, "mlmm_max_cof", None)))
                       if v is not None}
+        # the cofactor window is the run's LD window (--ld-flank-kb, else int(2 x decay),
+        # else 300 kb), as the GWAS page's run passes it
+        _mlmm_window_kb = int(ld_flank_kb)
         gwas_mlmm, cof_tbl = run_mlmm_research_grade_fast(
             geno_imputed, sid, chroms, chroms_num, positions, iid,
-            pheno_reader, K0, covar_mlmm, verbose=False, **_mlmm_opts,
+            pheno_reader, K0, covar_mlmm, verbose=False, window_kb=_mlmm_window_kb,
+            **_mlmm_opts,
         )
         gwas_mlmm["PValue"] = np.clip(gwas_mlmm["PValue"].astype(float), 1e-300, 1.0)
         gwas_mlmm["-log10p"] = -np.log10(gwas_mlmm["PValue"])
@@ -604,46 +649,6 @@ def _run_trait(parsed, pheno, args):
                          _n_full, len(_consensus_models), len(_consensus_models))
         except Exception as e:
             log.warning("Cross-model consensus failed: %s", e)
-
-    # ── LD decay estimation ─────────────────────────────
-    import gwas.ld as ld
-    from gwas.windows import ld_window_kb
-    ld_flank_kb = args.ld_flank_kb
-    ld_decay_kb = None
-    ld_blocks_mlm = None  # track MLM blocks for subsampling aggregation
-
-    _ld_decay_n_censored = None  # LD-decay Tier 1b: grid-limited per-chr count (run_metadata)
-    if ld_flank_kb is None:
-        log.info("Estimating LD decay…")
-        ld_distances = []
-        _ld_decay_n_censored = 0
-        _geno_float = geno_imputed.astype(float)
-        for ch in np.unique(chroms):
-            ch_mask = chroms == ch
-            pos_ch = positions[ch_mask]
-            geno_ch = _geno_float[:, ch_mask]
-            if len(pos_ch) < 50:
-                continue
-            if len(pos_ch) > 1500:
-                idx = np.linspace(0, len(pos_ch) - 1, 1500, dtype=int)
-                pos_ch, geno_ch = pos_ch[idx], geno_ch[:, idx]
-            r2_mat = ld.pairwise_r2(geno_ch)
-            dk, _, _dfld = ld.ld_decay(pos_ch, r2_mat, ld_threshold=0.2, max_dist_kb=5000)
-            if np.isfinite(dk):
-                ld_distances.append(dk)
-                if _dfld.attrs.get("ld_decay_censored"):
-                    _ld_decay_n_censored += 1
-        if ld_distances:
-            ld_decay_kb = float(np.median(ld_distances))
-            ld_flank_kb = ld_window_kb(ld_decay_kb)    # int(2 x decay)
-            # LD-decay Tier 1b: N grid-limited -> the median is partly a median of floors
-            # (an upper bound). Display/logging only; ld_decay_kb / flank unchanged.
-            _cens = (f" ({_ld_decay_n_censored} of {len(ld_distances)} chromosomes "
-                     f"grid-limited <= floor)") if _ld_decay_n_censored else ""
-            log.info("  LD decay ~ %.0f kb -> flank = %d kb%s", ld_decay_kb, ld_flank_kb, _cens)
-        else:
-            ld_flank_kb = ld_window_kb(None)            # 300 kb
-            log.warning("  Could not estimate LD decay; using 300 kb")
 
     # ── Per-model post-GWAS: LD blocks → haplotype → annotation ──
     from gwas.haplotype import run_haplotype_block_gwas
@@ -1342,6 +1347,11 @@ def _run_trait(parsed, pheno, args):
                              if item[0] == "Gene model status" else [item])}
     if getattr(args, "run_label", None):
         meta["Pipeline"] = args.run_label
+    # MLMM's cofactor window (the LD window), after the LD flank, when MLMM ran
+    if "MLMM" in extra_model_dfs:
+        meta = {k: v for item in meta.items()
+                for k, v in ([item, ("MLMM cofactor window (kb)", _mlmm_window_kb)]
+                             if item[0] == "LD flank (kb)" else [item])}
 
     report_html = None
     if not args.no_report:

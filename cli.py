@@ -139,7 +139,8 @@ def _build_parser():
     ld_grp.add_argument("--ld-r2", type=float, default=0.6,
                          help="LD r^2 threshold for block detection (default: 0.6)")
     ld_grp.add_argument("--ld-flank-kb", type=int, default=None,
-                         help="LD flank window in kb (default: auto from LD decay)")
+                         help="LD flank window in kb, also MLMM's cofactor window "
+                              "(default: auto, 2 x the LD decay, or 300 kb)")
     ld_grp.add_argument("--ld-seed-mode", default="suggestive",
                          choices=["suggestive", "significant"],
                          help="LD-block seed SNPs (mirrors the GUI): 'suggestive' "
