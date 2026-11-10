@@ -145,6 +145,10 @@ documented in full (every column, type, and when it's emitted) in
   GWAS p-value among the significant SNPs that formed the block); it may not be a member, so
   `block_member = False` for the lead is expected, not a bug.
 
+**Covariates** (the GWAS page's covariate upload, or the CLI's `--covar`): a sample
+without a value for a covariate is dropped before SNP QC, kinship and the PCs. A warning
+names the dropped samples, and `run_metadata.json` records their count.
+
 Run `trace-gwas --help` for the `--covar` covariate flag and the numeric
 `--sig-thresh` p-value (e.g. `5e-8`); it prints the full CLI parameter list.
 """)

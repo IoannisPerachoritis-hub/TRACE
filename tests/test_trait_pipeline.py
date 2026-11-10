@@ -79,18 +79,19 @@ def test_covariate_frame_matches_the_covariate_file(planted, tmp_path):
     assert not by_frame.tables[gwas]["PValue"].equals(none.tables[gwas]["PValue"])
 
 
-def test_refuse_policy_stops_a_trait_with_covariate_missing_samples(planted, tmp_path):
+def test_covariate_missing_samples_are_dropped_and_named(planted, tmp_path):
+    """One rule (the CLI's): the samples without a covariate value are dropped, and the
+    summary names them for the GUI's warning."""
     ids = list(planted["pheno"].index.astype(str))
     batch = [(i % 3) * 0.5 for i in range(len(ids) - 3)] + [None] * 3
     cov = pd.DataFrame({"Accession": ids, "Batch": batch})
     path = tmp_path / "cov_missing.csv"
     cov.to_csv(path, index=False)
-    with pytest.raises(pl.TraitPipelineError, match="3 of 120 analysis samples without covariate"):
-        pl.run_trait_pipeline(planted["parsed"], planted["pheno"], "T_chr1",
-                              _opts(planted, covar=str(path), covar_missing="refuse", no_plots=True))
     dropped = pl.run_trait_pipeline(planted["parsed"], planted["pheno"], "T_chr1",
-                                    _opts(planted, covar=str(path), no_plots=True))  # CLI default
+                                    _opts(planted, covar=str(path), no_plots=True))
     assert dropped.summary["n_samples"] == 117
+    assert dropped.summary["covariate_dropped"] == ids[-3:]
+    assert dropped.summary["covariate_n_before"] == 120
 
 
 def _without_generated(members):

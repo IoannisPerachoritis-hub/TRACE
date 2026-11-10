@@ -56,7 +56,7 @@ AREAS: list[tuple[str, str, list[str]]] = [
     ("Significance & multiple testing", "M_eff / Bonferroni / FDR / custom-threshold rules and every model's significance columns",
         ["test_significance", "test_model_significance", "test_manhattan_tie"]),
     ("Covariates & PC diagnostics", "user covariates and the PC eigenvalue-spectrum diagnostics",
-        ["test_covariates", "test_covar_cli_e2e", "test_pc_diagnostics"]),
+        ["test_covariates", "test_covar_cli_e2e", "test_pc_diagnostics", "test_covariate_drop"]),
     ("LD block detection", "peak-centric LD block detection and merging",
         ["test_ld", "test_ld_merge"]),
     ("Haplotype testing", "block haplotype effects, effect sizes, compact letter display, sample-to-haplotype assignments",

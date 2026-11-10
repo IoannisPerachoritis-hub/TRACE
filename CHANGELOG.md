@@ -5,6 +5,12 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Samples without a covariate value are dropped in the GUI too.** There is now one
+  rule, the CLI's. The GWAS page's single-trait run and One-Click drop the analysis
+  samples that lack a covariate value at the stage the CLI does, before SNP QC, kinship
+  and the PCs. One-Click used to stop the trait, and the GWAS page stopped the run. A
+  warning says how many samples were dropped: "N of M analysis samples have no
+  covariate value and were dropped: …". The CLI's results are unchanged.
 - **β_MLM and its SE are per ALT allele copy.** FaST-LMM fits each SNP standardised, so
   its effect and SE were per standard deviation of the SNP's dosage. TRACE now divides
   both by that SD (over the same samples), so `Beta_MLM` and `SE_MLM` share `Beta_OLS`'s

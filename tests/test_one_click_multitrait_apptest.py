@@ -221,7 +221,7 @@ def test_gui_widgets_reach_the_pipeline_options(monkeypatch):
         "ld_flank_kb": 200, "hap_perms": 500, "no_ld_heatmaps": True,
         "mlmm_p_enter": 1e-3, "mlmm_max_cof": 5, "farmcpu_max_iter": 20,
         "subsampling": True, "boot_reps": 20, "boot_frac": 0.7, "boot_thresh": 1e-3,
-        "boot_use_loco": True, "norm": "none", "covar_missing": "refuse",
+        "boot_use_loco": True, "norm": "none",
         "norm_by_trait": {},                        # no transformation applied
         "run_label": "One-Click Full Analysis", "vcf": "planted.vcf", "output": None,
     }

@@ -121,3 +121,35 @@ def align_covariates(covar_df, sample_ids):
         matrix = matrix.reshape(-1, 1)
     complete = np.isfinite(matrix).all(axis=1)
     return matrix, list(covar_df.columns), complete
+
+
+class CovariateDropError(ValueError):
+    """No analysis sample has every covariate value (often: the covariate file's sample
+    IDs do not match the VCF's)."""
+
+
+def drop_covariate_missing(covar_df, geno_df, pheno, y):
+    """Keep the samples that have every covariate value, at the stage the CLI drops the
+    others: after phenotype QC, before SNP QC, imputation, kinship and the PCs. The CLI,
+    One-Click and the GWAS page all call it there, so every array built later holds the
+    same samples.
+
+    ``geno_df`` and ``pheno`` are row-aligned by sample (``geno_df.index``) and ``y`` is
+    the trait vector in that order. Returns (geno_df, pheno, y, dropped sample IDs); the
+    inputs come back unchanged when no sample is dropped.
+    """
+    _, _, ok = align_covariates(covar_df, geno_df.index)
+    dropped = [str(s) for s, keep in zip(geno_df.index, ok) if not keep]
+    if dropped:
+        geno_df, pheno, y = geno_df.iloc[ok], pheno.iloc[ok], y[ok]
+    return geno_df, pheno, y, dropped
+
+
+def covariate_drop_message(dropped, n_total):
+    """The warning for the samples dropped for a missing covariate value (the CLI's log,
+    the GWAS page and One-Click): the count, the first 10 IDs and how many more."""
+    dropped = [str(s) for s in dropped]
+    n = len(dropped)
+    shown = ", ".join(dropped[:10]) + (f", and {n - 10} more" if n > 10 else "")
+    return (f"{n} of {int(n_total)} analysis samples have no covariate value and were "
+            f"dropped: {shown}.")

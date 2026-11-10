@@ -310,8 +310,12 @@ Supply user covariates (batch, environment, a structure axis, …) as fixed effe
   and whose remaining columns are **numeric** covariates. Encode categoricals as numeric
   indicators (e.g. one-hot 0/1) beforehand.
 - `--covar-cols` selects a comma-separated subset of covariate columns (default: all).
-- Samples missing a covariate value are **dropped** from the analysis (reported in the
-  log).
+- Samples missing a covariate value are **dropped** after phenotype QC, before SNP QC,
+  kinship and the PCs. The CLI, One-Click and the GWAS page's covariate upload all
+  follow this rule, through one helper (`gwas.covariates.drop_covariate_missing`). The
+  CLI logs it, and the GUI shows it as a warning: "N of M analysis samples have no
+  covariate value and were dropped: <the first 10 IDs>, and K more."
+  `run_metadata.json` records the count (`Covariate samples dropped`).
 - Effect: the covariates are concatenated onto the PC block, so a covariate perfectly
   correlated with the phenotype removes the signal. **Output is byte-identical when
   `--covar` is not given.**

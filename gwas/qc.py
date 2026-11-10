@@ -774,11 +774,13 @@ def gwas_pipeline(
     impute_method="mean",
     impute_k=5,
     impute_l=20,
+    covar_hash=None,
 ):
     """
     Cached preprocessing pipeline.
     Inputs are retrieved from st.session_state via stable hashes
-    to avoid caching on huge bytes/DataFrames.
+    to avoid caching on huge bytes/DataFrames. ``covar_hash`` names the uploaded
+    covariate table (None without one): its samples without a value are dropped.
     """
     # -- Streamlit coupling: resolve session state --
     vcf_bytes = st.session_state.get(f"VCF_BYTES::{vcf_hash}", None)
@@ -788,8 +790,40 @@ def gwas_pipeline(
         raise RuntimeError("VCF bytes missing from session_state (hash key not found).")
     if pheno is None:
         raise RuntimeError("Phenotype table missing from session_state (hash key not found).")
+    covar_df = None
+    if covar_hash is not None:
+        covar_df = st.session_state.get(f"COVAR_DF::{covar_hash}", None)
+        if covar_df is None:
+            raise RuntimeError("Covariate table missing from session_state (hash key not found).")
 
-    # -- Pure computation stages --
+    return _gwas_pipeline_impl(
+        vcf_bytes, pheno, trait_col, maf_thresh, miss_thresh, norm_option, drop_alt,
+        ind_miss_thresh, mac_thresh, info_thresh=info_thresh, canonical=canonical,
+        impute_method=impute_method, impute_k=impute_k, impute_l=impute_l,
+        covar_df=covar_df, vcf_hash=vcf_hash)
+
+
+def _gwas_pipeline_impl(
+    vcf_bytes,
+    pheno,
+    trait_col,
+    maf_thresh,
+    miss_thresh,
+    norm_option,
+    drop_alt,
+    ind_miss_thresh,
+    mac_thresh,
+    info_thresh=0.0,
+    canonical=None,
+    impute_method="mean",
+    impute_k=5,
+    impute_l=20,
+    covar_df=None,
+    vcf_hash="",
+):
+    """The GWAS page's preprocessing (gwas_pipeline without the session lookups): VCF
+    parse, ID harmonisation, phenotype QC, the covariate drop (the CLI's, by the same
+    helper and at the same stage), SNP QC, imputation and kinship."""
     callset = load_vcf_cached(vcf_bytes)
 
     genotypes, samples, chroms, positions, vid, ref, alt, info_scores, info_field = \
@@ -802,6 +836,19 @@ def gwas_pipeline(
     geno_df, pheno, y = \
         _pipeline_phenotype_qc(geno_df, pheno, trait_col,
                                norm_option, ind_miss_thresh)
+
+    # samples without a covariate value are dropped here, before SNP QC, imputation,
+    # kinship and the PCs, as the CLI does (gwas.pipeline._run_trait, same helper)
+    covar_dropped, covar_n_before = [], int(geno_df.shape[0])
+    if covar_df is not None:
+        from gwas.covariates import (CovariateDropError, covariate_drop_message,
+                                     drop_covariate_missing)
+        geno_df, pheno, y, covar_dropped = drop_covariate_missing(covar_df, geno_df, pheno, y)
+        if geno_df.shape[0] == 0:
+            raise CovariateDropError(
+                covariate_drop_message(covar_dropped, covar_n_before)
+                + " No sample remains: check that the covariate file's sample IDs match "
+                "the VCF's.")
 
     # CACHE-KEY CONTRACT (see _impute_cached): _pipeline_snp_qc also accepts
     # max_het / het_excess_p (het-screen filter) -- NOT threaded here, so the args
@@ -862,6 +909,8 @@ def gwas_pipeline(
         "info_scores": info_scores,
         "info_field": info_field,
         "allele_map": allele_map,         # {SNP: (REF, ALT)}, for the lead-SNP box plot
+        "covar_dropped": covar_dropped,   # samples dropped for a missing covariate value
+        "covar_n_before": covar_n_before,
     }
 
 if st is not None:

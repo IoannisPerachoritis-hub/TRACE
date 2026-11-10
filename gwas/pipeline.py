@@ -271,32 +271,25 @@ def _run_trait(parsed, pheno, args):
     #    downstream array (iid/geno/K/PCs) is built on the covar-complete set ──
     covar_df_sel = None
     _covar_frame = getattr(args, "covar_frame", None)  # GUI: the uploaded table, already read
+    _cov_dropped, _cov_n_before = [], None
     if getattr(args, "covar", None) or _covar_frame is not None:
         from gwas.covariates import (
-            load_covariate_frame, select_covariate_columns, align_covariates,
+            load_covariate_frame, select_covariate_columns, drop_covariate_missing,
+            covariate_drop_message,
         )
         _cov_cols = ([c.strip() for c in args.covar_cols.split(",")]
                      if getattr(args, "covar_cols", None) else None)
         covar_df_sel = select_covariate_columns(
             _covar_frame if _covar_frame is not None else load_covariate_frame(args.covar),
             _cov_cols)
-        _cov_M, _cov_names, _cov_ok = align_covariates(covar_df_sel, geno_df.index)
-        _n_drop = int((~_cov_ok).sum())
-        if _n_drop and getattr(args, "covar_missing", "drop") == "refuse":
-            # GUI rule: an uploaded covariate declares a confounder, so a trait whose
-            # samples lack values stops rather than silently analysing a smaller n.
-            _cov_missing = [str(s) for s, ok in zip(geno_df.index, _cov_ok) if not ok]
-            raise TraitPipelineError(
-                f"{_n_drop} of {len(_cov_ok)} analysis samples without covariate values: "
-                + ", ".join(_cov_missing[:10])
-                + (f", and {_n_drop - 10} more" if _n_drop > 10 else "")
-                + ". Complete the covariate values for every analysis sample, or remove "
-                "the covariate file (the CLI's --covar drops such samples instead).")
+        _cov_names = list(covar_df_sel.columns)
+        # the samples without a covariate value are dropped here, by the helper the GWAS
+        # page's preprocessing calls at the same stage
+        _cov_n_before = int(geno_df.shape[0])
+        geno_df, pheno, y, _cov_dropped = drop_covariate_missing(covar_df_sel, geno_df, pheno, y)
+        _n_drop = len(_cov_dropped)
         if _n_drop:
-            log.warning("  --covar: dropping %d sample(s) missing covariate values", _n_drop)
-            geno_df = geno_df.iloc[_cov_ok]
-            pheno = pheno.iloc[_cov_ok]
-            y = y[_cov_ok]
+            log.warning("  --covar: %s", covariate_drop_message(_cov_dropped, _cov_n_before))
         if geno_df.shape[0] == 0:
             raise TraitPipelineError("No samples remain after dropping covariate-missing rows.")
         log.info("  --covar: %d covariate(s) [%s] on %d samples",
@@ -1433,6 +1426,9 @@ def _run_trait(parsed, pheno, args):
             "n_samples": int(geno_df.shape[0]),
             "n_snps": int(geno_df.shape[1]),
             "meff": int(_meff_val),
+            # the samples dropped for a missing covariate value, for the GUI's warning
+            "covariate_dropped": list(_cov_dropped),
+            "covariate_n_before": _cov_n_before,
         },
         context={
             "gwas_df": gwas_df,

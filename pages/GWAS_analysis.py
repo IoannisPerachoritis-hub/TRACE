@@ -403,7 +403,8 @@ with st.container():
             help="Numeric covariates (batch, environment, ...) added as fixed effects "
                  "to the single-trait models alongside the PCs. First column = sample "
                  "ID matching the VCF; remaining columns = numeric covariates. "
-                 "Covariates must be complete for the analysis samples.",
+                 "Samples without a value for a covariate are dropped before QC, "
+                 "kinship and the PCs, with a warning, as in the CLI's --covar.",
         )
 
     # ---- Data format guidance (collapsible) ----
@@ -767,6 +768,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         load_covariate_frame as _load_cov,
         select_covariate_columns as _sel_cov,
         align_covariates as _align_cov,
+        covariate_drop_message as _covariate_drop_message,
+        CovariateDropError as _CovariateDropError,
     )
     covar_df = None
     _covar_source = None
@@ -962,6 +965,11 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # --- Store heavy inputs in session_state under those keys ---
     st.session_state[f"VCF_BYTES::{vcf_hash}"] = vcf_bytes
     st.session_state[f"PHENO_DF::{pheno_hash}"] = pheno.copy()
+    # the covariate table: the preprocessing drops its incomplete samples, as the CLI
+    _covar_hash = None
+    if covar_df is not None:
+        _covar_hash = hash_df(covar_df)
+        st.session_state[f"COVAR_DF::{_covar_hash}"] = covar_df
 
     # --- Call cached preprocessing using hashes only ---
     # The setup (and the detailed view below) uses the first selected trait that
@@ -986,7 +994,12 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 impute_method=impute_method,
                 impute_k=impute_k,
                 impute_l=impute_l,
+                covar_hash=_covar_hash,
             )
+        except _CovariateDropError as _cov_err:
+            # no sample keeps its covariate values: the same for every trait
+            st.session_state.pop(f"VCF_BYTES::{vcf_hash}", None)
+            _rehydrate_or_stop(str(_cov_err))
         except ValueError as _setup_err:
             # Skip only a phenotype-QC refusal, which is about this trait. Any other
             # error (e.g. unrecognised chromosome names) would fail the same way for
@@ -1058,26 +1071,20 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     pcs = results["pcs"]
     y = results["y"]
 
-    # Aligned user covariates (iid order); applied only when complete for every analysis
-    # sample. One missing cell stops the run: the uploaded file is a declaration that a
-    # confounder exists, so a silent drop would both discard the correction and change n
-    # behind a warning. The CLI --covar drops the incomplete samples instead.
+    # Aligned user covariates (iid order). The preprocessing (gwas_pipeline) has dropped
+    # the samples without a covariate value, before SNP QC, kinship and the PCs, by the
+    # CLI's helper at the CLI's stage; the page says how many, as a warning.
     user_covar_mat = None
     user_covar_names = None
     if covar_df is not None:
         _cov_M, _cov_names, _cov_ok = _align_cov(covar_df, iid[:, 0])
         if not _cov_ok.all():
-            _cov_missing = [str(s) for s, ok in zip(iid[:, 0], _cov_ok) if not ok]
-            _cov_shown = ", ".join(_cov_missing[:10]) + (
-                f", and {len(_cov_missing) - 10} more" if len(_cov_missing) > 10 else "")
-            _rehydrate_or_stop(
-                f"{len(_cov_missing)} of {len(_cov_ok)} analysis samples without covariate "
-                f"values: {_cov_shown}. Two ways forward: complete covariate values for "
-                f"every analysis sample, or file removal. CLI --covar: incomplete-sample "
-                f"drop instead."
-            )
-        else:
-            user_covar_mat, user_covar_names = _cov_M, _cov_names
+            raise RuntimeError("Samples without a covariate value reached the scan; the "
+                               "preprocessing should have dropped them.")
+        user_covar_mat, user_covar_names = _cov_M, _cov_names
+        if results.get("covar_dropped"):
+            st.warning(_covariate_drop_message(results["covar_dropped"],
+                                               results["covar_n_before"]))
     if user_covar_mat is not None:
         st.caption(
             f"Covariate: {_covar_source} · columns: {', '.join(user_covar_names)}"
@@ -1785,8 +1792,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 norm="none",  # every trait without an applied transformation...
                 norm_by_trait=dict(_norm_by_trait),  # ...and the ones Apply set (Section 2b)
                 covar=(_covar_source or "covariates") if covar_df is not None else None,
-                covar_frame=covar_df,
-                covar_missing="refuse",  # the page's rule, per trait (the CLI drops instead)
+                covar_frame=covar_df,  # samples without a value are dropped, as in the CLI
             )
 
             _parsed = ParsedGenotypes.from_callset(load_vcf_cached(vcf_bytes))
@@ -1858,6 +1864,9 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                     with st.expander("Error details"):
                         st.code(_failed.get(_t, ""))
                     return
+                if _td.get("covariate_dropped"):
+                    st.warning(_covariate_drop_message(_td["covariate_dropped"],
+                                                       _td["covariate_n_before"]))
                 _render_results_summary_card(
                     lambda_gc=_td["lambda_gc"],
                     n_significant=_td["n_significant"],
