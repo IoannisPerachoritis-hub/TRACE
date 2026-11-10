@@ -105,3 +105,42 @@ def test_csv_bytes_and_show_plot_needs_a_name():
             show_plot(fig, "small", data=df)
     finally:
         plt.close(fig)
+
+
+def test_the_pca_inset_labels_are_the_assignments_csvs(tmp_path):
+    """With the minimum group size raised so that H4 (4 samples) falls below it, the
+    inset's label is the assignments CSV's Haplotype for every sample: H4 stays H4 (not
+    "Other"), marked not tested; samples without a haplotype have none."""
+    from gwas.haplotype import haplotype_assignments, run_haplotype_block_gwas
+    from tests.test_haplotype_assignments import _synthetic
+    from utils.plot_data import pca_haplotype_labels
+
+    d = _synthetic()
+    res, tables = run_haplotype_block_gwas(
+        haplo_df=d["blocks"], chroms=d["chroms"], positions=d["positions"],
+        geno_imputed=d["G"], sid=d["sid"], geno_df=d["geno_df"], pheno_df=d["pheno"],
+        trait_col="t", pcs=None, min_hap_count=4, min_group_size=5, n_perm=50)
+    path = tmp_path / "assignments.csv"
+    haplotype_assignments(res, tables, d["geno_df"], d["pheno"], "t").to_csv(path, index=False)
+    csv = pd.read_csv(path, keep_default_na=False, dtype={"Haplotype": str})
+    block = csv[csv["Block_start"] == 1000]
+    samples = list(d["geno_df"].index)              # the PCA's rows: the genotype order
+    labels, in_test = pca_haplotype_labels(block, samples)
+    by_sample = block.set_index("Sample")
+    assert list(labels) == [by_sample.loc[s, "Haplotype"] for s in samples]
+    assert list(in_test) == [by_sample.loc[s, "in_haplotype_test"] in (True, "True")
+                             for s in samples]
+    h4 = [s for s in samples if by_sample.loc[s, "Haplotype"] == "H4"]
+    assert len(h4) == 4 and not any(in_test[samples.index(s)] for s in h4)
+    assert set(by_sample.loc[h4, "exclusion_reason"]) == {"group below minimum size"}
+    nohap = [s for s in samples if by_sample.loc[s, "Haplotype"] == ""]
+    assert len(nohap) == 4 and not any(in_test[samples.index(s)] for s in nohap)
+    # a sample the table does not list: no haplotype, not tested
+    extra, extra_test = pca_haplotype_labels(block, ["not_genotyped"])
+    assert list(extra) == [""] and list(extra_test) == [False]
+    # the inset's data CSV carries the same labels and the test flag
+    pcs = np.zeros((len(samples), 2))
+    pts = pca_points_table(samples, pcs, labels, in_test=in_test)
+    assert pts["Haplotype"].tolist() == list(labels)
+    assert pts["in_haplotype_test"].tolist() == list(in_test)
+

@@ -5,6 +5,14 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The haplotype PCA inset uses the haplotype labels of the assignments CSV.** On the
+  LD Blocks & Haplotypes tab, "Population structure (PC1 vs PC2, coloured by
+  haplotype)" now colours each sample by its Haplotype in the block's
+  sample-to-haplotype assignments. Before, every sample outside the plotted groups was
+  "Other". A group below the minimum size now keeps its H label. The samples the
+  haplotype test left out are hollow, with "not tested" in the legend, and the samples
+  without a haplotype are grey, "no haplotype". The inset's data CSV has the same labels
+  and an `in_haplotype_test` column.
 - **Samples without a covariate value are dropped in the GUI too.** There is now one
   rule, the CLI's. The GWAS page's single-trait run and One-Click drop the analysis
   samples that lack a covariate value at the stage the CLI does, before SNP QC, kinship

@@ -53,14 +53,36 @@ def values_table(values, name="Value"):
     return pd.DataFrame({name: np.asarray(values, dtype=float).ravel()})
 
 
-def pca_points_table(sample_ids, pcs, labels=None, label_name="Haplotype"):
-    """A PCA panel's points: Sample, PC1, PC2 and, when given, each sample's label."""
+def pca_points_table(sample_ids, pcs, labels=None, label_name="Haplotype", in_test=None):
+    """A PCA panel's points: Sample, PC1, PC2 and, when given, each sample's label and
+    whether the haplotype test took it (``in_haplotype_test``)."""
     pcs = np.asarray(pcs, dtype=float)
     out = pd.DataFrame({"Sample": np.asarray(sample_ids, dtype=str),
                         "PC1": pcs[:, 0], "PC2": pcs[:, 1]})
     if labels is not None:
         out[label_name] = np.asarray(labels, dtype=object)
+    if in_test is not None:
+        out["in_haplotype_test"] = np.asarray(in_test, dtype=bool)
     return out
+
+
+def pca_haplotype_labels(block_assignments, sample_ids):
+    """Each PCA sample's haplotype in one LD block, read from the block's rows of the
+    sample-to-haplotype assignments (the Haplotype_assignments CSV): (labels, in_test),
+    in ``sample_ids`` order.
+
+    A label is the table's Haplotype: H1.., Other, or "" for a sample without one
+    (missing genotype or phenotype). ``in_test`` is the table's in_haplotype_test. A
+    sample the table does not list has "" and False."""
+    ids = pd.Index(np.asarray(sample_ids, dtype=str))
+    tab = pd.DataFrame(block_assignments).copy()
+    tab["Sample"] = tab["Sample"].astype(str)
+    tab = tab.drop_duplicates("Sample").set_index("Sample")
+    hap = tab["Haplotype"].reindex(ids)
+    labels = np.asarray(hap.where(hap.notna(), "").astype(str), dtype=object)
+    in_test = (tab["in_haplotype_test"].reindex(ids).astype("boolean").fillna(False)
+               .to_numpy(dtype=bool))
+    return labels, in_test
 
 
 def csv_bytes(data):

@@ -12,7 +12,7 @@ from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
 from utils.pub_theme import (PALETTE_CYCLE, FIGSIZE, export_matplotlib, haplotype_color_map,
                              hap_sort_key, show_plot)
-from utils.plot_data import pca_points_table
+from utils.plot_data import pca_haplotype_labels, pca_points_table
 
 from gwas.ld import (
     find_ld_clusters_genomewide,
@@ -83,10 +83,13 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
 
 
 def _render_haplotype_pca(
-    mlg_df, geno_sample_ids,
+    block_assignments, geno_sample_ids,
     block_chr, block_start, block_end,
 ):
-    """PC1 vs PC2 inset, one point per accession, coloured by current-block MLG_label."""
+    """PC1 vs PC2 inset, one point per accession, coloured by its haplotype in the block:
+    the label of the block's sample-to-haplotype assignments (the CSV's Haplotype).
+    Samples the haplotype test left out are hollow, "not tested"; samples without a
+    haplotype keep the grey look, "no haplotype"."""
     pcs_full = st.session_state.get("pcs_full")
     eigenvalues = st.session_state.get("pca_eigenvalues")
 
@@ -122,44 +125,54 @@ def _render_haplotype_pca(
         )
         return
 
-    mlg_by_iid = mlg_df.set_index(mlg_df["Sample"].astype(str))["MLG_label"].astype(str)
-    labels = pd.Series(
-        mlg_by_iid.reindex(geno_iids).fillna("Other").values,
-        name="MLG_label",
-    )
+    # each sample's label is its Haplotype in the block's assignments (as in the CSV)
+    hap_labels, in_test = pca_haplotype_labels(block_assignments, geno_iids)
+    labels = pd.Series(hap_labels, name="Haplotype")
 
-    if len(mlg_df) > 0 and (labels != "Other").sum() == 0:
+    if len(block_assignments) > 0 and (labels != "").sum() == 0:
         st.warning(
-            "PCA panel: 0 accessions matched between haplotype assignments "
-            f"and the loaded genotype table ({len(mlg_df)} haplotyped samples vs "
+            "PCA panel: 0 accessions matched between the block's haplotype assignments "
+            f"and the loaded genotype table ({len(block_assignments)} assignment rows vs "
             f"{len(geno_iids)} genotype rows). Sample-ID format mismatch; "
             "cannot colour by haplotype. Skipping PCA panel."
         )
         return
 
-    # Per-point arrays + colour map shared by both visualisation variants
-    present = list(pd.unique(labels))
+    # Display groups shared by both views: each label, split into tested and not tested
+    # samples, plus the samples without a haplotype (grey, as "Other" looked before)
+    present = [h for h in pd.unique(labels) if h != ""]
     hap_order = sorted([h for h in present if h != "Other"], key=_hap_sort_key)
     # one colour per label in every plot of the tab and in the box plots (Other grey)
     color_map = haplotype_color_map(present)
-    plot_order = (["Other"] if "Other" in present else []) + hap_order
+    groups = []   # (mask, label, colour, tested: True / False / None = no haplotype)
+    _nohap = (labels == "").to_numpy()
+    if _nohap.any():
+        groups.append((_nohap, "no haplotype", color_map["Other"], None))
+    for h in (["Other"] if "Other" in present else []) + hap_order:
+        for tested in (True, False):
+            m = (labels == h).to_numpy() & (in_test == tested)
+            if m.any():
+                groups.append((m, h, color_map[h], tested))
+
+    def _legend(h, n_h, tested):
+        if tested is None:
+            return f"no haplotype (n={n_h})"
+        return f"{h} (n={n_h})" if tested else f"{h} (n={n_h}, not tested)"
 
     def _build_static_pca_fig():
         fig, ax = plt.subplots(figsize=(5, 5))
-        for h in plot_order:
-            m = (labels == h).values
-            if not m.any():
-                continue
-            size = 18 if h == "H1" else (14 if h == "Other" else 42)
-            ax.scatter(
-                pcs_2[m, 0], pcs_2[m, 1],
-                s=size,
-                c=color_map[h],
-                edgecolors="white" if h != "Other" else "none",
-                linewidths=0.4,
-                label=f"{h} (n={int(m.sum())})",
-                alpha=0.95 if h != "Other" else 0.55,
-            )
+        for m, h, col, tested in groups:
+            n_h = int(m.sum())
+            size = 14 if tested is None or h == "Other" else (18 if h == "H1" else 42)
+            if tested is None:          # no haplotype: the grey filled dots
+                style = dict(c=col, edgecolors="none", linewidths=0.4, alpha=0.55)
+            elif tested:
+                style = dict(c=col, edgecolors="white" if h != "Other" else "none",
+                             linewidths=0.4, alpha=0.95 if h != "Other" else 0.55)
+            else:                       # left out of the test: hollow, in its colour
+                style = dict(facecolors="none", edgecolors=col, linewidths=1.0, alpha=0.95)
+            ax.scatter(pcs_2[m, 0], pcs_2[m, 1], s=size, label=_legend(h, n_h, tested),
+                       **style)
 
         if np.isfinite(pct).all():
             ax.set_xlabel(f"PC1 ({pct[0]:.1f}%)")
@@ -173,33 +186,32 @@ def _render_haplotype_pca(
 
     def _build_interactive_pca_fig():
         fig = go.Figure()
-        for h in plot_order:
-            m = (labels == h).values
+        for m, h, col, tested in groups:
             n_h = int(m.sum())
-            if n_h == 0:
-                continue
-            size = 8 if h == "H1" else (6 if h == "Other" else 14)
+            size = 6 if tested is None or h == "Other" else (8 if h == "H1" else 14)
             accessions = geno_iids[m].astype(str).to_numpy()
-            x_vals = pcs_2[m, 0]
-            y_vals = pcs_2[m, 1]
+            if tested is None:          # no haplotype: the grey filled dots
+                marker = dict(color=col, size=size, opacity=0.55,
+                              line=dict(color="rgba(0,0,0,0.2)", width=0.7))
+            elif tested:
+                marker = dict(color=col, size=size, opacity=0.95 if h != "Other" else 0.55,
+                              line=dict(color="white" if h != "Other" else "rgba(0,0,0,0.2)",
+                                        width=0.7))
+            else:                       # left out of the test: hollow, in its colour
+                marker = dict(color=col, size=size, opacity=0.95, symbol="circle-open",
+                              line=dict(color=col, width=1.5))
             fig.add_trace(go.Scatter(
-                x=x_vals,
-                y=y_vals,
+                x=pcs_2[m, 0],
+                y=pcs_2[m, 1],
                 mode="markers",
-                name=f"{h} (n={n_h})",
-                marker=dict(
-                    color=color_map[h],
-                    size=size,
-                    line=dict(
-                        color="white" if h != "Other" else "rgba(0,0,0,0.2)",
-                        width=0.7,
-                    ),
-                    opacity=0.95 if h != "Other" else 0.55,
-                ),
-                customdata=np.column_stack([accessions, np.full(n_h, h)]),
+                name=_legend(h, n_h, tested),
+                marker=marker,
+                customdata=np.column_stack([
+                    accessions, np.full(n_h, h if tested is not None else "none"),
+                    np.full(n_h, "in the test" if tested else "not tested")]),
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
-                    "Haplotype: %{customdata[1]}<br>"
+                    "Haplotype: %{customdata[1]} (%{customdata[2]})<br>"
                     "PC1: %{x:.3f}<br>"
                     "PC2: %{y:.3f}<extra></extra>"
                 ),
@@ -255,7 +267,7 @@ def _render_haplotype_pca(
     static_cache_key = (
         "_hap_pca_render",
         block_chr, int(block_start), int(block_end),
-        hash(tuple(labels.values)),
+        hash((tuple(labels.values), tuple(in_test.tolist()))),
         pcs_2.shape[0],
     )
     cache = st.session_state.setdefault("_hap_pca_cache", {})
@@ -288,7 +300,7 @@ def _render_haplotype_pca(
                     f"hap_pca_plotly_{block_chr}_"
                     f"{int(block_start)}_{int(block_end)}"
                 ),
-                data=pca_points_table(geno_iids, pcs_2, labels.to_numpy()),
+                data=pca_points_table(geno_iids, pcs_2, labels.to_numpy(), in_test=in_test),
                 data_name=f"haplotype_pca_{block_chr}_{int(block_start)}_{int(block_end)}",
             )
         else:
@@ -313,7 +325,8 @@ def _render_haplotype_pca(
                 cache[static_cache_key] = cached
 
             show_plot(cached["display"], "medium",
-                      data=pca_points_table(geno_iids, pcs_2, labels.to_numpy()),
+                      data=pca_points_table(geno_iids, pcs_2, labels.to_numpy(),
+                                            in_test=in_test),
                       data_name=f"haplotype_pca_{block_chr}_{int(block_start)}_{int(block_end)}")
             fname = f"haplotype_pca_{block_chr}_{block_start}_{block_end}"
             col_png, col_svg, col_pdf = st.columns(3)
@@ -1532,7 +1545,7 @@ def _render_block_visualization(
     )
 
     _render_haplotype_pca(
-        mlg_df=mlg_df,
+        block_assignments=_blk,   # the block's assignments: the CSV's labels
         geno_sample_ids=geno_sample_ids,
         block_chr=block_chr,
         block_start=block_start,
