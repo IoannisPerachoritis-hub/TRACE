@@ -476,6 +476,7 @@ def run_mlmm_research_grade_fast(
     # MLMM forward search
     # ---------------------------
     selected = []
+    entry_p = []          # each cofactor's p in the forward step it entered
     models = []
     bic_values = []
 
@@ -538,6 +539,7 @@ def run_mlmm_research_grade_fast(
 
         # accept cofactor
         selected.append(best_idx)
+        entry_p.append(best_p)
 
         # ---- BIC proxy stopping (NO extra FastLMM call) ----
         X = X_base
@@ -550,6 +552,7 @@ def run_mlmm_research_grade_fast(
 
         if len(bic_values) >= 2 and (bic_values[-1] > bic_values[-2]):
             selected = models[-2]
+            entry_p = entry_p[:len(selected)]
             break
 
     # ---------------------------
@@ -587,6 +590,29 @@ def run_mlmm_research_grade_fast(
     })
     mlmm_df = mlmm_df.merge(meta, on="SNP", how="left")
 
+    # Each cofactor's own p. The final scan includes every cofactor as a covariate, so
+    # there a cofactor is tested with itself (p = 1). Each is re-tested in MLMM's own
+    # model without it: the same K0 (no LOCO), the same genotypes and base covariates,
+    # plus the OTHER selected cofactors. Every other SNP keeps the final scan's p.
+    p_final = []
+    for idx in selected:
+        others = [j for j in selected if j != idx]
+        try:
+            one = _build_mlmm_snpdata_impl(iid, np.asarray(sid)[[idx]], geno_std[:, [idx]],
+                                           pos_arr[[idx]])
+            r = single_snp(test_snps=one, pheno=pheno_reader, K0=K0,
+                           covar=build_covar(others), leave_out_one_chrom=False)
+            p = float(pd.to_numeric(r["PValue"], errors="coerce").iloc[0])
+        except Exception as exc:
+            _log.warning("MLMM: the re-test of cofactor %s failed (%s); its p-value is "
+                         "reported as NaN.", sid[idx], exc)
+            p = float("nan")
+        p_final.append(p)
+    if selected:
+        _p_by_snp = dict(zip(np.asarray(sid)[selected].astype(str), p_final))
+        _is_cof = mlmm_df["SNP"].isin(list(_p_by_snp))
+        mlmm_df.loc[_is_cof, "PValue"] = mlmm_df.loc[_is_cof, "SNP"].map(_p_by_snp).astype(float)
+
     if verbose and progress_placeholder is not None:
         progress_placeholder.success("MLMM finished.")
         progress_bar.empty()
@@ -596,6 +622,8 @@ def run_mlmm_research_grade_fast(
         "SNP": [sid[i] for i in selected],
         "Chr": [chroms[i] for i in selected],
         "Pos": [positions[i] for i in selected],
+        "PValue_entry": [float(p) for p in entry_p],   # the forward step's p
+        "PValue_final": p_final,                        # the re-test without itself
     })
 
     return mlmm_df, cof_table

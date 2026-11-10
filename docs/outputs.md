@@ -66,6 +66,13 @@ SNP's box plot flags the two effects: `sign-flip` when their signs differ,
 `structure-sensitive` when |`Beta_MLM`| is under half of |`Beta_OLS`|, `concordant`
 otherwise, and `undetermined` when either is missing or `Beta_OLS` is near 0.
 
+**MLMM's p-values.** `GWAS_MLMM_<trait>.csv` holds MLMM's final scan, with the selected
+cofactors as covariates. A cofactor would be tested with itself there, so its p-value
+comes instead from a test with the other cofactors as covariates, in MLMM's own model
+(the same kinship and base covariates). Every other SNP keeps the final scan's p-value.
+The report's MLMM cofactor table gives each cofactor's entry p-value (`PValue_entry`,
+from the forward step at which it entered) and that p-value (`PValue_final`).
+
 ---
 
 ## `Significant_SNPs.csv`

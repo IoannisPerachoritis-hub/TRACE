@@ -50,7 +50,9 @@ _PAGE = str(_ROOT / "pages" / "GWAS_analysis.py")
 _POST = str(_ROOT / "pages" / "Post_GWAS_Analysis.py")
 TRAIT = "T_chr1"
 MODELS = ("MLM", "MLMM", "FarmCPU")
-RUN_CUSTOM, TAB_CUSTOM = 5e-8, 1e-6
+# TAB_CUSTOM 5e-3: since MLMM conditions on its real cofactors (batch 10), its next
+# p-value after the cofactor's is 1.5e-3, so 1e-6 selected the same SNP as 5e-8
+RUN_CUSTOM, TAB_CUSTOM = 5e-8, 5e-3
 RULES = {
     "meff": {"label": "M_eff: Li & Ji (LD-aware Bonferroni)", "cli": "meff",
              "columns": ["FDR", "Significant_FDR", "Significant_Bonf", "Significant_Meff"]},

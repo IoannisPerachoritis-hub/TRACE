@@ -5,6 +5,13 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **MLMM reports each cofactor's own p-value.** MLMM's final scan includes its
+  cofactors as covariates, so each cofactor was tested with itself and got p = 1. Each
+  cofactor is now re-tested with the other cofactors as covariates, in MLMM's own model
+  (the same kinship and base covariates). A failed re-test is reported as NaN, with a
+  warning. The cofactor table gives each cofactor's entry p-value and this one
+  (`PValue_entry`, and `PValue_final` as in FarmCPU's pseudo-QTN table). Every other
+  SNP's p-value is unchanged.
 - **MLMM chooses its cofactors by SNP.** Before this commit, MLMM took cofactors by row
   position in single_snp's p-sorted output, so its first cofactor was the genome's
   first SNP. On the Varitome locule run that was SL25ch01p25864 (MLM p 0.47), not the

@@ -57,6 +57,7 @@ st.markdown("""
 | **Chr** | Chromosome name |
 | **Pos** | Physical position (bp) on the chromosome |
 | **PValue** | Association p-value from the mixed linear model |
+| **PValue (MLMM)** | MLMM's final scan, with its cofactors as covariates; each cofactor's own p-value comes from a test with the other cofactors as covariates |
 | **-log10p** | Negative log10 of the p-value (higher = more significant) |
 | **Beta_MLM** | Effect size estimate from the mixed linear model (kinship and any PC covariates), per copy of the ALT allele (FaST-LMM's estimate on the standardised SNP, divided by the SNP's dosage standard deviation). Positive means the ALT allele increases the trait value. |
 | **SE_MLM** | Standard error of the MLM effect estimate, per copy of the ALT allele |

@@ -66,7 +66,10 @@ def _small_meff(monkeypatch):
     monkeypatch.setattr(gp, "compute_meff_li_ji", lambda geno: (5, np.array([])))
 
 
-@pytest.mark.parametrize("rule", ["bonferroni", "meff", "fdr", 2e-2])
+# 0.05: since MLMM conditions on its real cofactors (batch 10), it has no SNP between the
+# M_eff threshold (0.01) and 0.02; at 0.05 every model has SNPs between the two, so the
+# custom column check bites
+@pytest.mark.parametrize("rule", ["bonferroni", "meff", "fdr", 5e-2])
 def test_mlmm_and_farmcpu_carry_mlms_significance_columns(planted, rule, monkeypatch):
     _small_meff(monkeypatch)
     res = _run(planted, sig_thresh=rule, no_plots=True)
@@ -119,9 +122,12 @@ def _zip_members(res):
 
 
 def test_blocks_significant_in_mlmm_or_farmcpu_get_one_heatmap_each(planted, monkeypatch):
+    # T_chr3: since MLMM conditions on its real cofactors (batch 10), T_chr1's three
+    # models report three different bounds; on T_chr3 MLMM and FarmCPU share a block that
+    # MLM reports with other bounds, which is what this test needs
     calls = _record_heatmaps(monkeypatch)
-    res = _run(planted, sig_thresh="bonferroni")
-    tables = _tables(res)
+    res = _run(planted, trait="T_chr3", sig_thresh="bonferroni")
+    tables = _tables(res, trait="T_chr3")
     with zipfile.ZipFile(io.BytesIO(res.zip_bytes)) as zf:
         names = zf.namelist()
         blocks = {m: pd.read_csv(io.BytesIO(zf.read(f"tables/LD_blocks_annotated_{m}.csv")))
