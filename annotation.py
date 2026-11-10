@@ -42,15 +42,61 @@ LOCALIZATION_SUPPORT = ("block_member_snps", "flanking_markers_only")  # how the
 GENE_RELATIONS = ("overlapping",)  # gene ↔ interval relation: a gene counts when it overlaps
 
 
+# ============================================================
+# What the gene-file uploaders accept: the "?" of every one (the Gene Annotation tab and the
+# GWAS page's One-Click overrides). The texts say what load_gene_model and
+# load_gene_descriptions do; a change to a loader rule changes its text too
+# (tests/test_gene_files.py runs every example in them).
+# ============================================================
+_GENE_DOC = "https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/gene_model_upload.md"
+
+GENE_FILE_HELP = f"""One row per gene, with a header row. Comma-, semicolon- or tab-separated plain text (UTF-8; Excel's "CSV UTF-8" is fine), not compressed.
+
+Columns (names are not case-sensitive; other columns are ignored):
+
+- chromosome: `Chr`, `Chrom` or `Chromosome`
+- start: `Start`, `Start_pos` or `Begin`
+- end: `End`, `End_pos` or `Stop`
+- gene ID: `Gene_ID`, `Gene`, `Name` or `Gene_name`
+- optional: `Strand`
+
+Use one column for each. Positions are in base pairs, in the same genome assembly as your VCF. Rows whose start or end is not a number are skipped.
+
+Chromosome names are matched after common prefixes and leading zeros are removed: `chr01`, `Chr1`, `SL2.50ch01` and `1` are all chromosome 1.
+
+A GFF3 file is not read directly; convert it first ([how]({_GENE_DOC}#deriving-a-gene-model-from-a-gff3)).
+
+Example (a row of TRACE's SL3.1 table):
+
+```
+Chr,Start,End,Strand,Gene_ID
+1,30726,43941,-,Solyc01g005020.3
+```
+"""
+
+DESCRIPTIONS_FILE_HELP = """Optional. One gene per line: the gene ID, a TAB, then the description. No header is needed; lines starting with `#` are ignored. Lines without a TAB are skipped, so a comma-separated file adds no descriptions.
+
+The IDs must match the gene file's. Version endings are ignored: `Solyc01g005020.3` matches `Solyc01g005020`.
+
+Example (from TRACE's SL3.1 descriptions): `Solyc01g005020.3`, a TAB, then `Salt Overly Sensitive 1`.
+"""
+
+ASSEMBLY_NOTE = ("Markers and gene models must come from the same genome assembly; otherwise "
+                 "genes are matched at the wrong positions.")
+
+_FIELD_NAMES = {"Chr": "chromosome", "Start": "start", "End": "end", "Strand": "strand",
+                "Gene_ID": "gene ID"}
+
+
 def load_gene_model(path) -> pd.DataFrame:
     """
     Load Sol_genes.csv (or similar gene coordinate file).
     Expected columns: CHROM, START, END, STRAND, GENE
     Returns DataFrame with: Chr, Start, End, Strand, Gene_ID
     """
-    # encoding="utf-8" — Sol_genes.csv ships UTF-8; default cp1252 on Windows
-    # would fail on non-ASCII gene descriptions.
-    df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8")
+    # encoding="utf-8-sig" — UTF-8, with the byte-order mark Excel's "CSV UTF-8" writes
+    # removed (the default cp1252 on Windows would fail on non-ASCII text)
+    df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
     df.columns = df.columns.str.strip()
 
     col_map = {}
@@ -66,6 +112,16 @@ def load_gene_model(path) -> pd.DataFrame:
             col_map[c] = "Strand"
         elif cl in ("gene", "gene_id", "name", "gene_name"):
             col_map[c] = "Gene_ID"
+
+    # one column per field: two (e.g. Gene_ID and Name) would both become Gene_ID and the
+    # load would fail later with an unrelated error
+    by_field = {}
+    for src, dst in col_map.items():
+        by_field.setdefault(dst, []).append(src)
+    for field, srcs in by_field.items():
+        if len(srcs) > 1:
+            raise ValueError(f"Use one column for the {_FIELD_NAMES[field]}; this file has "
+                             f"{' and '.join(srcs)}.")
 
     df = df.rename(columns=col_map)
 
@@ -113,6 +169,17 @@ def load_gene_descriptions(path) -> dict:
             if base != gid and base not in desc:
                 desc[base] = d
     return desc
+
+
+def chromosomes_without_genes(genotype_chroms, genes):
+    """The chromosomes of the genotype data that have no gene in ``genes`` (canon_chr
+    names, numbers first): a non-empty list usually means the chromosome names of the
+    gene file and the VCF do not match."""
+    have = (set(genes["Chr"].astype(str).map(canon_chr))
+            if genes is not None and len(genes) else set())
+    chroms = {canon_chr(c) for c in pd.unique(np.asarray(genotype_chroms, dtype=object))}
+    return sorted((c for c in chroms if c not in have),
+                  key=lambda c: (0, int(c), "") if c.isdigit() else (1, 0, c))
 
 
 def load_gene_annotation(gene_model_path, description_path=None) -> pd.DataFrame:
@@ -352,6 +419,36 @@ def annotate_ld_blocks(ld_blocks, genes):
     return out
 
 
+ANNOTATION_TABLE_COLUMNS = ["Type", "Chr", "Interval start", "Interval end", "Lead SNP",
+                            "Number of genes", "Genes"]
+
+
+def annotate_candidate_intervals(intervals, genes):
+    """The Gene Annotation tab's one table: each candidate interval (an LD block or a run of
+    unblocked significant SNPs, gwas.isolated.candidate_interval_table) with the genes
+    inside it. ``Genes`` gives each as "ID: description" where it has one, joined by
+    " | ". Returns ``(table, summary)``, summary "N intervals, M genes" (M distinct
+    genes)."""
+    if intervals is None or len(intervals) == 0:
+        return pd.DataFrame(columns=ANNOTATION_TABLE_COLUMNS), "0 intervals, 0 genes"
+    rows = pd.DataFrame({"Chr": intervals["Chr"].astype(str).to_numpy(),
+                         "Start": intervals["Interval_start"].astype(int).to_numpy(),
+                         "End": intervals["Interval_end"].astype(int).to_numpy()})
+    ann = annotate_ld_blocks(rows, genes)
+    table = pd.DataFrame({
+        "Type": intervals["Type"].to_numpy(),
+        "Chr": ann["Chr"].to_numpy(),
+        "Interval start": ann["Start (bp)"].to_numpy(),
+        "Interval end": ann["End (bp)"].to_numpy(),
+        "Lead SNP": intervals["Lead_SNP"].to_numpy(),
+        "Number of genes": ann["n_genes_overlapping"].astype(int).to_numpy(),
+        "Genes": ann["overlapping_descriptions"].to_numpy(),
+    })[ANNOTATION_TABLE_COLUMNS]
+    ids = {g for v in ann["overlapping_genes"] for g in str(v).split(";") if g}
+    n_i, n_g = len(table), len(ids)
+    return table, f"{n_i} interval{'' if n_i == 1 else 's'}, {n_g} gene{'' if n_g == 1 else 's'}"
+
+
 def consolidate_ld_block_table(ld_blocks, hap_gwas=None, annotated_blocks=None):
     """Merge LD blocks, gene annotation, and haplotype GWAS into one table.
 
@@ -402,41 +499,6 @@ def consolidate_ld_block_table(ld_blocks, hap_gwas=None, annotated_blocks=None):
         base = base.merge(hsub, on=["Chr", "Start (bp)", "End (bp)"], how="left")
 
     return base
-
-
-def format_annotation_summary(annotated_blocks):
-    """
-    Compact paper-ready annotation summary: the genes in each block's candidate interval.
-    """
-    if annotated_blocks is None or annotated_blocks.empty:
-        return pd.DataFrame()
-
-    rows = []
-    for _, r in annotated_blocks.iterrows():
-        block_label = f"Chr{r['Chr']}:{int(r['Start (bp)']):,}-{int(r['End (bp)']):,}"
-        block_kb = (int(r['End (bp)']) - int(r['Start (bp)'])) / 1000.0
-        status = r.get("annotation_status", "unknown")
-
-        if status == "overlapping":
-            n_g = int(r["n_genes_overlapping"])
-            rows.append({
-                "Block": block_label,
-                "Block_kb": round(block_kb, 1),
-                "Status": f"{n_g} gene{'s' if n_g > 1 else ''} overlapping",
-                "Genes": str(r["overlapping_genes"]),
-                "Descriptions": str(r["overlapping_descriptions"]),
-            })
-
-        else:
-            rows.append({
-                "Block": block_label,
-                "Block_kb": round(block_kb, 1),
-                "Status": "No genes in the candidate interval",
-                "Genes": "\u2014",
-                "Descriptions": "\u2014",
-            })
-
-    return pd.DataFrame(rows)
 
 
 # ============================================================

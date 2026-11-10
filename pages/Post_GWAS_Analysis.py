@@ -135,7 +135,6 @@ try:
     from ld.annotation import (
         load_gene_annotation,
         annotate_ld_blocks,
-        format_annotation_summary,
         compute_ld_decay_by_chromosome,
         plot_ld_decay_matplotlib,
     )
@@ -145,7 +144,6 @@ except ImportError:
         from annotation import (
             load_gene_annotation,
             annotate_ld_blocks,
-            format_annotation_summary,
             compute_ld_decay_by_chromosome,
             plot_ld_decay_matplotlib,
         )

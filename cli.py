@@ -172,7 +172,13 @@ def _build_parser():
                               "positional, not coordinate-exact.")
     ld_grp.add_argument("--species", default="tomato", choices=["tomato", "custom"],
                          help="Species for annotation files (default: tomato)")
-    ld_grp.add_argument("--gene-model", help="Gene coordinate CSV (required if --species custom)")
+    ld_grp.add_argument("--gene-model",
+                         help="Gene file for annotation (required if --species custom): one row per "
+                              "gene with chromosome, start, end and gene ID columns; see "
+                              "docs/gene_model_upload.md")
+    ld_grp.add_argument("--gene-desc",
+                         help="Optional gene descriptions: one gene per line, the gene ID, a TAB, then "
+                              "the description; see docs/gene_model_upload.md")
     ld_grp.add_argument("--no-triage", action="store_true",
                          help="Disable the LD-quality triage table (per-block view recommendation). Triage is "
                               "ON by default; --no-triage reproduces byte-identical output (no LD_triage_*.csv).")

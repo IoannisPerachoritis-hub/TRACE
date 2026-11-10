@@ -51,7 +51,9 @@ from gwas.plotting import (
     compute_meff_li_ji,
     PALETTE, PALETTE_CYCLE, export_matplotlib,
 )
-from annotation import compute_ld_decay_by_chromosome
+from annotation import (ASSEMBLY_NOTE, DESCRIPTIONS_FILE_HELP, GENE_FILE_HELP,
+                        chromosomes_without_genes, compute_ld_decay_by_chromosome,
+                        load_gene_model)
 
 # -----------------
 # Helper functions for user-friendly display
@@ -165,6 +167,27 @@ def _render_interpretation_panel():
 3. **Cross-model consensus**: SNPs detected by multiple models (MLM + FarmCPU) are higher confidence.
 4. **Subsampling stability**: If available, SNPs with a higher discovery frequency across subsampling resamples are more robust.
 """)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _gene_override_problem(data, chroms):
+    """What is wrong with a One-Click gene file upload, or None: the loader's error (e.g.
+    two columns for one field), or the genotype data's chromosomes it has no gene for."""
+    import tempfile as _tf
+
+    with _tf.TemporaryDirectory(prefix="trace_genecheck_") as d:
+        path = os.path.join(d, "gene_model.csv")
+        with open(path, "wb") as fh:
+            fh.write(data)
+        try:
+            genes = load_gene_model(path)
+        except Exception as e:
+            return "error", f"This gene file cannot be used: {e}"
+    missing = chromosomes_without_genes(list(chroms), genes) if chroms else []
+    if missing:
+        return "warning", (f"No genes for chromosome(s) {', '.join(missing)} of your genotype "
+                           "data; check that the chromosome names match.")
+    return None
 
 
 @st.cache_data(show_spinner="Computing LD decay (per-chromosome)…", max_entries=8)
@@ -1515,28 +1538,28 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 + (" (required for 'Other')" if _is_other_species else ""),
                 expanded=_is_other_species,
             ):
-                st.file_uploader(
-                    "Gene coordinates CSV (columns: Chr, Start, End, [Strand,] Gene_ID)",
+                _pipe_gm_up = st.file_uploader(
+                    "Gene file (overrides the bundled gene model)",
                     type=["csv", "tsv", "txt"],
                     key="pipe_gene_model_override",
-                    help=(
-                        "Overrides the bundled gene model if provided. "
-                        "Column aliases accepted (CHROM/Chr/chromosome, "
-                        "START/Start/start_pos, END/End/end_pos, "
-                        "GENE/Gene_ID/name/gene_name). "
-                        "For a new species, derive this from your GFF3 with "
-                        "a short pandas script."
-                    ),
+                    help=GENE_FILE_HELP,
                 )
                 st.file_uploader(
-                    "Gene descriptions TSV (optional: gene_id \\t description)",
+                    "Descriptions file (optional; overrides the bundled descriptions)",
                     type=["txt", "tsv"],
                     key="pipe_gene_desc_override",
-                    help=(
-                        "Optional. Overrides bundled descriptions if provided. "
-                        "Tab-separated; '#' comment lines allowed."
-                    ),
+                    help=DESCRIPTIONS_FILE_HELP,
                 )
+                st.caption(ASSEMBLY_NOTE)
+                if _pipe_gm_up is not None:
+                    # once the VCF is loaded, its chromosomes are checked against the file
+                    _vcf_chroms = st.session_state.get("chroms")
+                    _gm_problem = _gene_override_problem(
+                        _pipe_gm_up.getvalue(),
+                        tuple(sorted(set(np.asarray(_vcf_chroms).astype(str))))
+                        if _vcf_chroms is not None else ())
+                    if _gm_problem is not None:
+                        (st.error if _gm_problem[0] == "error" else st.warning)(_gm_problem[1])
             _pipe_ld_r2 = st.number_input(
                 "LD r² threshold", min_value=0.1, max_value=1.0,
                 value=0.6, step=0.05, key="pipe_ld_r2",
@@ -1733,6 +1756,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 gene_model=_gm_paths.get("pipe_gene_model_override"),
                 gene_model_label=_gm_names.get("pipe_gene_model_override"),
                 gene_desc=_gm_paths.get("pipe_gene_desc_override"),
+                gene_desc_label=_gm_names.get("pipe_gene_desc_override"),
                 ld_r2=float(_pipe_ld_r2),
                 ld_seed_mode="suggestive" if _ld_suggestive else "significant",
                 **_ld_seed_opts,

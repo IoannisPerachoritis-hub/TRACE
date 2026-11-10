@@ -23,7 +23,8 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT [TRAIT ...]]
                   [--ld-merge-r2 LD_MERGE_R2] [--hap-perms HAP_PERMS]
                   [--no-annotation] [--genome-build {SL3,SL4}]
                   [--species {tomato,custom}] [--gene-model GENE_MODEL]
-                  [--no-triage] [--triage-r2-coherent TRIAGE_R2_COHERENT]
+                  [--gene-desc GENE_DESC] [--no-triage]
+                  [--triage-r2-coherent TRIAGE_R2_COHERENT]
                   [--triage-lead-r2-frac TRIAGE_LEAD_R2_FRAC]
                   [--hap-min-count HAP_MIN_COUNT]
                   [--hap-min-group-size HAP_MIN_GROUP_SIZE]
@@ -157,7 +158,13 @@ LD & post-GWAS:
   --species {tomato,custom}
                         Species for annotation files (default: tomato)
   --gene-model GENE_MODEL
-                        Gene coordinate CSV (required if --species custom)
+                        Gene file for annotation (required if --species
+                        custom): one row per gene with chromosome, start, end
+                        and gene ID columns; see docs/gene_model_upload.md
+  --gene-desc GENE_DESC
+                        Optional gene descriptions: one gene per line, the
+                        gene ID, a TAB, then the description; see
+                        docs/gene_model_upload.md
   --no-triage           Disable the LD-quality triage table (per-block view
                         recommendation). Triage is ON by default; --no-triage
                         reproduces byte-identical output (no LD_triage_*.csv).

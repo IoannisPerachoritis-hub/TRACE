@@ -28,7 +28,7 @@ from gwas.plotting import (
     _clamp_block_span,
     MAX_REGIONAL_SNPS,
 )
-from gwas.significance import frame_for_rule, rule_from_streamlit
+from gwas.significance import rule_from_streamlit
 from utils.pub_theme import export_matplotlib, show_plot
 from . import LDContext
 
@@ -75,7 +75,7 @@ def _block_for_window(ctx, window):
     return None, None
 
 
-def _candidate_span(ctx, window, rule, gwas_df, block_span):
+def _candidate_span(ctx, window, block_span):
     """The span to shade: the candidate interval, the region the gene search uses
     (gwas.isolated, the CLI's rule over the run's post-QC markers). With an LD block
     (``block_span``, its member span) it is the block's: the marker before its first SNP
@@ -96,12 +96,12 @@ def _candidate_span(ctx, window, rule, gwas_df, block_span):
     try:
         if block_span is not None:
             return _one(*block_span)
-        table = iso.candidate_interval_table(
-            ctx.haplo_df_auto, frame_for_rule(gwas_df, rule), rule,
-            ctx.chroms, ctx.positions, ctx.sid, edge_flank_bp=edge)
-        for _, r in table[table["Type"] == "unblocked SNP"].iterrows():
-            if str(window.lead_snp) in set(str(r["SNP_IDs"]).split(",")):
-                return int(r["Interval_start"]), int(r["Interval_end"])
+        from ._intervals import run_candidate_intervals
+        table = run_candidate_intervals(ctx)   # the list the Gene Annotation tab shows
+        if table is not None:
+            for _, r in table[table["Type"] == "unblocked SNP"].iterrows():
+                if str(window.lead_snp) in set(str(r["SNP_IDs"]).split(",")):
+                    return int(r["Interval_start"]), int(r["Interval_end"])
         return _one(window.lead_pos, window.lead_pos)
     except Exception:
         logging.getLogger(__name__).exception("candidate interval for the regional plot")
@@ -198,7 +198,7 @@ def render(ctx: LDContext, window):
     block_interval, block_members = _block_for_window(ctx, window)
     is_flank = block_interval is None
     # the shaded span is the candidate interval, the region the gene search uses
-    block_interval = _candidate_span(ctx, window, rule, gwas_df, block_interval)
+    block_interval = _candidate_span(ctx, window, block_interval)
     is_flank = is_flank and block_interval is not None
 
     seed_threshold = float(st.session_state.get("ld_seed_p", 1e-5))

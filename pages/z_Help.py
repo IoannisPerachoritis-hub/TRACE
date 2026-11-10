@@ -17,6 +17,8 @@ QC presets, and downloading results) lives in the project
 [README](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md). It is kept
 there as the single source so it can't drift out of sync with the code. For command-line
 use, run `trace-gwas --help`; it prints the full parameter list on every install route.
+How a gene file and a descriptions file must look:
+[docs/gene_model_upload.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/gene_model_upload.md).
 
 **In 30 seconds:** on **GWAS Analysis**, upload a VCF + a phenotype CSV (sample IDs in
 the first column, matching the VCF), pick a trait, and click **Run GWAS** or **One-Click

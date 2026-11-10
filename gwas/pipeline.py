@@ -1339,6 +1339,13 @@ def _run_trait(parsed, pheno, args):
 
     # GUI-only provenance (absent in the CLI, whose metadata stays as it was): the run
     # label. "Normalization" above is this trait's own slug in the GUI too (norm_by_trait).
+    # the descriptions file, named only when one was given (--gene-desc, or a One-Click
+    # upload by its file name), after the gene model's status
+    if getattr(args, "gene_desc", None) and _iso_genes_df is not None:
+        _gd_meta = getattr(args, "gene_desc_label", None) or str(args.gene_desc)
+        meta = {k: v for item in meta.items()
+                for k, v in ([item, ("Gene descriptions", _gd_meta)]
+                             if item[0] == "Gene model status" else [item])}
     if getattr(args, "run_label", None):
         meta["Pipeline"] = args.run_label
 

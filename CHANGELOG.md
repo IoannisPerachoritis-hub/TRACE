@@ -5,6 +5,19 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **A simpler Gene Annotation tab, for LD blocks and unblocked SNPs.** Step 1 loads the
+  gene models (the built-in one for the species and build, or your own gene file and,
+  optionally, a descriptions file, with visible uploaders); Step 2 lists every LD block
+  and every unblocked significant SNP with the genes inside its candidate interval, in
+  one table with a summary line ("N intervals, M genes") and one CSV, by the CLI's
+  rules. The "Use Haplotype GWAS blocks instead" checkbox, the flanking sliders and the
+  summary and full tables are gone. Every gene-file uploader (this tab and the One-Click
+  overrides) carries the same "?" format help, written next to the loader; a file with
+  two columns for one field is refused with a clear message, a UTF-8 byte-order mark
+  (Excel's "CSV UTF-8") is accepted, and a warning names the genotype data's chromosomes
+  that have no gene in the file. The CLI gains `--gene-desc` (a custom species' gene
+  descriptions), named in `run_metadata.json` when given; docs/gene_model_upload.md
+  describes both files and both flags.
 - **An LD block's genes are searched over its candidate interval; flanking genes are
   no longer reported.** The candidate interval runs from the nearest post-QC marker
   before the block's first SNP to the nearest after its last, by the rule unblocked
