@@ -183,8 +183,10 @@ interval and gene evidence. This table is complete &mdash; no significant SNP is
 {% if snp_plots %}
 <h2>Per-SNP effect plots</h2>
 <p>Genotype-class phenotype distributions for the top significant SNPs. A box is
-drawn only for classes with n&nbsp;&ge;&nbsp;5; the structure-adjusted &beta;<sub>MLM</sub>,
-the raw-vs-adjusted effect flag, and the per-SNP &eta;<sup>2</sup> are annotated. Plots are
+drawn only for classes with n&nbsp;&ge;&nbsp;5; the structure-adjusted &beta;<sub>MLM</sub>
+per ALT allele copy, the raw-vs-adjusted effect flag (&beta;<sub>MLM</sub> against
+&beta;<sub>OLS</sub>, the effect without kinship), and the per-SNP &eta;<sup>2</sup> are
+annotated. Plots are
 capped for report size &mdash; the significant-SNP table above is complete.</p>
 <div style="display:flex;flex-wrap:wrap;gap:10px">
 {% for p in snp_plots %}

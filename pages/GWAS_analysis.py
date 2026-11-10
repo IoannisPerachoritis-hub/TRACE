@@ -76,7 +76,7 @@ _COLUMN_RENAME = {
 
 # Internal columns to hide from user-facing tables
 _COLUMNS_TO_HIDE = {
-    "Nullh2", "Mixing", "SnpWeightSE", "sid_index", "GenDist",
+    "Nullh2", "Mixing", "sid_index", "GenDist",
     "ChrPos", "EffectSize", "ChrNum",
 }
 
@@ -2793,7 +2793,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # ============================================================
     # 7. MLMM (optional, slow)
     # ============================================================
-    gwas_mlm = gwas_df[["SNP", "Chr", "ChrNum", "Pos", "PValue"]].copy()
+    # the MLM frame handed to Post-GWAS carries its effects (per ALT allele copy), for the
+    # lead-SNP titles and flag and the Significant SNPs tab's effect columns
+    _effect_cols = [c for c in ("Beta_MLM", "SE_MLM", "Beta_OLS", "SE_OLS") if c in gwas_df.columns]
+    gwas_mlm = gwas_df[["SNP", "Chr", "ChrNum", "Pos", "PValue"] + _effect_cols].copy()
     gwas_mlm["Model"] = "MLM"
     results_all_models = [gwas_mlm]
     cofactor_logs = {}

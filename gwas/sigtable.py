@@ -216,8 +216,7 @@ def build_significant_snp_table(
 
         beta_mlm = float(r["Beta_MLM"]) if has_mlm and pd.notna(r.get("Beta_MLM")) else np.nan
         beta_ols = float(r["Beta_OLS"]) if has_ols and pd.notna(r.get("Beta_OLS")) else np.nan
-        se_mlm = float(r["SE_MLM"]) if "SE_MLM" in gwas_df.columns and pd.notna(r.get("SE_MLM")) else (
-            float(r["SnpWeightSE"]) if "SnpWeightSE" in gwas_df.columns and pd.notna(r.get("SnpWeightSE")) else np.nan)
+        se_mlm = float(r["SE_MLM"]) if "SE_MLM" in gwas_df.columns and pd.notna(r.get("SE_MLM")) else np.nan
         se_ols = float(r["SE_OLS"]) if "SE_OLS" in gwas_df.columns and pd.notna(r.get("SE_OLS")) else np.nan
         if reduced:
             effect_source = "unavailable"

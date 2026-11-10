@@ -87,8 +87,11 @@ def post(session):
 
 
 def test_the_hand_off_table_is_the_views_mlm_table_without_significance_columns(session):
-    """The GWAS page's own hand-off (and its downloads) stay as they were."""
-    assert list(session["state"]["gwas_df"].columns) == ["SNP", "Chr", "ChrNum", "Pos", "PValue", "Model"]
+    """The GWAS page's hand-off: the MLM's p-values and its effects (per ALT allele copy),
+    without the significance columns."""
+    assert list(session["state"]["gwas_df"].columns) == [
+        "SNP", "Chr", "ChrNum", "Pos", "PValue", "Beta_MLM", "SE_MLM", "Beta_OLS", "SE_OLS",
+        "Model"]
 
 
 def test_the_post_gwas_page_raises_nothing(post):

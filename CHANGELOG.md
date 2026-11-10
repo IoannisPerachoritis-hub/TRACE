@@ -5,6 +5,16 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **β_MLM and its SE are per ALT allele copy.** FaST-LMM fits each SNP standardised, so
+  its effect and SE were per standard deviation of the SNP's dosage. TRACE now divides
+  both by that SD (over the same samples), so `Beta_MLM` and `SE_MLM` share `Beta_OLS`'s
+  unit in `GWAS_<trait>.csv`, `Significant_SNPs_<model>.csv`, the box-plot titles and
+  the report. `GWAS_<trait>.csv`'s `SnpWeightSE` column is now `SE_MLM`, its one name.
+  The effect flag keeps its rules and now compares like units: a low-frequency SNP had
+  been flagged structure-sensitive only because its per-SD effect is small. P-values,
+  blocks and every other result are unchanged. The GWAS page hands the four effect
+  columns to Post-GWAS, so the lead-SNP titles there show β_MLM and the flag and the
+  Significant SNPs tab fills its effect columns.
 - **The LD Decay tab is gone; the estimate is shown where it is used.** The Post-GWAS
   page has five tabs. The LD Blocks & Haplotypes tab's Settings show, next to the LD
   window, "LD decay (median across chromosomes): X kb, so the window is 2X kb" and a
@@ -47,9 +57,8 @@ All notable changes to TRACE are documented in this file.
   sequence, uploaded and plotted values, their scale and its letters; the block's
   assignments downloads sit with the block selector. The block table shows one η² on
   screen, the haplotype test's; the window-based η² stays in its CSV. Its "?" no longer
-  explains β, which the lead-SNP plot's "?" now does: β_MLM is per standard deviation of
-  the SNP's ALT-allele dosage (FaST-LMM standardises each SNP), not per allele copy, and
-  β_OLS is per ALT copy, as Help → Effect Sizes and docs/outputs.md now say too.
+  explains β, which the lead-SNP plot's "?" now does, as Help → Effect Sizes and
+  docs/outputs.md do (β_MLM and β_OLS both per ALT allele copy: see the β entry above).
 - **How-to text on the LD Blocks & Haplotypes tab moved into "?" tooltips.** The
   lead-SNP gallery's instructions are the "?" on "Lead SNP genotype effect"
   (they had named "two structure-aware tests"; the panel shows one rank test,

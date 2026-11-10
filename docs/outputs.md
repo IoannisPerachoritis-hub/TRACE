@@ -55,6 +55,17 @@ significant is not named. When the list is MLM alone, the title has none, as
 before. Models often delimit one signal with slightly different bounds; those
 are separate blocks, each with its own heatmap and its own list.
 
+**Effect columns.** The MLM table (`GWAS_<trait>.csv`) carries `Beta_MLM` and
+`SE_MLM`, the MLM's effect and its standard error per copy of the ALT allele
+(FaST-LMM's estimates on the standardised SNP, divided by the SNP's dosage standard
+deviation over the tested samples), and `Beta_OLS`, `SE_OLS` (per ALT copy too) and
+`Tstat_OLS` from the OLS fit with the same PC covariates and no kinship. `EffectSize`,
+`Mixing` and `Nullh2` are FaST-LMM's own columns, unchanged; `EffectSize` is a fraction
+of variance explained. The MLMM and FarmCPU tables carry no MLM effect. A significant
+SNP's box plot flags the two effects: `sign-flip` when their signs differ,
+`structure-sensitive` when |`Beta_MLM`| is under half of |`Beta_OLS`|, `concordant`
+otherwise, and `undetermined` when either is missing or `Beta_OLS` is near 0.
+
 ---
 
 ## `Significant_SNPs.csv`
@@ -81,8 +92,8 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 | 3 | `Pos` | int | Position in base pairs (1-based, from the VCF). |
 | 4 | `PValue` | float | Association p-value from the model's final scan. |
 | 5 | `-log10p` | float | −log₁₀(`PValue`). |
-| 6 | `Beta_MLM` | float | Effect from the structure-adjusted MLM (kinship and the PC covariates), per standard deviation of the SNP's ALT-allele dosage: FaST-LMM standardises each SNP, so it is not a per-copy effect; blank if unavailable. |
-| 7 | `SE_MLM` | float | Standard error of `Beta_MLM`. |
+| 6 | `Beta_MLM` | float | Effect per copy of the ALT allele from the structure-adjusted MLM (kinship and the PC covariates): FaST-LMM estimates it on the standardised SNP, and TRACE divides it by the SNP's dosage standard deviation over the tested samples, so it shares `Beta_OLS`'s unit; blank if unavailable. |
+| 7 | `SE_MLM` | float | Standard error of `Beta_MLM`, per copy of the ALT allele. |
 | 8 | `Beta_OLS` | float | Effect per copy of the ALT allele from an OLS fit with the same PC covariates and no kinship; blank if unavailable. |
 | 9 | `SE_OLS` | float | Standard error of `Beta_OLS`. |
 | 10 | `Effect_Source` | str | Which effect estimates are present: `both` / `MLM_only` / `OLS_only` / `unavailable`. |

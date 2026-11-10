@@ -13,6 +13,45 @@ from gwas.utils import PhenoData, CovarData
 _log = logging.getLogger(__name__)
 
 
+def dosage_sd(geno, block=4096):
+    """Each SNP's (column's) dosage SD over the samples (rows), as FaST-LMM's single_snp
+    standardises a test SNP: pysnptools' Unit standardiser, nanstd with ddof 0 in float64
+    over the samples tested. 0 for a constant SNP."""
+    g = np.asarray(geno)
+    out = np.empty(g.shape[1], dtype=np.float64)
+    for j in range(0, g.shape[1], block):
+        out[j:j + block] = np.nanstd(np.asarray(g[:, j:j + block], dtype=np.float64), axis=0)
+    return out
+
+
+def mlm_effects_per_copy(res, geno, sid):
+    """single_snp's output with SnpWeight and SnpWeightSE per ALT allele copy.
+
+    single_snp fits each test SNP standardised to mean 0 and SD 1, so its SnpWeight (the
+    beta) and SnpWeightSE are per SD of the SNP's dosage. Divided by that SD
+    (``dosage_sd``, over the same samples) they are per ALT allele copy, the unit of
+    Beta_OLS; NaN for a constant SNP. ``geno`` (samples x SNPs) and ``sid`` are the test
+    SNPs in the order single_snp's ``sid_index`` counts them. No other column changes,
+    the p-values included.
+    """
+    if "SnpWeight" not in res.columns:
+        return res
+    sd = dosage_sd(geno)
+    if "sid_index" in res.columns:
+        j = res["sid_index"].to_numpy(dtype=int)
+    else:
+        first = {s: i for i, s in reversed(list(enumerate(np.asarray(sid).astype(str))))}
+        j = res["SNP"].astype(str).map(first).to_numpy(dtype=int)
+    sd_row = sd[j]
+    res = res.copy()
+    for col in ("SnpWeight", "SnpWeightSE"):
+        if col in res.columns:
+            v = pd.to_numeric(res[col], errors="coerce").to_numpy(dtype=float)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                res[col] = np.where(sd_row > 0, v / sd_row, np.nan)
+    return res
+
+
 def _run_gwas_impl(
     geno_imputed,
     y,
@@ -92,6 +131,9 @@ def _run_gwas_impl(
     # 1) Run LOCO per-chromosome GWAS
     # ============================================================
     results_all = []
+    # the samples single_snp tests, over which it standardises each SNP: it drops samples
+    # without a phenotype (TRACE's phenotype QC has already dropped them: every row)
+    _tested = ~np.isnan(y.reshape(y.shape[0], -1)).all(axis=1)
     chroms_unique = [c for c in np.unique(chroms) if str(c) != "ALT"]
 
     # Stable chromosome → numeric mapping
@@ -167,6 +209,8 @@ def _run_gwas_impl(
 
         # normalize SNP column NOW (before concat)
         res = _normalize_fastlmm_snp_col(res)
+        # the effect and its SE per ALT allele copy (FaST-LMM's are per SD of the dosage)
+        res = mlm_effects_per_copy(res, geno_ch if _tested.all() else geno_ch[_tested], sid_ch)
 
         # Attach chr/pos from this chromosome context
         res["Chr"] = str(ch)
@@ -224,11 +268,12 @@ def _run_gwas_impl(
     gwas_df["Pos"] = gwas_df["Pos"].astype(int)
     gwas_df["PValue"] = pd.to_numeric(gwas_df["PValue"], errors="coerce").astype(float)
 
-    # Preserve MLM effect size from FastLMM if available
-    # FastLMM typically outputs "SnpWeight" as the MLM beta estimate
-    if "SnpWeight" in gwas_df.columns:
-        gwas_df = gwas_df.rename(columns={"SnpWeight": "Beta_MLM"})
-        gwas_df["Beta_MLM"] = pd.to_numeric(gwas_df["Beta_MLM"], errors="coerce")
+    # The MLM effect and its SE: FaST-LMM's SnpWeight and SnpWeightSE, per ALT allele
+    # copy since mlm_effects_per_copy, under one name each
+    gwas_df = gwas_df.rename(columns={"SnpWeight": "Beta_MLM", "SnpWeightSE": "SE_MLM"})
+    for _col in ("Beta_MLM", "SE_MLM"):
+        if _col in gwas_df.columns:
+            gwas_df[_col] = pd.to_numeric(gwas_df[_col], errors="coerce")
 
     return gwas_df
 
