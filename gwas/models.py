@@ -362,6 +362,41 @@ if st is not None:
     )(run_mlmm_core_cached)
 
 
+def _pvalues_in_snp_order(res, sid):
+    """single_snp's p-values in the order of ``sid``, its test SNPs.
+
+    single_snp returns its rows sorted by p-value (renumbered 0..n-1), so row i is not
+    SNP i. The rows are put back by ``sid_index``, else by SNP ID. Raises when the rows do
+    not cover every test SNP exactly once: there is no row-order fallback."""
+    sid = np.asarray(sid).astype(str)
+    n = sid.size
+    p = pd.to_numeric(res["PValue"], errors="coerce").to_numpy(dtype=float)
+    if "sid_index" in res.columns:
+        j = pd.to_numeric(res["sid_index"], errors="coerce").to_numpy(dtype=float)
+        if np.isnan(j).any():
+            raise ValueError("single_snp's sid_index has missing values; its rows cannot be "
+                             "matched to the test SNPs.")
+        j = j.astype(int)
+    elif "SNP" in res.columns:
+        where = {s: i for i, s in enumerate(sid)}
+        if len(where) != n:
+            raise ValueError("The test SNPs have duplicate IDs; single_snp's rows cannot be "
+                             "matched to them.")
+        mapped = res["SNP"].astype(str).map(where)
+        if mapped.isna().any():
+            raise ValueError("single_snp returned a SNP that is not one of the test SNPs.")
+        j = mapped.to_numpy(dtype=int)
+    else:
+        raise ValueError("single_snp's output has neither sid_index nor SNP; its rows "
+                         "cannot be matched to the test SNPs.")
+    if j.size != n or (n and (j.min() < 0 or j.max() >= n)) or np.unique(j).size != n:
+        raise ValueError(f"single_snp returned {j.size} rows for {n} test SNPs; they do not "
+                         "cover every test SNP exactly once.")
+    out = np.empty(n, dtype=float)
+    out[j] = p
+    return out
+
+
 def run_mlmm_research_grade_fast(
     geno_imputed, sid, chroms, chroms_num, positions, iid, pheno_reader, K0, covar_reader,
     p_enter=1e-4, max_cof=10, window_kb=250, verbose=True
@@ -469,7 +504,10 @@ def run_mlmm_research_grade_fast(
         if "PValue" not in res.columns:
             raise RuntimeError("FastLMM output missing PValue column.")
 
-        pvals = pd.to_numeric(res["PValue"], errors="coerce").to_numpy(dtype=float)
+        # single_snp's rows are sorted by p-value: put the p-values in SNP order (the
+        # order of sid, positions and geno_std) before the exclusion window, the choice,
+        # the p_enter stop and the BIC step
+        pvals = _pvalues_in_snp_order(res, sid)
         pvals = np.nan_to_num(pvals, nan=1.0, posinf=1.0, neginf=1.0)
 
         # ---- LD exclusion around cofactors ----
@@ -532,7 +570,9 @@ def run_mlmm_research_grade_fast(
         if "sid" in res_final.columns:
             res_final = res_final.rename(columns={"sid": "SNP"})
     if "SNP" not in res_final.columns:
-        res_final["SNP"] = sid.astype(str)
+        # never by row position: single_snp's rows are sorted by p-value
+        raise ValueError("single_snp's final MLMM scan has no SNP column; its rows cannot "
+                         "be matched to the test SNPs.")
 
     mlmm_df = pd.DataFrame({
         "SNP": res_final["SNP"].astype(str).values,

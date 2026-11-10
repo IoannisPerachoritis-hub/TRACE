@@ -52,7 +52,7 @@ AREAS: list[tuple[str, str, list[str]]] = [
         ["test_kinship"]),
     ("Association models", "MLM / MLMM / FarmCPU scans and FarmCPU pseudo-QTN selection",
         ["test_models", "test_farmcpu_step5", "test_farmcpu_selection_guard",
-         "test_mlm_per_copy", "test_mlmm_window"]),
+         "test_mlm_per_copy", "test_mlmm_window", "test_mlmm_cofactors"]),
     ("Significance & multiple testing", "M_eff / Bonferroni / FDR / custom-threshold rules and every model's significance columns",
         ["test_significance", "test_model_significance", "test_manhattan_tie"]),
     ("Covariates & PC diagnostics", "user covariates and the PC eigenvalue-spectrum diagnostics",

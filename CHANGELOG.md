@@ -5,6 +5,14 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **MLMM chooses its cofactors by SNP.** Before this commit, MLMM took cofactors by row
+  position in single_snp's p-sorted output, so its first cofactor was the genome's
+  first SNP. On the Varitome locule run that was SL25ch01p25864 (MLM p 0.47), not the
+  top hit SL25ch02p47366168. Its later cofactors, and the p-values it compared with the
+  entry threshold, were mismatched the same way. MLMM now puts single_snp's p-values in
+  SNP order (by sid_index, else by SNP ID, never by row) before the exclusion window,
+  the choice, the entry threshold and the BIC step. The final scan no longer falls back
+  to row order. MLMM's results change; MLM and FarmCPU results do not.
 - **MLMM's cofactor window is the LD window.** In the CLI and One-Click, MLMM used its
   250 kb default, while the GWAS page's single-trait run passed the LD window. Every
   path now passes the run's LD window: `--ld-flank-kb` (One-Click's manual flank) when
