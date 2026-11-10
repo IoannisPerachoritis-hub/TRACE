@@ -24,6 +24,7 @@ from gwas.utils import (
 from gwas.io import load_vcf_cached, _clean_chr_series
 from gwas.qc import gwas_pipeline, allele_freq_from_called_dosage
 from gwas.windows import ld_window_kb
+from utils.pub_theme import plotly_html_bytes
 from gwas.utils import _mean_impute_cols
 from gwas.kinship import (
     build_loco_kernels_cached, compute_pcs_full_cached,
@@ -2173,13 +2174,12 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             fig_pc.update_traces(marker=dict(size=8))
             show_plot(fig_pc, "medium")
             st.caption("Data: \"Download PCA scores (CSV)\" below.")
-            st.session_state["gwas_figures"][f"PCA_{trait_col}.html"] = (
-                fig_pc.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
-            )
+            st.session_state["gwas_figures"][f"PCA_{trait_col}.html"] = plotly_html_bytes(fig_pc)
 
             download_plotly_fig(
                 fig_pc,
                 filename=f"PCA_{trait_col}.html",
+                html_bytes=st.session_state["gwas_figures"][f"PCA_{trait_col}.html"],
                 label="Download PCA plot (HTML)"
             )
 
@@ -2661,13 +2661,14 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         show_plot(fig_int, "wide")
         st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
         st.session_state["gwas_figures"][f"Interactive_Manhattan_MLM_{trait_col}.html"] = (
-            fig_int.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
-        )
+            plotly_html_bytes(fig_int))
 
         download_plotly_fig(
             fig_int,
             filename=f"Interactive_Manhattan_MLM_{trait_col}.html",
-            label="Download interactive MLM Manhattan (HTML)"
+            label="Download interactive MLM Manhattan (HTML)",
+            html_bytes=st.session_state["gwas_figures"][
+                f"Interactive_Manhattan_MLM_{trait_col}.html"],
         )
         download_matplotlib_fig(
             fig_manh,
@@ -2940,9 +2941,12 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             show_plot(fig_plotly_mlmm, "wide")
             st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
             st.session_state["gwas_figures"][f"Interactive_Manhattan_MLMM_{trait_col}.html"] = (
-                fig_plotly_mlmm.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
-            )
-            download_plotly_fig(fig_plotly_mlmm, filename=f"Interactive_Manhattan_MLMM_{trait_col}.html", label="Download interactive MLMM Manhattan")
+                plotly_html_bytes(fig_plotly_mlmm))
+            download_plotly_fig(
+                fig_plotly_mlmm, filename=f"Interactive_Manhattan_MLMM_{trait_col}.html",
+                label="Download interactive MLMM Manhattan",
+                html_bytes=st.session_state["gwas_figures"][
+                    f"Interactive_Manhattan_MLMM_{trait_col}.html"])
             download_matplotlib_fig(
                 fig_mlmm,
                 filename=f"Manhattan_MLMM_{trait_col}.png",
@@ -3047,9 +3051,12 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             show_plot(fig_plotly_fc, "wide")
             st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
             st.session_state["gwas_figures"][f"Interactive_Manhattan_FarmCPU_{trait_col}.html"] = (
-                fig_plotly_fc.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
-            )
-            download_plotly_fig(fig_plotly_fc, filename=f"Interactive_Manhattan_FarmCPU_{trait_col}.html", label="Download interactive FarmCPU Manhattan")
+                plotly_html_bytes(fig_plotly_fc))
+            download_plotly_fig(
+                fig_plotly_fc, filename=f"Interactive_Manhattan_FarmCPU_{trait_col}.html",
+                label="Download interactive FarmCPU Manhattan",
+                html_bytes=st.session_state["gwas_figures"][
+                    f"Interactive_Manhattan_FarmCPU_{trait_col}.html"])
             download_matplotlib_fig(
                 fig_farmcpu,
                 filename=f"Manhattan_FarmCPU_{trait_col}.png",

@@ -297,9 +297,19 @@ def export_matplotlib(fig, filename_stem, label_prefix="Download"):
     )
 
 
-def export_plotly(fig, filename_stem, label_prefix="Download"):
-    """Offer HTML + SVG download buttons for a Plotly figure."""
-    html_bytes = fig.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
+def plotly_html_bytes(fig):
+    """A Plotly figure as a self-contained HTML file: plotly.js is embedded (not fetched
+    from a CDN), so the file opens offline and behind a firewall. Every interactive HTML
+    the GUI exports is written by this function."""
+    return fig.to_html(full_html=True, include_plotlyjs=True).encode("utf-8")
+
+
+def export_plotly(fig, filename_stem, label_prefix="Download", html_bytes=None):
+    """Offer HTML + SVG download buttons for a Plotly figure. ``html_bytes`` is the
+    figure's HTML when the caller already built it (plotly_html_bytes), so it is built
+    once and the download equals the ZIP's copy."""
+    if html_bytes is None:
+        html_bytes = plotly_html_bytes(fig)
 
     try:
         svg_bytes = fig.to_image(format="svg")

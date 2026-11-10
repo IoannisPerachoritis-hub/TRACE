@@ -5,6 +5,13 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Interactive HTML files open offline.** Every interactive figure the GUI exports
+  (the PCA plot, the MLM, MLMM and FarmCPU interactive Manhattans, and each per-figure
+  HTML download) now embeds plotly.js, through one helper
+  (`utils.pub_theme.plotly_html_bytes`). Before, they fetched plotly.js from a CDN when
+  opened, so they stayed blank offline or behind a firewall. Every point is kept and
+  WebGL is unchanged; each file grows by the size of plotly.js, about 4.8 MB. Nothing
+  changes in the CLI ZIP.
 - **Sample-to-haplotype files for every model.** Besides
   `Haplotype_assignments_<trait>.csv` (MLM, unchanged), the CLI and One-Click ZIP now
   hold `Haplotype_assignments_<trait>_<model>.csv` for MLMM and FarmCPU when they have

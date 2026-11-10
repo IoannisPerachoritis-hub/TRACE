@@ -326,9 +326,9 @@ def download_matplotlib_fig(fig, filename="plot.png", label="Download"):
     export_matplotlib(fig, stem, label_prefix=label)
 
 
-def download_plotly_fig(fig, filename="interactive_plot.html", label="Download"):
+def download_plotly_fig(fig, filename="interactive_plot.html", label="Download", html_bytes=None):
     stem = filename.replace(".html", "")
-    export_plotly(fig, stem, label_prefix=label)
+    export_plotly(fig, stem, label_prefix=label, html_bytes=html_bytes)
 
 def _build_gwas_results_zip(
     trait_col,
