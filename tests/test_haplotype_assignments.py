@@ -271,6 +271,35 @@ def test_pipeline_writes_the_assignments_of_mlms_tested_blocks(trait, monkeypatc
     assert set(zip(table["Chr"].astype(str), table["Block_start"])) == blocks
 
 
+def test_every_other_model_gets_a_file_of_its_tested_blocks(monkeypatch):
+    """With three models, MLMM and FarmCPU each get Haplotype_assignments_<trait>_<model>.csv:
+    exactly that model's tested blocks (its haplotype results), every panel sample per
+    block. The primary model's file is the MLM one, as before."""
+    res, members, _hap, _f = _pipeline_run(
+        monkeypatch, _EX / "example.vcf.gz", _EX / "example_pheno.csv", "Trait1",
+        model=["mlm", "mlmm", "farmcpu"], ld_r2=0.1, ld_flank_kb=200, hap_perms=100,
+        no_plots=True)
+    assert "tables/Haplotype_assignments_Trait1.csv" in members
+    assert "tables/Haplotype_assignments_Trait1_MLM.csv" not in members
+    covered = 0
+    for model in ("MLMM", "FarmCPU"):
+        ann = pd.read_csv(io.BytesIO(members[f"tables/LD_blocks_annotated_{model}.csv"]))
+        tested = ann[ann["Hap_PValue"].notna()]
+        name = f"tables/Haplotype_assignments_Trait1_{model}.csv"
+        if tested.empty:
+            assert name not in members
+            continue
+        table = pd.read_csv(io.BytesIO(members[name]), keep_default_na=False, na_values=[""])
+        assert list(table.columns) == HAP_ASSIGNMENT_COLUMNS
+        assert members[name] == res.tables[name.split("/", 1)[1]].to_csv(index=False).encode("utf-8")
+        want = {(str(r["Chr"]), int(r["Start (bp)"]), int(r["End (bp)"])) for _, r in tested.iterrows()}
+        got = set(zip(table["Chr"].astype(str), table["Block_start"], table["Block_end"]))
+        assert got == want, model
+        assert (table.groupby(["Block_start"]).size() == 50).all()
+        covered += 1
+    assert covered >= 1        # the example's MLMM / FarmCPU runs test at least one block
+
+
 _TOMATO = (os.environ.get("TRACE_TOMATO_VCF"), os.environ.get("TRACE_TOMATO_PHENO"))
 
 

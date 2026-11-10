@@ -5,6 +5,11 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Sample-to-haplotype files for every model.** Besides
+  `Haplotype_assignments_<trait>.csv` (MLM, unchanged), the CLI and One-Click ZIP now
+  hold `Haplotype_assignments_<trait>_<model>.csv` for MLMM and FarmCPU when they have
+  tested blocks. Before, only the primary model's blocks were covered, so in the
+  three-model example runs most MLMM and FarmCPU blocks had no assignments.
 - **MLMM reports each cofactor's own p-value.** MLMM's final scan includes its
   cofactors as covariates, so each cofactor was tested with itself and got p = 1. Each
   cofactor is now re-tested with the other cofactors as covariates, in MLMM's own model

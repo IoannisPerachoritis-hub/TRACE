@@ -141,6 +141,9 @@ documented in full (every column, type, and when it's emitted) in
 - **`LD_r2_long_*.csv`** / **`LD_r2_matrix_*.csv`**: the r² numbers behind the Local LD
   heatmap (long-format pairs, and the square matrix). For a detected block they cover the
   block's member SNPs; the heatmap also shows the block's neighbouring SNPs.
+- **`Haplotype_assignments_<trait>.csv`** (MLM) and **`Haplotype_assignments_<trait>_<model>.csv`**
+  (MLMM, FarmCPU): which haplotype each sample carries in each tested LD block of that
+  model, and whether the block's haplotype test took it (with the reason when not).
 - **`Regional_data_*.csv`**: per-SNP p-value, r²-to-lead, and block membership behind the
   regional plot. A block's `lead_snp` is its **most significant seeding SNP** (the smallest
   GWAS p-value among the significant SNPs that formed the block); it may not be a member, so

@@ -187,15 +187,21 @@ whether the block's haplotype test took it: one function
 (`gwas.haplotype.haplotype_assignments`) builds it from the test's own per-sample
 tables, so the labels are the ones the test compared and the Post-GWAS MLG plots show.
 
-**One row per** sample of the panel **per tested block** of the primary model (MLM),
-blocks in the order of `LD_blocks_annotated_MLM.csv`. The panel is the trait's analysis
+**One row per** sample of the panel **per tested block** of one model, blocks in the
+order of that model's `LD_blocks_annotated_<model>.csv`. The panel is the trait's analysis
 samples, in genotype order: genotyped, with a finite trait value, after `--ind-miss`
 and any covariate drops. So a sample without a trait value, or one removed by sample
-QC, is not listed. The blocks of MLMM and FarmCPU are not covered.
+QC, is not listed.
 
-**When it's emitted.** CLI and One-Click ZIP as `tables/Haplotype_assignments_<trait>.csv`
-(every tested block; no file when no block was tested, while
-`LD_blocks_annotated_<model>.csv` is still written for the detected blocks).
+**When it's emitted.** CLI and One-Click ZIP:
+- `tables/Haplotype_assignments_<trait>.csv` for the primary model (MLM), the file the
+  report's per-SNP box plots read;
+- `tables/Haplotype_assignments_<trait>_<model>.csv` for each other model with tested
+  blocks (MLMM, FarmCPU), named as `LD_triage_<model>.csv`, with the same columns.
+
+Each covers every tested block of its model. There is no file for a model with no tested
+block, while `LD_blocks_annotated_<model>.csv` is still written for the detected blocks.
+
 GUI **Post-GWAS Analysis → LD Blocks & Haplotypes**, next to the
 block selector: "Download sample-to-haplotype assignments (CSV)" gives the selected
 block's rows as `haplotype_assignments_block_<chr>_<start>_<end>_<trait>.csv`, and

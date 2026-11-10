@@ -78,7 +78,10 @@ def test_every_table_and_figure_is_written(three_models):
               for m, name in zip(MODELS, ("Trait1", "MLMM_Trait1", "FarmCPU_Trait1")) for p in per_model}
     tables |= {f"tables/{n}.csv" for n in ("CrossModel_Consensus", "PC_diagnostics_spectrum",
                                             "QC_report_summary", "QC_sample_heterozygosity",
-                                            "SNP_view_index_MLM", "Haplotype_assignments_Trait1")}
+                                            "SNP_view_index_MLM", "Haplotype_assignments_Trait1",
+                                            # each other model's tested blocks (CC-30)
+                                            "Haplotype_assignments_Trait1_MLMM",
+                                            "Haplotype_assignments_Trait1_FarmCPU")}
     figures = {f"figures/{k}_{m}.png" for k in ("Manhattan", "QQ") for m in MODELS}
     figures |= {"figures/PCA_scree.png", "figures/QC_report_distributions.png"}
     names = set(three_models["members"])

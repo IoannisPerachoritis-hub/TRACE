@@ -995,6 +995,17 @@ def _run_trait(parsed, pheno, args):
                     extra_csvs[f"Haplotype_assignments_{args.trait}.csv"] = _assign
             except Exception as e:
                 log.warning("  Haplotype assignments failed for %s: %s", model_name, e)
+        # ... and of every other model's tested blocks, in a file named for the model
+        # (as LD_triage_<model>.csv); the primary model's file above stays as it was
+        elif m_hap_gwas is not None and not m_hap_gwas.empty:
+            try:
+                from gwas.haplotype import haplotype_assignments
+                _assign_m = haplotype_assignments(m_hap_gwas, m_hap_tables, geno_df,
+                                                  pheno_clean, args.trait)
+                if not _assign_m.empty:
+                    extra_csvs[f"Haplotype_assignments_{args.trait}_{model_name}.csv"] = _assign_m
+            except Exception as e:
+                log.warning("  Haplotype assignments failed for %s: %s", model_name, e)
 
         # Capture per-model annotation/haplotype frames for the HTML report (T-80)
         _mp = {}
