@@ -5,6 +5,16 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **One LD-window rule, the CLI's, in the GUI.** Every default LD window is now
+  int(2 × the median LD decay), or 300 kb when the decay cannot be estimated, the
+  rule the CLI and One-Click use (`gwas.windows.ld_window_kb`). This covers the LD Blocks &
+  Haplotypes Settings default, Post-GWAS's auto-built blocks, the candidate-interval
+  edge flank and the Regional Plot's window. The Settings default had been held within
+  200 to 2000 kb (200 kb on the Varitome data, where the CLI uses 144 kb), and the GUI
+  had assumed a 200 kb decay without an estimate. Without an estimate the GUI now
+  detects blocks without a decay value, as the CLI does. The decay line names the run
+  it comes from, the GWAS page's Run GWAS; One-Click writes its results to its ZIP only
+  and hands nothing to Post-GWAS.
 - **The haplotype PCA inset uses the haplotype labels of the assignments CSV.** On the
   LD Blocks & Haplotypes tab, "Population structure (PC1 vs PC2, coloured by
   haplotype)" now colours each sample by its Haplotype in the block's

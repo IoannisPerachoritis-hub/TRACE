@@ -58,7 +58,7 @@ AREAS: list[tuple[str, str, list[str]]] = [
     ("Covariates & PC diagnostics", "user covariates and the PC eigenvalue-spectrum diagnostics",
         ["test_covariates", "test_covar_cli_e2e", "test_pc_diagnostics", "test_covariate_drop"]),
     ("LD block detection", "peak-centric LD block detection and merging",
-        ["test_ld", "test_ld_merge"]),
+        ["test_ld", "test_ld_merge", "test_ld_window"]),
     ("Haplotype testing", "block haplotype effects, effect sizes, compact letter display, sample-to-haplotype assignments",
         ["test_haplotype", "test_haplotype_effects", "test_cld", "test_haplotype_assignments",
          "test_block_table"]),

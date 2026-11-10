@@ -9,10 +9,8 @@ defaults are unchanged. Plus the summary line above the panel.
 import ast
 from pathlib import Path
 
-import numpy as np
-
-from pages._ld_tabs.tab_genome_wide import (_rule_short_name, ld_decay_line,
-                                            ld_window_default_kb, settings_summary)
+from pages._ld_tabs._decay import decay_run_label
+from pages._ld_tabs.tab_genome_wide import _rule_short_name, ld_decay_line, settings_summary
 
 _SRC = (Path(__file__).resolve().parent.parent / "pages" / "_ld_tabs"
         / "tab_genome_wide.py").read_text(encoding="utf-8")
@@ -91,25 +89,27 @@ def test_summary_line():
     assert _rule_short_name("FDR (q < 0.05)") == "FDR"
 
 
-def test_the_window_default_is_unchanged():
-    """2 x the GWAS page's LD decay within 200-2000 kb, the expression the panel had."""
-    for x in (5.0, 50.0, 72.17, 99.9, 100.0, 150.0, 999.9, 1000.0, 1500.0):
-        assert ld_window_default_kb(x) == float(np.clip(x * 2, 200, 2000)), x
+def test_the_window_default_is_the_clis_rule():
+    """The Settings default is gwas.windows.ld_window_kb of the run's decay (tests/test_ld_window
+    pins the rule), and the input's range always holds it: no 200 / 2000 kb limits."""
     fn = next(n for n in ast.walk(ast.parse(_SRC))
               if isinstance(n, ast.FunctionDef) and n.name == "_render_settings")
-    assert "flank_kb_default = ld_window_default_kb(ctx.ld_decay_kb)" in ast.unparse(fn)
-    assert "value=float(flank_kb_default)" in ast.unparse(fn)
+    src = ast.unparse(fn)
+    assert "flank_kb_default = ld_window_kb(ctx.ld_decay_kb)" in src
+    assert "value=float(flank_kb_default)" in src
+    assert "min_value=0.0" in src and "max_value=max(10000.0, float(flank_kb_default))" in src
+    assert "np.clip" not in src
 
 
-def test_the_ld_decay_line():
-    assert ld_decay_line(150.4, True) == (
-        "LD decay (median across chromosomes): 150.4 kb, so the window is 300.8 kb.")
-    assert ld_decay_line(250, True) == (
-        "LD decay (median across chromosomes): 250 kb, so the window is 500 kb.")
-    assert ld_decay_line(72.17, True) == (
-        "LD decay (median across chromosomes): 72.2 kb, so the window is 200 kb "
-        "(2 × 72.2 kb, held at the 200 kb minimum).")
-    assert ld_decay_line(1500, True).endswith("(2 × 1500 kb, held at the 2000 kb maximum).")
-    assert ld_decay_line(200.0, False) == (
-        "LD decay: no estimate from the GWAS page in this session, so the default 200 kb "
-        "is used and the window is 400 kb.")
+def test_the_ld_decay_line_names_its_run():
+    run = decay_run_label({"trait": "locule_number", "timestamp": "2026-11-10 10:30"})
+    assert run == "the GWAS page's Run GWAS for `locule_number` (2026-11-10 10:30)"
+    assert decay_run_label(None) == "the GWAS page's Run GWAS"
+    assert ld_decay_line(72.17, run) == (
+        "LD decay (median across chromosomes, from the GWAS page's Run GWAS for "
+        "`locule_number` (2026-11-10 10:30)): 72.2 kb, so the window is 144 kb.")
+    assert ld_decay_line(1500.9, run).endswith("1500.9 kb, so the window is 3001 kb.")
+    assert ld_decay_line(None, run) == (
+        "LD decay: no estimate from the GWAS page's Run GWAS for `locule_number` "
+        "(2026-11-10 10:30), so the window is 300 kb, as in the CLI, and blocks are "
+        "detected without a decay value.")

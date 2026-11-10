@@ -37,7 +37,7 @@ class LDContext:
     haplo_df_auto: pd.DataFrame
 
     # --- LD parameters ---
-    ld_decay_kb: float
+    ld_decay_kb: float | None   # None without an estimate (the window is then 300 kb)
     adj_r2_min_global: float
 
     # --- resolved trait name (after column matching) ---

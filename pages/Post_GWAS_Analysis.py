@@ -15,6 +15,8 @@ from gwas.ld import (
 from gwas.utils import canonicalize_chr, align_pheno_to_geno, resolve_trait_column, check_data_version
 from gwas.haplotype import mlg_labels_for_block
 from pages._ld_tabs import LDContext
+from pages._ld_tabs._decay import decay_run_label
+from gwas.windows import ld_window_kb
 from pages._ld_tabs import tab_local_ld
 from pages._ld_tabs import tab_gene_annotation
 from pages._ld_tabs import tab_genome_wide
@@ -389,7 +391,9 @@ def ld_analysis_page():
 
     # CRITICAL: must have an active trait before indexing trait-specific results
     if trait_col is None:
-        st.error("No active trait found. Please run GWAS first.")
+        st.error("No active trait found. Please run GWAS first: click Run GWAS on the "
+                 "GWAS page. One-Click Full Analysis writes its results to its ZIP only; "
+                 "this page works on the GWAS page's Run GWAS.")
         st.stop()
 
     # 1) Try trait-specific gwas_results
@@ -405,7 +409,8 @@ def ld_analysis_page():
     if gwas_df is None or not isinstance(gwas_df, pd.DataFrame) or gwas_df.empty:
         st.error(
             "GWAS results not found for LD analysis.\n\n"
-            "Run a single-trait GWAS first and ensure results are saved."
+            "Run a single-trait GWAS first (Run GWAS on the GWAS page) and ensure results "
+            "are saved. One-Click Full Analysis writes its results to its ZIP only."
         )
         st.stop()
 
@@ -529,13 +534,17 @@ def ld_analysis_page():
             st.session_state["haplo_df_auto_hash"].pop(trait_col, None)
 
         st.session_state["_ld_prev_trait"] = trait_col
-    ld_decay_kb = float(st.session_state.get("ld_decay_kb", 200.0))
-    ld_decay_kb = max(ld_decay_kb, 10.0)
+    # the LD decay the GWAS page's Run GWAS estimated (the run whose results this page
+    # shows), or None without an estimate: the window is then 300 kb, as in the CLI
+    ld_decay_kb = (st.session_state.get("ld_decay_kb")
+                   if st.session_state.get("ld_decay_computed", False) else None)
+    ld_decay_kb = None if ld_decay_kb is None else float(ld_decay_kb)
+    _decay_run = decay_run_label(st.session_state.get("gwas_run_summary"))
     # Keep a single, consistent adjacent-LD split threshold across the page
     adj_r2_min_global = float(st.session_state.get("adj_r2_min", 0.2))
     adj_r2_min_global = float(np.clip(adj_r2_min_global, 0.0, 0.99))
 
-    if st.session_state.get("ld_decay_computed", False):
+    if ld_decay_kb is not None:
         _cn = ""
         _sm = st.session_state.get("ld_decay_summary")
         if _sm is not None and "censored_r2_0.2" in getattr(_sm, "columns", []):
@@ -544,13 +553,13 @@ def ld_analysis_page():
                 _cn = f" ({_ncc} chr grid-limited, upper bound)"
         st.markdown(
             f"**Trait:** `{trait_col}`  \n"
-            f"LD decay (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb (estimated on the GWAS page){_cn}"
+            f"LD decay (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb (from {_decay_run}){_cn}"
         )
     else:
         st.markdown(
             f"**Trait:** `{trait_col}`  \n"
-            f"LD decay (r² ≤ 0.2): {ld_decay_kb:.1f} kb "
-            f"*(default: no estimate from the GWAS page in this session)*"
+            f"LD decay: no estimate in {_decay_run}, so the LD window is "
+            f"{ld_window_kb(None)} kb, as in the CLI"
         )
     # --------------------------------------------------------
     # AUTO-BUILD peak-centric LD blocks once per trait
@@ -584,7 +593,7 @@ def ld_analysis_page():
                 geno_imputed=geno_ld_masked,
                 sid=sid,
                 ld_threshold=0.6,
-                flank_kb=float(ld_decay_kb * 2),
+                flank_kb=ld_window_kb(ld_decay_kb),   # the CLI's rule: int(2 x decay)
                 min_snps=2,
                 top_n=10,
                 sig_thresh=1e-5,

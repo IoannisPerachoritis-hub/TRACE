@@ -607,6 +607,7 @@ def _run_trait(parsed, pheno, args):
 
     # ── LD decay estimation ─────────────────────────────
     import gwas.ld as ld
+    from gwas.windows import ld_window_kb
     ld_flank_kb = args.ld_flank_kb
     ld_decay_kb = None
     ld_blocks_mlm = None  # track MLM blocks for subsampling aggregation
@@ -634,14 +635,14 @@ def _run_trait(parsed, pheno, args):
                     _ld_decay_n_censored += 1
         if ld_distances:
             ld_decay_kb = float(np.median(ld_distances))
-            ld_flank_kb = int(2 * ld_decay_kb)
+            ld_flank_kb = ld_window_kb(ld_decay_kb)    # int(2 x decay)
             # LD-decay Tier 1b: N grid-limited -> the median is partly a median of floors
             # (an upper bound). Display/logging only; ld_decay_kb / flank unchanged.
             _cens = (f" ({_ld_decay_n_censored} of {len(ld_distances)} chromosomes "
                      f"grid-limited <= floor)") if _ld_decay_n_censored else ""
             log.info("  LD decay ~ %.0f kb -> flank = %d kb%s", ld_decay_kb, ld_flank_kb, _cens)
         else:
-            ld_flank_kb = 300
+            ld_flank_kb = ld_window_kb(None)            # 300 kb
             log.warning("  Could not estimate LD decay; using 300 kb")
 
     # ── Per-model post-GWAS: LD blocks → haplotype → annotation ──

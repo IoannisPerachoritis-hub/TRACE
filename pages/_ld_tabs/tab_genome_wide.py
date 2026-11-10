@@ -19,6 +19,8 @@ from gwas.ld import (
     filter_contained_blocks,
 )
 from . import LDContext
+from ._decay import decay_run_label
+from gwas.windows import ld_window_kb
 
 
 def _hash_df(df: pd.DataFrame) -> str:
@@ -360,30 +362,22 @@ def _rule_short_name(rule_label, custom=None):
     return label.split(":")[0].split(" (")[0].strip()
 
 
-def ld_window_default_kb(ld_decay_kb):
-    """The LD window's default (kb): 2 x the LD decay, kept within 200 to 2000 kb."""
-    return float(np.clip(float(ld_decay_kb) * 2, 200, 2000))
-
-
 def _kb(v):
     """A distance in kb to one decimal, without a trailing .0."""
     return f"{round(float(v), 1):g}"
 
 
-def ld_decay_line(ld_decay_kb, estimated):
-    """The Settings panel's line on the LD decay behind the window's default: the GWAS
-    page's estimate (median across chromosomes), or the default when there is none."""
-    x = float(ld_decay_kb)
-    window = ld_window_default_kb(x)
-    if not estimated:
-        return (f"LD decay: no estimate from the GWAS page in this session, so the default "
-                f"{_kb(x)} kb is used and the window is {_kb(window)} kb.")
-    text = (f"LD decay (median across chromosomes): {_kb(x)} kb, so the window is "
-            f"{_kb(window)} kb")
-    if window != 2 * x:
-        text += (f" (2 × {_kb(x)} kb, held at the "
-                 f"{'200 kb minimum' if window == 200 else '2000 kb maximum'})")
-    return text + "."
+def ld_decay_line(ld_decay_kb, run):
+    """The Settings panel's line on the LD decay behind the window's default, naming the
+    run it comes from (decay_run_label): the window is int(2 x decay) by the CLI's rule
+    (gwas.windows.ld_window_kb), or 300 kb without an estimate, when blocks are detected
+    without a decay value, as in the CLI."""
+    if ld_decay_kb is None:
+        return (f"LD decay: no estimate from {run}, so the window is "
+                f"{ld_window_kb(None)} kb, as in the CLI, and blocks are detected without "
+                "a decay value.")
+    return (f"LD decay (median across chromosomes, from {run}): {_kb(ld_decay_kb)} kb, "
+            f"so the window is {ld_window_kb(ld_decay_kb)} kb.")
 
 
 def _render_ld_decay_curve():
@@ -458,23 +452,28 @@ def _render_settings(ctx):
             value=10,
             step=1,
         )
-        flank_kb_default = ld_window_default_kb(ctx.ld_decay_kb)
+        # the CLI's rule (gwas.windows.ld_window_kb): int(2 x decay), or 300 kb without an
+        # estimate; the input's range always holds it (2 x decay <= 10000: the decay
+        # estimate reaches at most 5000 kb)
+        flank_kb_default = ld_window_kb(ctx.ld_decay_kb)
         flank_kb_auto = st.number_input(
             "LD window around each lead SNP (kb)",
-            min_value=10.0,
-            max_value=2000.0,
+            min_value=0.0,
+            max_value=max(10000.0, float(flank_kb_default)),
             value=float(flank_kb_default),
             step=50.0,
             help=(
                 "Physical distance (in kb) to extend around each seed SNP. After the "
                 "disjoint-block redesign it bounds how far one block can extend from "
                 "its seed; clusters that do not contain the seed are discarded. The "
-                "default is 2× the measured LD decay distance."
+                "default is 2× the measured LD decay distance, as in the CLI "
+                "(300 kb when the decay could not be estimated)."
             ),
         )
-        # the LD decay behind the default, estimated on the GWAS page (not recomputed here)
+        # the LD decay behind the default, estimated by the run the page shows (not
+        # recomputed here)
         st.caption(ld_decay_line(ctx.ld_decay_kb,
-                                 bool(st.session_state.get("ld_decay_computed", False))))
+                                 decay_run_label(st.session_state.get("gwas_run_summary"))))
         _render_ld_decay_curve()
         ld_threshold_auto = st.number_input(
             "r² threshold for cluster definition",
@@ -653,7 +652,7 @@ def render(
                 "min_snps_per_block": 2,
                 "top_n_snps": int(top_n),
                 "sig_threshold": float(sig_thresh),
-                "ld_decay_kb": float(ld_decay_kb),
+                "ld_decay_kb": None if ld_decay_kb is None else float(ld_decay_kb),
                 "adjacent_r2_split": 0.2,
             }
             st.session_state[ld_key] = haplo_df_auto

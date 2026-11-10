@@ -80,9 +80,11 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
         # decay) -- the "buffer change doesn't stick" lag. With no value=, the slider
         # reads/writes session_state directly and the seed applies only on first render.
         if "ld_window_buffer_kb" not in st.session_state:
-            st.session_state["ld_window_buffer_kb"] = min(5000, max(10, int((ctx.ld_decay_kb or 150) * 2)))
+            # the LD window by the CLI's rule: int(2 x decay), or 300 kb without one
+            from gwas.windows import ld_window_kb
+            st.session_state["ld_window_buffer_kb"] = min(10000, ld_window_kb(ctx.ld_decay_kb))
         return st.slider(
-            "Buffer (kb)", min_value=10, max_value=5000, step=10,
+            "Buffer (kb)", min_value=0, max_value=10000, step=1,
             key="ld_window_buffer_kb",
             help="Extends the window this many kb on each side of the SNP, or of the block "
                  "for the Regional Plot (the Local LD block heatmap shows the block with its "

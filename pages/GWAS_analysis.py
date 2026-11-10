@@ -23,6 +23,7 @@ from gwas.utils import (
 )
 from gwas.io import load_vcf_cached, _clean_chr_series
 from gwas.qc import gwas_pipeline, allele_freq_from_called_dosage
+from gwas.windows import ld_window_kb
 from gwas.utils import _mean_impute_cols
 from gwas.kinship import (
     build_loco_kernels_cached, compute_pcs_full_cached,
@@ -2778,7 +2779,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # ============================================================
     # 6. Genome-wide LD DECAY: accurate per-chromosome computation
     # (the CLI's function and settings; Post-GWAS shows this estimate in the LD Blocks &
-    # Haplotypes Settings, next to the window it sets)
+    # Haplotypes Settings, next to the window it sets: gwas.windows.ld_window_kb)
     try:
         _manual_decay_df, _manual_summary_df, _manual_median = _compute_ld_decay_for_gwas_page(
             geno_key=geno_key,
@@ -2791,12 +2792,18 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             st.session_state["ld_decay_summary"] = _manual_summary_df
             st.session_state["ld_decay_computed"] = True
         else:
-            ld_decay_kb = float(st.session_state.get("ld_decay_kb", 200.0))
+            ld_decay_kb = None
     except Exception:
         logging.exception("Manual path LD decay computation failed")
-        ld_decay_kb = float(st.session_state.get("ld_decay_kb", 200.0))
-    flank_kb = int(2 * ld_decay_kb)
-    ld_block_max_dist_bp = int(ld_decay_kb * 1000)
+        ld_decay_kb = None
+    if ld_decay_kb is None:
+        # no estimate in this run: no decay value, as in the CLI (never an earlier run's)
+        for _k in ("ld_decay_df", "ld_decay_summary"):
+            st.session_state.pop(_k, None)
+        st.session_state["ld_decay_computed"] = False
+    # the LD window by the CLI's rule: int(2 x decay), or 300 kb without an estimate
+    flank_kb = ld_window_kb(ld_decay_kb)
+    ld_block_max_dist_bp = int(ld_decay_kb * 1000) if ld_decay_kb is not None else None
     # Make MLM results available immediately for MLMM prefiltering
     st.session_state["gwas_df"] = gwas_df[["SNP", "PValue", "Chr", "Pos"]].copy()
     # ============================================================
@@ -3317,9 +3324,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     # --- Optional LD hints (safe)
     if "ld_decay_kb" in locals():
-        st.session_state["ld_decay_kb"] = float(ld_decay_kb)
+        st.session_state["ld_decay_kb"] = None if ld_decay_kb is None else float(ld_decay_kb)
     if "ld_block_max_dist_bp" in locals():
-        st.session_state["ld_block_max_dist_bp"] = int(ld_block_max_dist_bp)
+        st.session_state["ld_block_max_dist_bp"] = (
+            None if ld_block_max_dist_bp is None else int(ld_block_max_dist_bp))
 
     # ============================================================
     # BLOCK 4: REPRODUCIBILITY / METADATA (embedded in ZIP)

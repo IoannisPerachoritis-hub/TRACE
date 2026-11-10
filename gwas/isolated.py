@@ -229,9 +229,11 @@ def default_edge_flank_bp(isolated_edge_flank_kb=None, ld_flank_kb=None):
 
 
 def edge_flank_bp_from_decay(ld_decay_kb):
-    """The edge flank by the CLI's default rule from an LD-decay estimate (kb): 2 x the
-    decay, else 300 kb. The GUI uses it, so its intervals are the CLI's."""
-    return default_edge_flank_bp(None, int(2 * float(ld_decay_kb)) if ld_decay_kb else None)
+    """The edge flank by the CLI's default rule from an LD-decay estimate (kb): the LD
+    window, int(2 x the decay), else 300 kb (gwas.windows.ld_window_kb). The GUI uses it, so
+    its intervals are the CLI's."""
+    from gwas.windows import ld_window_kb
+    return default_edge_flank_bp(None, ld_window_kb(ld_decay_kb))
 
 
 def _marker_axis(chroms, positions, sid):
