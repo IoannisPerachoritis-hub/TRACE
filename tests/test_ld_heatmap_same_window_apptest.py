@@ -45,7 +45,7 @@ import pages._ld_tabs.tab_genome_wide as _tgw  # noqa: E402
 import pages._ld_tabs.tab_local_ld as _tll  # noqa: E402
 from annotation import canon_chr  # noqa: E402
 
-_EXAMPLES = _ROOT / "examples"
+_EXAMPLES = _ROOT / "tests" / "data" / "example_v1"   # the first example, frozen
 _VCF = _EXAMPLES / "example.vcf.gz"
 _PHENO = _EXAMPLES / "example_pheno.csv"
 _TRAIT = "Trait1"
@@ -245,7 +245,7 @@ def _assert_same(a, b, ids_a, ids_b, what):
 
 
 @pytest.mark.slow_gui
-@pytest.mark.skipif(not _VCF.exists(), reason="examples/example.vcf.gz not present")
+@pytest.mark.skipif(not _VCF.exists(), reason="tests/data/example_v1/example.vcf.gz not present")
 def test_cli_one_click_and_local_ld_draw_the_same_window(rec, tmp_path):
     cli_pngs = _run_cli(rec, tmp_path / "cli")
     at = _run_gwas_page(rec)

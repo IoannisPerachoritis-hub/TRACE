@@ -60,8 +60,8 @@ from pages._pheno_qc.stats import (  # noqa: E402
 pytestmark = pytest.mark.slow_gui
 
 _PAGE = str(_ROOT / "pages" / "GWAS_analysis.py")
-_VCF = _ROOT / "examples" / "example.vcf.gz"
-_PHENO = _ROOT / "examples" / "example_pheno.csv"
+_VCF = _ROOT / "tests" / "data" / "example_v1" / "example.vcf.gz"      # the first example
+_PHENO = _ROOT / "tests" / "data" / "example_v1" / "example_pheno.csv"
 RAW = "Phenotypes used: raw values for all traits"
 STATE = "pheno_applied_transforms"
 PANEL = "Phenotype QC and transformation"

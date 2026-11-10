@@ -111,5 +111,5 @@ py-modules = ["cli", "annotation", "app"]
 markers = [
     "golden: real-data published-output regression pin (T-94); needs benchmarks/qc_data/, excluded from CI with -m 'not golden'",
     "manuscript: Tier-B manuscript block-table pin (T-71); needs TRACE_VARITOME_DIR, opt-in",
-    "slow_gui: a GUI test (AppTest) over about 30 s that runs real scans; run once per batch and in CI, skipped per task with -m 'not slow_gui'",
+    "slow_gui: a slow test that runs real scans: a GUI AppTest over about 30 s, or a full CLI run on the example whose outputs it checks; run once per batch and in CI, skipped per task with -m 'not slow_gui'",
 ]

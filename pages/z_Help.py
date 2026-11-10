@@ -264,5 +264,5 @@ st.header("Getting Help")
 st.markdown("""
 - **Bug reports & feature requests**: [GitHub Issues](https://github.com/IoannisPerachoritis-hub/TRACE/issues)
 - **Documentation**: [README.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/README.md)
-- **Example data**: run `bash examples/run_example.sh`; it generates a small synthetic dataset (~50 samples, ~510 SNPs) and runs the pipeline end-to-end in under 30 s. (A ready-made copy, `examples/example.vcf.gz`, is in the repository; it is not part of the installed package.)
+- **Example data**: run `bash examples/run_example.sh`; it generates a small synthetic dataset (100 inbred lines, 600 SNPs, one QTL inside an LD block on chromosome 2) and runs the pipeline end-to-end in about 7 s. (A ready-made copy, `examples/example.vcf.gz`, is in the repository; it is not part of the installed package.)
 """)

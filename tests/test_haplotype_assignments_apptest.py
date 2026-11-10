@@ -36,8 +36,8 @@ import pages._ld_tabs.tab_genome_wide as _tgw  # noqa: E402
 # over about 30 s: run once per batch, not per task (-m 'not slow_gui')
 pytestmark = pytest.mark.slow_gui
 
-_VCF = _ROOT / "examples" / "example.vcf.gz"
-_PHENO = _ROOT / "examples" / "example_pheno.csv"
+_VCF = _ROOT / "tests" / "data" / "example_v1" / "example.vcf.gz"      # the first example
+_PHENO = _ROOT / "tests" / "data" / "example_v1" / "example_pheno.csv"
 _TRAIT = "Trait2"
 _LD_R2, _FLANK_KB, _HAP_PERMS = 0.1, 200, 100
 _MEMBER = f"tables/Haplotype_assignments_{_TRAIT}.csv"

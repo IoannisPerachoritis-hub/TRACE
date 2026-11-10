@@ -22,7 +22,7 @@ import gwas.pipeline as pl  # noqa: E402
 import gwas.plotting as gp  # noqa: E402
 from gwas.io import load_vcf_cached  # noqa: E402
 
-_EX = Path(__file__).resolve().parent.parent / "examples"
+_EX = Path(__file__).resolve().parent / "data" / "example_v1"   # the first example
 
 
 def _highlighted(fig):

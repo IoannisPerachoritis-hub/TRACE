@@ -14,7 +14,7 @@ import pytest
 from annotation import GENE_FILE_HELP, load_gene_annotation, load_gene_model
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-EXAMPLES = ROOT / "examples"
+EXAMPLES = ROOT / "tests" / "data" / "example_v1"   # the first example, frozen
 T = "\t"
 
 
@@ -171,7 +171,7 @@ def test_both_gene_uploaders_accept_gff3():
 
 
 @pytest.mark.skipif(not (EXAMPLES / "example.vcf.gz").exists(),
-                    reason="examples/example.vcf.gz not present")
+                    reason="tests/data/example_v1/example.vcf.gz not present")
 def test_the_cli_annotates_with_a_gzipped_gff3(tmp_path):
     from cli import _build_parser, run_pipeline
     # one gene spanning each chromosome, so every block holds its chromosome's gene

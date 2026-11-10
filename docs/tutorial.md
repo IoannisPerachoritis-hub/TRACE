@@ -8,14 +8,17 @@ installation and learn both interfaces in a few minutes.
 
 The example ships in the repository:
 
-- `examples/example.vcf.gz`: ~50 samples, ~510 SNPs across 3 chromosomes, with
-  one embedded QTL on chromosome 2 (h² ≈ 0.4).
-- `examples/example_pheno.csv`: two traits: `Trait1` carries the QTL signal,
-  `Trait2` is pure noise.
+- `examples/example.vcf.gz`: 100 inbred lines and 600 SNPs across 3 chromosomes.
+  The lines are mosaics of four founder haplotypes, so neighbouring SNPs are in
+  linkage disequilibrium (LD) and LD decays with distance.
+- `examples/example_pheno.csv`: two traits: `Trait1` carries one QTL,
+  `chr02_1010000` (h² ≈ 0.3), inside an LD block on chromosome 2; `Trait2` is pure
+  noise.
 
 It is byte-reproducible: `examples/simulate_example.py` regenerates it
 deterministically (seed 42), so a fresh clone and a re-run produce identical
-files. The whole example runs through the full pipeline in under 30 seconds.
+files. The MLM run below takes about 7 seconds, and about 13 with all three
+models.
 
 ---
 
@@ -43,6 +46,12 @@ trace-gwas \
   --output examples/output/ \
   --model mlm
 ```
+
+**What you should see.** At the defaults (MLM, Bonferroni), `Trait1`'s significant
+SNPs all lie on chromosome 2 within 60 kb of the QTL. TRACE finds one LD block there
+(960,000–1,070,000 bp), tests its haplotypes (`Hap_PValue` in
+`tables/LD_blocks_annotated_MLM.csv`) and draws its LD heatmap
+(`figures/LD_heatmap_Chr2_960000_1070000.png`). `Trait2` has no significant SNP.
 
 If you have not installed the package (`pip install -e .`), use
 `python cli.py` in place of `trace-gwas`. Run `trace-gwas --help`, or see

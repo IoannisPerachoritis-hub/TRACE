@@ -30,7 +30,7 @@ from gwas.io import load_vcf_cached  # noqa: E402
 from utils.pub_theme import PALETTE_CYCLE, hap_sort_key  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
-_EX = _ROOT / "examples"
+_EX = _ROOT / "tests" / "data" / "example_v1"   # the first example
 _TOMATO = (os.environ.get("TRACE_TOMATO_VCF"), os.environ.get("TRACE_TOMATO_PHENO"))
 _CC8 = {"ld_r2": 0.1, "ld_flank_kb": 200, "hap_perms": 100}
 _NEW = ("hap_labels", "hap_color_map", "hap_note", "y_label")

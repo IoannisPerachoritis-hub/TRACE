@@ -28,7 +28,7 @@ from annotation import (
 )
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-EXAMPLES = ROOT / "examples"
+EXAMPLES = ROOT / "tests" / "data" / "example_v1"   # the first example, frozen
 
 
 def _gene_example():
@@ -152,7 +152,7 @@ def test_both_uploader_places_use_the_shared_texts():
 
 # ── end to end on the bundled example ──
 _needs_examples = pytest.mark.skipif(not (EXAMPLES / "example.vcf.gz").exists(),
-                                     reason="examples/example.vcf.gz not present")
+                                     reason="tests/data/example_v1/example.vcf.gz not present")
 
 
 # the example forms LD blocks at r² 0.1 (and then no unblocked SNP), and with the

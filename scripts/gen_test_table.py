@@ -81,7 +81,7 @@ AREAS: list[tuple[str, str, list[str]]] = [
     ("HTML report", "run-report assembly and section rendering",
         ["test_reports", "test_report_sections"]),
     ("Command-line interface", "CLI parsing, end-to-end and multi-trait runs, doc-to-parser flag parity",
-        ["test_cli", "test_cli_e2e", "test_multitrait_cli", "test_doc_flag_parity",
+        ["test_cli", "test_cli_e2e", "test_multitrait_cli", "test_doc_flag_parity", "test_example_blocks",
          "test_numeric_sig_thresh_cli"]),
     ("Web UI (Streamlit)", "app-test coverage of the GWAS, Post-GWAS, help and landing pages",
         ["test_gwas_analysis_apptest", "test_help_page_apptest", "test_zz_app_landing_apptest",

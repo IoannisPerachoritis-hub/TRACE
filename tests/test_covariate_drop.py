@@ -14,7 +14,7 @@ from gwas.covariates import (CovariateDropError, covariate_drop_message,
                              select_covariate_columns)
 from gwas.io import load_vcf_cached
 
-EX = Path(__file__).resolve().parent.parent / "examples"
+EX = Path(__file__).resolve().parent / "data" / "example_v1"   # the first example
 TRAIT = "Trait1"
 MISSING = ["SAMPLE_003", "SAMPLE_017", "SAMPLE_042"]   # no covariate value
 

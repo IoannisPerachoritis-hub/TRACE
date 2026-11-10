@@ -27,7 +27,7 @@ from gwas.haplotype import HAP_ASSIGNMENT_COLUMNS, haplotype_assignments, run_ha
 from gwas.io import load_vcf_cached
 
 _ROOT = Path(__file__).resolve().parent.parent
-_EX = _ROOT / "examples"
+_EX = _ROOT / "tests" / "data" / "example_v1"   # the first example
 
 # block 1 (markers s0-s4; s4 duplicates s0): haplotypes A..F over s0-s3
 _PATTERNS = {"A": [0, 0, 0, 0], "B": [2, 2, 0, 0], "C": [0, 2, 2, 0],

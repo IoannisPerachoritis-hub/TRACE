@@ -63,24 +63,25 @@ p = p[np.isfinite(p) & (p > 0) & (p <= 1)]
 p = np.clip(p, 1e-300, 1.0)
 
 # Genomic inflation lambda_GC: median(chi^2_1 from p) / median chi^2_1 expected (0.4549).
-# Untrimmed because n_SNPs is small in the demo (510 < 500 trim threshold).
+# Untrimmed: the demo has only 600 SNPs.
 chisq = chi2.isf(p, df=1)
 lam = float(np.median(chisq) / 0.454936423119572)
 print(f"  lambda_GC = {lam:.3f}  (expected window: [0.85, 1.15])")
 assert 0.85 <= lam <= 1.15, f"FAIL: lambda_GC = {lam:.3f} outside [0.85, 1.15]"
 
-# At least one SNP on chr2 should be near-significant (Bonferroni 5%).
-# QTL was placed at chr02_860000 by examples/simulate_example.py.
+# At least one Bonferroni-significant SNP (5%) within 100 kb of the embedded QTL,
+# which examples/simulate_example.py places at chr02_1010000.
+QTL_POS = 1_010_000
 bonf = 0.05 / len(df)
 chr_str = df["Chr"].astype(str).str.lstrip("0").replace("", "0")
-chr2_hits = df[(chr_str == "2") & (df["PValue"] < bonf)]
-print(f"  Bonferroni 5% hits on chr2: {len(chr2_hits)} (QTL was placed on chr2)")
-assert len(chr2_hits) >= 1, (
-    f"FAIL: zero Bonferroni-significant SNPs on chr2 - "
+near = df[(chr_str == "2") & ((df["Pos"] - QTL_POS).abs() <= 100_000) & (df["PValue"] < bonf)]
+print(f"  Bonferroni 5% hits within 100 kb of the QTL chr02_1010000: {len(near)}")
+assert len(near) >= 1, (
+    f"FAIL: no Bonferroni-significant SNP within 100 kb of the QTL chr02_1010000 - "
     f"signal recovery broken (Bonf threshold {bonf:.2e})."
 )
 
-print("PASS: calibration in window AND chr2 QTL recovered.")
+print("PASS: calibration in window AND the chr2 QTL recovered.")
 PY
 
 echo "==[4/4]== Done."

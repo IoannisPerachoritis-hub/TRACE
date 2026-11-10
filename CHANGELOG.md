@@ -5,6 +5,14 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The example forms LD blocks at the defaults.** `examples/` now holds 100 inbred
+  lines and 600 SNPs on 3 chromosomes, mosaics of four founder haplotypes, so LD decays
+  with distance. Trait1's QTL (`chr02_1010000`) sits in an LD block: at the defaults
+  the CLI finds that block, tests its haplotypes and draws its LD heatmap, and the
+  GUI's defaults find the same block. The old example had independent SNPs and so no
+  block at the defaults. It is kept byte for byte in `tests/data/example_v1/` for the
+  tests that pin its numbers. `benchmarks/reproduce.sh` checks for a Bonferroni hit
+  within 100 kb of the new QTL.
 - **GFF3 gene files are read directly.** The gene file of the Gene Annotation tab,
   of One-Click's overrides and of `--gene-model` may be a GFF3, plain or gzip-compressed,
   recognised by its content rather than its name. Its `gene` rows give the chromosome,

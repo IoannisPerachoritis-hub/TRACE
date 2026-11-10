@@ -7,7 +7,8 @@ the end-to-end behaviour when the bundled tables are missing (a warning that
 names the path searched, a manifest that records the absence, and no
 candidate-gene table).
 
-The CLI cases drive the shipped ``examples/`` data because it carries a planted
+The CLI cases drive the first example data (``tests/data/example_v1/``, frozen
+from ``examples/``) because it carries a planted
 signal: the isolated-SNP rescue fires, so the presence/absence of
 ``Isolated_SNP_candidate_genes_*.csv`` is a real discriminator rather than a
 vacuous assertion on a run that would emit nothing either way.
@@ -27,7 +28,7 @@ from annotation import resolve_gene_model
 from cli import _build_parser, run_pipeline
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-_EXAMPLES = _REPO_ROOT / "examples"
+_EXAMPLES = _REPO_ROOT / "tests" / "data" / "example_v1"   # the first example, frozen
 
 
 class _Collector(logging.Handler):

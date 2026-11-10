@@ -31,7 +31,7 @@ import gwas.plotting as gp  # noqa: E402
 from annotation import canon_chr  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
-_EX = _ROOT / "examples"
+_EX = _ROOT / "tests" / "data" / "example_v1"   # the first example
 MODELS = ("MLM", "MLMM", "FarmCPU")
 
 
