@@ -5,6 +5,13 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The LD Decay tab is gone; the estimate is shown where it is used.** The Post-GWAS
+  page has five tabs. The LD Blocks & Haplotypes tab's Settings show, next to the LD
+  window, "LD decay (median across chromosomes): X kb, so the window is 2X kb" and a
+  collapsed "Show LD decay curve" with the per-chromosome summary and curve, both from
+  the GWAS page's estimate (the CLI's function and settings), with no recomputation.
+  The tab re-estimated the decay with its own settings and could make the GUI's window
+  differ from the CLI's. The window's default is unchanged.
 - **A simpler Gene Annotation tab, for LD blocks and unblocked SNPs.** Step 1 loads the
   gene models (the built-in one for the species and build, or your own gene file and,
   optionally, a descriptions file, with visible uploaders); Step 2 lists every LD block

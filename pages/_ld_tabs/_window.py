@@ -76,7 +76,7 @@ def select_window(ctx: LDContext) -> "RegionWindow | None":
     def _buffer_slider():
         # Seed the default ONCE; never pass value= to a keyed widget here. A
         # data-dependent value= (2x ld_decay_kb) would overwrite the user's manual
-        # buffer whenever ld_decay_kb changes (e.g. after the LD Decay tab computes
+        # buffer whenever ld_decay_kb changes (e.g. after a new GWAS run re-estimates
         # decay) -- the "buffer change doesn't stick" lag. With no value=, the slider
         # reads/writes session_state directly and the seed applies only on first render.
         if "ld_window_buffer_kb" not in st.session_state:

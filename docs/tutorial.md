@@ -122,9 +122,8 @@ explore the tabs:
 - **Significant SNPs**: the complete, never-truncated significant-SNP table, with each SNP marked in-block or unblocked.
 - **Regional Plot**: a locus-zoom view: −log₁₀(p) vs position, coloured by LD (r²) to the lead SNP, with a gene track.
 - **Local LD**: the pairwise r² heatmap for the selected window; for a detected block, the block with its neighbouring SNPs.
-- **Gene Annotation**: genes overlapping or flanking each LD block.
-- **LD Decay**: genome-wide LD decay, which sets the default block window.
-- **LD Blocks & Haplotypes**: detected blocks, haplotype-based association tests, and per-block MLG summaries.
+- **Gene Annotation**: every LD block and unblocked significant SNP, with the genes in its candidate interval (the marker before the first SNP to the marker after the last).
+- **LD Blocks & Haplotypes**: detected blocks, haplotype-based association tests, and per-block MLG summaries. Its Settings show the genome-wide LD decay (estimated on the GWAS page) that sets the default block window.
 
 ### Step 3: Help & Reference
 

@@ -17,7 +17,6 @@ from gwas.haplotype import mlg_labels_for_block
 from pages._ld_tabs import LDContext
 from pages._ld_tabs import tab_local_ld
 from pages._ld_tabs import tab_gene_annotation
-from pages._ld_tabs import tab_decay
 from pages._ld_tabs import tab_genome_wide
 from pages._ld_tabs import tab_significant_snps
 from pages._ld_tabs import tab_regional
@@ -545,13 +544,13 @@ def ld_analysis_page():
                 _cn = f" ({_ncc} chr grid-limited, upper bound)"
         st.markdown(
             f"**Trait:** `{trait_col}`  \n"
-            f"LD decay (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb (from Decay tab){_cn}"
+            f"LD decay (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb (estimated on the GWAS page){_cn}"
         )
     else:
         st.markdown(
             f"**Trait:** `{trait_col}`  \n"
-            f"LD decay estimate (r² ≤ 0.2): ~{ld_decay_kb:.1f} kb "
-            f"*(quick estimate; use Decay tab for full computation)*"
+            f"LD decay (r² ≤ 0.2): {ld_decay_kb:.1f} kb "
+            f"*(default: no estimate from the GWAS page in this session)*"
         )
     # --------------------------------------------------------
     # AUTO-BUILD peak-centric LD blocks once per trait
@@ -678,12 +677,13 @@ def ld_analysis_page():
     with st.expander("Region / lead-SNP selection (Regional Plot + Local LD)", expanded=True):
         _ld_window = select_window(_ld_ctx)
 
-    tab_sig, tab_reg, tab1, tab_genes, tab_decay_t, tab2 = st.tabs([
+    # five tabs: the LD-decay estimate is the GWAS page's, shown in the LD Blocks &
+    # Haplotypes tab's Settings next to the window it sets
+    tab_sig, tab_reg, tab1, tab_genes, tab2 = st.tabs([
         "Significant SNPs",
         "Regional Plot",
         "Local LD",
         "Gene Annotation",
-        "LD Decay",
         "LD Blocks & Haplotypes",
     ])
     with tab_sig:
@@ -697,9 +697,6 @@ def ld_analysis_page():
 
     with tab_genes:
         tab_gene_annotation.render(_ld_ctx)
-
-    with tab_decay_t:
-        tab_decay.render(_ld_ctx)
 
     with tab2:
         tab_genome_wide.render(

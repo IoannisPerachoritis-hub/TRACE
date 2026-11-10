@@ -194,8 +194,9 @@ def _gene_override_problem(data, chroms):
 def _compute_ld_decay_for_gwas_page(geno_key: str, chroms_tuple: tuple,
                                     positions_tuple: tuple):
     """
-    Accurate LD decay using compute_ld_decay_by_chromosome (same function
-    used by pages/_ld_tabs/tab_decay.py). Returns (decay_df, summary_df,
+    Accurate LD decay using compute_ld_decay_by_chromosome (the CLI's
+    function; Post-GWAS shows the result in the LD Blocks & Haplotypes
+    Settings). Returns (decay_df, summary_df,
     median_decay_kb). median_decay_kb may be None if no chromosome yielded
     a valid decay curve.
 
@@ -2767,7 +2768,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     # ============================================================
     # 6. Genome-wide LD DECAY: accurate per-chromosome computation
-    # (same function as Post-GWAS Analysis > Decay tab)
+    # (the CLI's function and settings; Post-GWAS shows this estimate in the LD Blocks &
+    # Haplotypes Settings, next to the window it sets)
     try:
         _manual_decay_df, _manual_summary_df, _manual_median = _compute_ld_decay_for_gwas_page(
             geno_key=geno_key,

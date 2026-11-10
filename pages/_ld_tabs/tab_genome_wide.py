@@ -347,6 +347,55 @@ def _rule_short_name(rule_label, custom=None):
     return label.split(":")[0].split(" (")[0].strip()
 
 
+def ld_window_default_kb(ld_decay_kb):
+    """The LD window's default (kb): 2 x the LD decay, kept within 200 to 2000 kb."""
+    return float(np.clip(float(ld_decay_kb) * 2, 200, 2000))
+
+
+def _kb(v):
+    """A distance in kb to one decimal, without a trailing .0."""
+    return f"{round(float(v), 1):g}"
+
+
+def ld_decay_line(ld_decay_kb, estimated):
+    """The Settings panel's line on the LD decay behind the window's default: the GWAS
+    page's estimate (median across chromosomes), or the default when there is none."""
+    x = float(ld_decay_kb)
+    window = ld_window_default_kb(x)
+    if not estimated:
+        return (f"LD decay: no estimate from the GWAS page in this session, so the default "
+                f"{_kb(x)} kb is used and the window is {_kb(window)} kb.")
+    text = (f"LD decay (median across chromosomes): {_kb(x)} kb, so the window is "
+            f"{_kb(window)} kb")
+    if window != 2 * x:
+        text += (f" (2 × {_kb(x)} kb, held at the "
+                 f"{'200 kb minimum' if window == 200 else '2000 kb maximum'})")
+    return text + "."
+
+
+def _render_ld_decay_curve():
+    """The GWAS page's LD-decay estimate behind the window's default: its per-chromosome
+    summary and curve, shown, not recomputed."""
+    decay_df = st.session_state.get("ld_decay_df")
+    summary_df = st.session_state.get("ld_decay_summary")
+    with st.expander("Show LD decay curve", expanded=False):
+        if decay_df is None or getattr(decay_df, "empty", True):
+            st.info("No LD decay curve in this session: the GWAS page estimates it when "
+                    "the GWAS runs.")
+            return
+        if summary_df is not None and not getattr(summary_df, "empty", True):
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+            if ("censored_r2_0.2" in summary_df.columns
+                    and bool(summary_df["censored_r2_0.2"].any())):
+                st.caption("`censored_r2_0.2`: for these chromosomes the r² ≤ 0.2 crossing "
+                           "falls in the first distance bin, so read their value as an "
+                           "upper bound.")
+        from annotation import plot_ld_decay_matplotlib
+        _decay_fig, _decay_ax = plot_ld_decay_matplotlib(decay_df, summary_df)
+        show_plot(_decay_fig, "medium", data=decay_df, data_name="ld_decay_curve")
+        plt.close(_decay_fig)
+
+
 def settings_summary(seed_p, top_n, flank_kb, ld_r2, n_perm, min_hap_count, min_group_size,
                      gallery_rule, gallery_custom=None):
     """The Settings panel's one line: the values in use, e.g. "Seeds P < 1e-05 plus top 10
@@ -396,7 +445,7 @@ def _render_settings(ctx):
             value=10,
             step=1,
         )
-        flank_kb_default = float(np.clip(ctx.ld_decay_kb * 2, 200, 2000))
+        flank_kb_default = ld_window_default_kb(ctx.ld_decay_kb)
         flank_kb_auto = st.number_input(
             "LD window around each lead SNP (kb)",
             min_value=10.0,
@@ -410,6 +459,10 @@ def _render_settings(ctx):
                 "default is 2× the measured LD decay distance."
             ),
         )
+        # the LD decay behind the default, estimated on the GWAS page (not recomputed here)
+        st.caption(ld_decay_line(ctx.ld_decay_kb,
+                                 bool(st.session_state.get("ld_decay_computed", False))))
+        _render_ld_decay_curve()
         ld_threshold_auto = st.number_input(
             "r² threshold for cluster definition",
             min_value=0.1,
