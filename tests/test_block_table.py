@@ -78,6 +78,18 @@ def test_the_compact_view_and_untested_tables():
     assert len(none) == 3
 
 
+def test_the_candidate_interval_sits_after_end():
+    iv = pd.DataFrame({"Interval_start": [900, 4000, 100], "Interval_end": [3500, 9800, 900]})
+    t = merge_block_table(BLOCKS, HAP, COH, untested=WHY, intervals=iv)
+    cols = list(t.columns)
+    at = cols.index("End")
+    assert cols[at + 1: at + 3] == ["Interval start", "Interval end"]
+    assert t["Interval start"].tolist() == [900, 4000, 100]
+    assert t["Interval end"].tolist() == [3500, 9800, 900]
+    assert t["Start"].tolist() == [1000, 5000, 200]                # the block span is kept
+    assert list(compact_view(t).columns) == COMPACT_COLUMNS         # the default view as before
+
+
 def test_the_window_eta2_is_in_the_csv_only():
     t = merge_block_table(BLOCKS, HAP, COH, untested=WHY)     # EtaSq differs from eta2
     window = "η² (all SNPs in the block window)"

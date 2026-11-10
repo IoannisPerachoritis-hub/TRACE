@@ -80,11 +80,12 @@ st.markdown("""
 | Column | Meaning |
 |--------|---------|
 | **Chr** | Chromosome |
-| **Start (bp)** / **End (bp)** | Physical boundaries of the LD block |
+| **Start (bp)** / **End (bp)** | The LD block's first and last SNP: its member span, which the LD and haplotype steps use |
+| **Interval_start** / **Interval_end** | The block's candidate interval: from the nearest marker before its first SNP to the nearest after its last, since the haplotype's true boundary lies in between. Genes are searched here |
 | **N_SNPs** | Number of SNPs in the block |
 | **lead_snp** | The block's most significant SEEDING SNP (smallest GWAS p-value among the significant SNPs that formed the block). It may not be a member of the block's LD-connected SNPs. **lead_snp_pvalue** gives its p-value. |
-| **overlapping_genes** | Genes whose coordinates overlap with the block |
-| **upstream_gene_1** / **downstream_gene_1** | Nearest flanking genes outside the block |
+| **overlapping_genes** | Genes that overlap the candidate interval; nothing outside it is listed |
+| **annotation_status** | `overlapping`, or `no_genes_nearby` when no gene lies inside the interval |
 """)
 
 st.subheader("Haplotype GWAS Results")

@@ -105,12 +105,12 @@ as *unblocked*, with its candidate interval, gene count, and gene-evidence label
 | 27 | `Nearest_Typed_Upstream_bp` | int | Distance to it, base pairs. |
 | 28 | `Nearest_Typed_Downstream_SNP` | str | Nearest typed marker downstream. |
 | 29 | `Nearest_Typed_Downstream_bp` | int | Distance to it, base pairs. |
-| 30 | `Interval_Start_bp` | int | Candidate-interval start: the block bounds when `in_block`, else the flanking-marker interval. Blank if none. |
+| 30 | `Interval_Start_bp` | int | Candidate-interval start. The interval runs from the nearest post-QC marker before the first SNP (the block's first SNP when `in_block`, else the SNP or run of unblocked SNPs) to the nearest marker after the last; at a chromosome edge it reaches a fixed flank past the SNP, and wider than 5 Mb it is clamped around the lead SNP. Genes are searched here. Blank if none. |
 | 31 | `Interval_End_bp` | int | Candidate-interval end. |
 | 32 | `Interval_Bounded_By` | str | `typed_snps` / `chromosome_start` / `chromosome_end` / `chromosome_both`. |
 | 33 | `N_Genes_Interval` | int | Genes in the interval; blank (`<NA>`) when no gene annotation is loaded, **not `0`**. |
-| 34 | `Candidate_Genes` | str | `;`-joined gene IDs (overlapping + up to two flanking each side). |
-| 35 | `Gene_Evidence` | str | `no_annotation_loaded` / `no_gene_within_interval` / `overlapping_interval` / `flanking_within_500kb` / `custom_gene_model`. |
+| 34 | `Candidate_Genes` | str | `;`-joined IDs of the genes that overlap the candidate interval; nothing outside it is listed. |
+| 35 | `Gene_Evidence` | str | `no_annotation_loaded` / `no_gene_within_interval` / `overlapping_interval` / `custom_gene_model`. |
 | 36 | `Genome_Build` | str | Gene-model build used for annotation (e.g. `SL3`), or `custom`. |
 | 37 | `Plot_Rendered` | bool | Whether a per-SNP effect plot was rendered for this SNP (subject to the plot budget). |
 | 38 | `Withheld_Reason` | str | Why a plot was withheld; empty when one was rendered. |

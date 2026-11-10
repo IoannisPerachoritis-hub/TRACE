@@ -66,14 +66,17 @@ def _keep_one(df, keep, other, name, other_name):
     return df.rename(columns={keep: name})
 
 
-def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, seed_p=None):
+def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, seed_p=None,
+                      intervals=None):
     """One row per detected block: the block, its haplotype test and its LD coherence.
 
     ``blocks`` is the detected blocks (Chr, Start (bp), End (bp), ...); ``hap_result``
     the haplotype test's table (Chr, Start, End, ...; the tested blocks only);
     ``coherence`` the LD-coherence table (Chr, Start (bp), End (bp), ldq_*); ``untested``
     {"Chr:Start-End": reason} for the blocks the test left out; ``seed_p`` adds "Seed
-    significant" (the lead SNP's p-value below the seed threshold).
+    significant" (the lead SNP's p-value below the seed threshold); ``intervals``
+    (gwas.isolated.block_candidate_intervals, aligned to ``blocks``) adds "Interval start"
+    and "Interval end" after "End": the region the gene search uses.
     """
     b = blocks.reset_index(drop=True).copy()
     key = pd.DataFrame({"_c": b["Chr"].map(_canon), "_s": b["Start (bp)"].astype(int),
@@ -135,6 +138,14 @@ def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, se
         elif "ldq_r2_mean" in qcols.columns:
             qcols = qcols.rename(columns={"ldq_r2_mean": "Mean r²"})
         out = pd.concat([out, qcols.rename(columns=_COH_NAMES)], axis=1)
+
+    # the block's candidate interval: the marker before its first SNP to the marker after
+    # its last (the block's own Start/End stay its member span)
+    if intervals is not None and len(intervals) == len(out):
+        iv = intervals.reset_index(drop=True)
+        at = out.columns.get_loc("End") + 1
+        out.insert(at, "Interval start", iv["Interval_start"].to_numpy())
+        out.insert(at + 1, "Interval end", iv["Interval_end"].to_numpy())
     return out
 
 

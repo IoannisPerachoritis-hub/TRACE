@@ -846,11 +846,13 @@ def plot_regional_association_static(
                                             float(pos_mb.min()), float(pos_mb.max()))
         if _mode == "fill":
             ax.axvspan(_bs, _be, color=PALETTE["cyan"], alpha=0.25, zorder=0)
-            marker_handles.append(Patch(facecolor=PALETTE["cyan"], alpha=0.25, label="LD block"))
+            marker_handles.append(Patch(facecolor=PALETTE["cyan"], alpha=0.25,
+                                        label="Candidate interval"))
         elif _mode == "edges":
             for _x in (_bs, _be):
                 ax.axvline(_x, color=PALETTE["cyan"], ls=":", lw=1.2, zorder=1)
-            marker_handles.append(Line2D([0], [0], color=PALETTE["cyan"], ls=":", label="LD block edges"))
+            marker_handles.append(Line2D([0], [0], color=PALETTE["cyan"], ls=":",
+                                         label="Candidate interval edges"))
 
     is_lead = snp_ids == str(lead_snp)
     nl = ~is_lead

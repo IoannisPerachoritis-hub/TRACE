@@ -39,7 +39,7 @@ _canon_chr = canon_chr  # backward-compat alias
 # for the evidence columns, so "distance_only" means the same thing on both tracks.
 INTERVAL_EVIDENCE_CLASSES = ("ld_supported", "distance_only")   # class of evidence delimiting an interval
 LOCALIZATION_SUPPORT = ("block_member_snps", "flanking_markers_only")  # how the interval bounds were set
-GENE_RELATIONS = ("overlapping", "flanking_upstream", "flanking_downstream")  # gene ↔ interval relation
+GENE_RELATIONS = ("overlapping",)  # gene ↔ interval relation: a gene counts when it overlaps
 
 
 def load_gene_model(path) -> pd.DataFrame:
@@ -237,20 +237,6 @@ def _find_overlapping_genes(genes_chr, block_start, block_end):
     return genes_chr.loc[mask].copy()
 
 
-def _find_flanking_genes(genes_chr, block_start, block_end, n_flank=2, max_dist_bp=500_000):
-    upstream = genes_chr[genes_chr["End"] < block_start].copy()
-    upstream["dist_to_block"] = block_start - upstream["End"]
-    upstream = upstream[upstream["dist_to_block"] <= max_dist_bp]
-    upstream = upstream.nlargest(n_flank, "Start")
-
-    downstream = genes_chr[genes_chr["Start"] > block_end].copy()
-    downstream["dist_to_block"] = downstream["Start"] - block_end
-    downstream = downstream[downstream["dist_to_block"] <= max_dist_bp]
-    downstream = downstream.nsmallest(n_flank, "Start")
-
-    return upstream, downstream
-
-
 def summarize_gene_model(genes_df):
     """Per-chromosome summary of a loaded gene model, for upload-time validation.
 
@@ -287,28 +273,28 @@ def summarize_gene_model(genes_df):
     return out
 
 
-def annotate_ld_blocks(
-    ld_blocks,
-    genes,
-    n_flank=2,
-    max_flank_dist_bp=500_000,
-):
+def annotate_ld_blocks(ld_blocks, genes):
     """
-    Annotate LD blocks with overlapping + flanking genes.
+    Annotate each row with the genes that overlap its candidate interval.
+
+    The interval is ``Interval_start`` / ``Interval_end`` when the row has them (an LD
+    block's interval from the marker before its first SNP to the marker after its last:
+    gwas.isolated.block_candidate_intervals), else the row's own Start/End (an unblocked
+    SNP's interval is its ``Start (bp)`` / ``End (bp)``). A gene counts when it overlaps
+    the interval; nothing outside it is listed.
 
     Parameters
     ----------
-    ld_blocks : DataFrame with Chr, Start/Start (bp), End/End (bp)
+    ld_blocks : DataFrame with Chr, Start/Start (bp), End/End (bp) and, for LD blocks,
+        Interval_start / Interval_end
     genes : DataFrame from load_gene_annotation()
-    n_flank : how many flanking genes upstream/downstream
-    max_flank_dist_bp : max distance to search for flanking genes
 
     Returns
     -------
-    DataFrame with added columns:
-        n_genes_overlapping, overlapping_genes, overlapping_descriptions,
-        annotation_status, upstream_gene_1, upstream_dist_1, upstream_desc_1, ...
-        downstream_gene_1, downstream_dist_1, downstream_desc_1, ...
+    The rows (Start/End as ``Start (bp)`` / ``End (bp)``) with added columns
+    n_genes_overlapping, overlapping_genes, overlapping_descriptions and
+    annotation_status: "overlapping", or "no_genes_nearby" when no gene lies inside
+    the interval.
     """
     if ld_blocks is None or ld_blocks.empty:
         return ld_blocks
@@ -320,6 +306,7 @@ def annotate_ld_blocks(
     out["Chr"] = out["Chr"].astype(str).map(canon_chr)
     out["Start"] = out["Start"].astype(int)
     out["End"] = out["End"].astype(int)
+    by_interval = {"Interval_start", "Interval_end"}.issubset(out.columns)
 
     genes = genes.copy()
     genes["Chr"] = genes["Chr"].astype(str).map(canon_chr)
@@ -330,33 +317,22 @@ def annotate_ld_blocks(
     overlapping_desc_list = []
     annotation_status_list = []
 
-    flank_data = {}
-    for direction in ("upstream", "downstream"):
-        for i in range(n_flank):
-            flank_data[f"{direction}_gene_{i+1}"] = []
-            flank_data[f"{direction}_dist_{i+1}"] = []
-            flank_data[f"{direction}_desc_{i+1}"] = []
-
     for _, row in out.iterrows():
         ch = str(row["Chr"])
-        s, e = int(row["Start"]), int(row["End"])
+        if by_interval:
+            s, e = int(row["Interval_start"]), int(row["Interval_end"])
+        else:
+            s, e = int(row["Start"]), int(row["End"])
 
         genes_chr = genes_by_chr.get(ch, pd.DataFrame())
-
         if genes_chr.empty:
             n_genes_list.append(0)
             overlapping_genes_list.append("")
             overlapping_desc_list.append("")
             annotation_status_list.append("no_genes_nearby")
-            for direction in ("upstream", "downstream"):
-                for i in range(n_flank):
-                    flank_data[f"{direction}_gene_{i+1}"].append("")
-                    flank_data[f"{direction}_dist_{i+1}"].append(np.nan)
-                    flank_data[f"{direction}_desc_{i+1}"].append("")
             continue
 
         overlap = _find_overlapping_genes(genes_chr, s, e)
-
         n_genes_list.append(len(overlap))
         overlapping_genes_list.append(";".join(overlap["Gene_ID"].tolist()))
         overlapping_desc_list.append(
@@ -365,42 +341,12 @@ def annotate_ld_blocks(
                 for g, d in zip(overlap["Gene_ID"], overlap["Description"])
             )
         )
-
-        upstream, downstream = _find_flanking_genes(
-            genes_chr, s, e, n_flank=n_flank, max_dist_bp=max_flank_dist_bp,
-        )
-
-        if len(overlap) > 0:
-            annotation_status_list.append("overlapping")
-        elif len(upstream) > 0 or len(downstream) > 0:
-            annotation_status_list.append("intergenic")
-        else:
-            annotation_status_list.append("no_genes_nearby")
-
-        for direction, flank_df in [("upstream", upstream), ("downstream", downstream)]:
-            if direction == "upstream":
-                flank_sorted = flank_df.sort_values("Start", ascending=False).reset_index(drop=True)
-            else:
-                flank_sorted = flank_df.sort_values("Start", ascending=True).reset_index(drop=True)
-
-            for i in range(n_flank):
-                if i < len(flank_sorted):
-                    r = flank_sorted.iloc[i]
-                    flank_data[f"{direction}_gene_{i+1}"].append(str(r["Gene_ID"]))
-                    flank_data[f"{direction}_dist_{i+1}"].append(int(r["dist_to_block"]))
-                    flank_data[f"{direction}_desc_{i+1}"].append(str(r.get("Description", "")))
-                else:
-                    flank_data[f"{direction}_gene_{i+1}"].append("")
-                    flank_data[f"{direction}_dist_{i+1}"].append(np.nan)
-                    flank_data[f"{direction}_desc_{i+1}"].append("")
+        annotation_status_list.append("overlapping" if len(overlap) > 0 else "no_genes_nearby")
 
     out["n_genes_overlapping"] = n_genes_list
     out["overlapping_genes"] = overlapping_genes_list
     out["overlapping_descriptions"] = overlapping_desc_list
     out["annotation_status"] = annotation_status_list
-
-    for k, v in flank_data.items():
-        out[k] = v
 
     out = out.rename(columns={"Start": "Start (bp)", "End": "End (bp)"})
     return out
@@ -460,8 +406,7 @@ def consolidate_ld_block_table(ld_blocks, hap_gwas=None, annotated_blocks=None):
 
 def format_annotation_summary(annotated_blocks):
     """
-    Compact paper-ready annotation summary.
-    Shows overlapping genes, or flanking genes for intergenic blocks.
+    Compact paper-ready annotation summary: the genes in each block's candidate interval.
     """
     if annotated_blocks is None or annotated_blocks.empty:
         return pd.DataFrame()
@@ -482,35 +427,11 @@ def format_annotation_summary(annotated_blocks):
                 "Descriptions": str(r["overlapping_descriptions"]),
             })
 
-        elif status == "intergenic":
-            parts = []
-            for direction, arrow in [("upstream", "\u2191"), ("downstream", "\u2193")]:
-                gene = str(r.get(f"{direction}_gene_1", ""))
-                dist = r.get(f"{direction}_dist_1", np.nan)
-                desc = str(r.get(f"{direction}_desc_1", ""))
-                if gene:
-                    d_kb = f"{int(dist)/1000:.1f} kb" if pd.notna(dist) else "?"
-                    parts.append(f"{arrow} {gene} ({d_kb} {direction})")
-
-            descs = []
-            for direction, arrow in [("upstream", "\u2191"), ("downstream", "\u2193")]:
-                gene = str(r.get(f"{direction}_gene_1", ""))
-                desc = str(r.get(f"{direction}_desc_1", ""))
-                if gene and desc:
-                    descs.append(f"{arrow} {gene}: {desc}")
-
-            rows.append({
-                "Block": block_label,
-                "Block_kb": round(block_kb, 1),
-                "Status": "Intergenic",
-                "Genes": " ; ".join(parts) if parts else "\u2014",
-                "Descriptions": " | ".join(descs) if descs else "\u2014",
-            })
         else:
             rows.append({
                 "Block": block_label,
                 "Block_kb": round(block_kb, 1),
-                "Status": "No genes within 500 kb",
+                "Status": "No genes in the candidate interval",
                 "Genes": "\u2014",
                 "Descriptions": "\u2014",
             })

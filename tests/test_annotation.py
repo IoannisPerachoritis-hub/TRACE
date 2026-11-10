@@ -136,20 +136,20 @@ class TestAnnotateLdBlocks:
         })
 
     def test_overlapping_genes_found(self, ld_blocks_df, genes_df):
-        out = annotate_ld_blocks(ld_blocks_df, genes_df, n_flank=2)
+        out = annotate_ld_blocks(ld_blocks_df, genes_df)
         assert "n_genes_overlapping" in out.columns
         # Block on chr1 [200,600] overlaps Gene1 [100,400] and Gene2 [500,900]
         assert out.iloc[0]["n_genes_overlapping"] == 2
 
-    def test_flanking_gene_columns_present(self, ld_blocks_df, genes_df):
-        out = annotate_ld_blocks(ld_blocks_df, genes_df, n_flank=2)
-        for d in ("upstream", "downstream"):
-            for i in (1, 2):
-                assert f"{d}_gene_{i}" in out.columns
-                assert f"{d}_dist_{i}" in out.columns
+    def test_no_flanking_gene_columns(self, ld_blocks_df, genes_df):
+        """A gene counts when it overlaps the interval; nothing outside it is listed."""
+        out = annotate_ld_blocks(ld_blocks_df, genes_df)
+        assert not [c for c in out.columns if c.startswith(("upstream_", "downstream_"))]
+        assert list(out.columns[-4:]) == ["n_genes_overlapping", "overlapping_genes",
+                                          "overlapping_descriptions", "annotation_status"]
 
     def test_annotation_status(self, ld_blocks_df, genes_df):
-        out = annotate_ld_blocks(ld_blocks_df, genes_df, n_flank=2)
+        out = annotate_ld_blocks(ld_blocks_df, genes_df)
         assert out.iloc[0]["annotation_status"] == "overlapping"
 
     def test_empty_blocks_returns_empty(self, genes_df):
@@ -168,22 +168,32 @@ class TestAnnotateLdBlocks:
             "Start (bp)": [200],
             "End (bp)": [600],
         })
-        out = annotate_ld_blocks(blocks, genes_df, n_flank=1)
+        out = annotate_ld_blocks(blocks, genes_df)
         assert "n_genes_overlapping" in out.columns
         assert out.iloc[0]["n_genes_overlapping"] >= 1
 
     def test_chr2_block_overlap(self, ld_blocks_df, genes_df):
         """Block on chr2 [50,200] should overlap Gene4 [100,300]."""
-        out = annotate_ld_blocks(ld_blocks_df, genes_df, n_flank=2)
+        out = annotate_ld_blocks(ld_blocks_df, genes_df)
         assert out.iloc[1]["n_genes_overlapping"] == 1
         assert "Gene4" in out.iloc[1]["overlapping_genes"]
 
-    def test_n_flank_parameter(self, genes_df):
-        """Test with n_flank=3 produces more flanking columns."""
-        blocks = pd.DataFrame({"Chr": ["1"], "Start": [200], "End": [600]})
-        out = annotate_ld_blocks(blocks, genes_df, n_flank=3)
-        assert "upstream_gene_3" in out.columns
-        assert "downstream_gene_3" in out.columns
+    def test_annotates_over_the_candidate_interval(self, genes_df):
+        """With Interval_start/Interval_end, the genes overlapping the interval count and
+        the block's own Start/End are kept; a row with no gene inside is no_genes_nearby."""
+        blocks = pd.DataFrame({"Chr": ["1"], "Start (bp)": [950], "End (bp)": [1100],
+                               "Interval_start": [450], "Interval_end": [1250]})
+        out = annotate_ld_blocks(blocks, genes_df)
+        # the block [950, 1100] overlaps no gene; its interval [450, 1250] holds Gene2
+        # [500, 900] and Gene3 [1200, 1500], not Gene1 [100, 400]
+        assert out.iloc[0]["overlapping_genes"] == "Gene2;Gene3"
+        assert out.iloc[0]["n_genes_overlapping"] == 2
+        assert out.iloc[0]["annotation_status"] == "overlapping"
+        assert (out.iloc[0]["Start (bp)"], out.iloc[0]["End (bp)"]) == (950, 1100)
+        bare = annotate_ld_blocks(blocks.drop(columns=["Interval_start", "Interval_end"]),
+                                  genes_df)
+        assert bare.iloc[0]["n_genes_overlapping"] == 0
+        assert bare.iloc[0]["annotation_status"] == "no_genes_nearby"
 
 
 # ── consolidate_ld_block_table ──────────────────────────────

@@ -116,7 +116,7 @@ def _timed(label, gwas_df, chroms, positions, geno, sid, geno_df, pheno_df, tcol
         th.append(time.perf_counter() - t1); peak_rss = max(peak_rss, _rss_mb())
         t2 = time.perf_counter()
         if genes is not None and not blocks.empty:
-            annotate_ld_blocks(blocks.copy(), genes, n_flank=2, max_flank_dist_bp=500_000)
+            annotate_ld_blocks(blocks.copy(), genes)
         ta.append(time.perf_counter() - t2); peak_rss = max(peak_rss, _rss_mb())
         nb = len(blocks)
     n, m = geno.shape

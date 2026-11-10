@@ -11,6 +11,7 @@ Thin renderer over the pure functions in ``gwas.plotting``; the window comes fro
 the shared selector (``pages/_ld_tabs/_window.py``) so this and Local LD render one
 selection.
 """
+import logging
 import re
 from io import BytesIO
 
@@ -27,7 +28,7 @@ from gwas.plotting import (
     _clamp_block_span,
     MAX_REGIONAL_SNPS,
 )
-from gwas.significance import rule_from_streamlit
+from gwas.significance import frame_for_rule, rule_from_streamlit
 from utils.pub_theme import export_matplotlib, show_plot
 from . import LDContext
 
@@ -49,12 +50,13 @@ def _members_by_bounds(hd, core_start, core_end):
 
 
 def _block_for_window(ctx, window):
-    """(interval, members) for the shaded LD-block span, or (None, None).
+    """(member span, members) of the LD block the window shows, or (None, None). The
+    shaded span is that block's candidate interval (``_candidate_span``).
 
     Detected-block mode carries explicit bounds (``window.core_start`` set) → use
     them. In lead-SNP mode, shade the detected block CONTAINING the lead (membership
     first, else positional containment) so a span appears with no checkbox. No
-    containing block → (None, None) and the caller shades the flanking interval.
+    containing block → (None, None) and the caller shades the SNP's candidate interval.
     """
     hd = ctx.haplo_df_auto
     if window.core_start is not None:
@@ -73,16 +75,37 @@ def _block_for_window(ctx, window):
     return None, None
 
 
-def _flank_interval(positions_in_window, lead_pos):
-    """Nearest typed markers flanking the lead: the isolated-SNP fallback span."""
-    pos = np.sort(np.asarray(positions_in_window, dtype=float))
-    if pos.size == 0:
+def _candidate_span(ctx, window, rule, gwas_df, block_span):
+    """The span to shade: the candidate interval, the region the gene search uses
+    (gwas.isolated, the CLI's rule over the run's post-QC markers). With an LD block
+    (``block_span``, its member span) it is the block's: the marker before its first SNP
+    to the marker after its last. Otherwise it is the interval of the run of unblocked
+    significant SNPs that holds the lead SNP, else the lead SNP's own (the marker before
+    it to the marker after it). None if it cannot be computed."""
+    from gwas import isolated as iso
+
+    edge = iso.edge_flank_bp_from_decay(ctx.ld_decay_kb)
+
+    def _one(start, end):
+        one = pd.DataFrame({"Chr": [window.chr], "Start (bp)": [int(start)],
+                            "End (bp)": [int(end)], "lead_snp": [str(window.lead_snp)]})
+        iv = iso.block_candidate_intervals(one, ctx.chroms, ctx.positions, ctx.sid,
+                                           edge_flank_bp=edge)
+        return int(iv["Interval_start"].iloc[0]), int(iv["Interval_end"].iloc[0])
+
+    try:
+        if block_span is not None:
+            return _one(*block_span)
+        table = iso.candidate_interval_table(
+            ctx.haplo_df_auto, frame_for_rule(gwas_df, rule), rule,
+            ctx.chroms, ctx.positions, ctx.sid, edge_flank_bp=edge)
+        for _, r in table[table["Type"] == "unblocked SNP"].iterrows():
+            if str(window.lead_snp) in set(str(r["SNP_IDs"]).split(",")):
+                return int(r["Interval_start"]), int(r["Interval_end"])
+        return _one(window.lead_pos, window.lead_pos)
+    except Exception:
+        logging.getLogger(__name__).exception("candidate interval for the regional plot")
         return None
-    left = pos[pos < lead_pos]
-    right = pos[pos > lead_pos]
-    lo = int(left.max()) if left.size else int(pos.min())
-    hi = int(right.min()) if right.size else int(pos.max())
-    return (lo, hi) if lo != hi else None
 
 
 def _filter_genes(genes_df, chr_sel, start_bp, end_bp):
@@ -173,10 +196,10 @@ def render(ctx: LDContext, window):
     sig_threshold = rule.p_threshold  # None for FDR -> no horizontal line
 
     block_interval, block_members = _block_for_window(ctx, window)
-    is_flank = False
-    if block_interval is None:
-        block_interval = _flank_interval(wdf["Pos"].to_numpy(), window.lead_pos)
-        is_flank = block_interval is not None
+    is_flank = block_interval is None
+    # the shaded span is the candidate interval, the region the gene search uses
+    block_interval = _candidate_span(ctx, window, rule, gwas_df, block_interval)
+    is_flank = is_flank and block_interval is not None
 
     seed_threshold = float(st.session_state.get("ld_seed_p", 1e-5))
     genes = _filter_genes(st.session_state.get("genes_df"), window.chr,
@@ -199,22 +222,27 @@ def render(ctx: LDContext, window):
         _bs, _be, _mode = _clamp_block_span(block_interval[0] / 1e6, block_interval[1] / 1e6,
                                             _xlo, _xhi)
     if is_flank:
-        st.caption("No LD block here; the shaded span is the **flanking-marker interval** "
-                   "around the SNP, not an LD block.")
+        st.caption("No LD block here; the shaded span is the SNP's **candidate interval**, "
+                   "from the marker before it to the marker after it: the region the Gene "
+                   "Annotation tab searches. It is not an LD block.")
     elif block_interval is not None:
         _b0, _b1 = block_interval
+        st.caption("The shaded span is the LD block's **candidate interval**, from the marker "
+                   "before its first SNP to the marker after its last: the region the Gene "
+                   "Annotation tab searches.")
         if _mode == "edges":
-            st.caption("The LD block spans essentially the whole window, so its edges are "
-                       "marked instead of a shaded fill; widen the buffer to restore the shaded span.")
+            st.caption("The candidate interval spans essentially the whole window, so its "
+                       "edges are marked instead of a shaded fill; widen the buffer to "
+                       "restore the shaded span.")
         elif _mode == "none":
-            st.caption("The LD block clamps to an empty span within the view; nothing is shaded.")
+            st.caption("The candidate interval clamps to an empty span within the view; "
+                       "nothing is shaded.")
         elif _b0 < int(wdf["Pos"].min()) or _b1 > int(wdf["Pos"].max()):
-            st.caption(f"LD block Chr{window.chr}:{_b0:,}-{_b1:,} "
+            st.caption(f"Candidate interval Chr{window.chr}:{_b0:,}-{_b1:,} "
                        f"({(_b1 - _b0) / 1000:,.0f} kb) extends beyond the plotted window; "
                        "the shaded span is clipped to the view.")
     else:
-        st.caption("No LD block or flanking interval to shade here "
-                   "(the lead is the only typed marker in the window).")
+        st.caption("No candidate interval to shade here.")
     if n_typed_r2 == 0:
         st.caption("r² to the lead is not computable for these markers (e.g. a single typed "
                    "marker); points are shown in grey.")

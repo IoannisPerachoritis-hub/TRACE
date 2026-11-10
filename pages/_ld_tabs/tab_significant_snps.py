@@ -60,7 +60,9 @@ def render(ctx: LDContext):
         )
     rule = rule_from_streamlit(label, len(gwas_df), ctx.meff_val, custom_thresh=_tab_custom_thresh)
 
-    edge_flank_bp = int((ctx.ld_decay_kb or 300) * 1000)
+    # the CLI's edge rule (2 x LD decay, else 300 kb), so the intervals are the CLI's
+    from gwas.isolated import edge_flank_bp_from_decay
+    edge_flank_bp = edge_flank_bp_from_decay(ctx.ld_decay_kb)
     ld_decay_bp = int(ctx.ld_decay_kb * 1000) if ctx.ld_decay_kb else None
     try:
         # frame_for_rule: this tab's own custom p-value, not a stored Significant_Custom

@@ -13,11 +13,13 @@ signal: the isolated-SNP rescue fires, so the presence/absence of
 vacuous assertion on a run that would emit nothing either way.
 """
 import contextlib
+import io
 import json
 import logging
 import pathlib
 import zipfile
 
+import pandas as pd
 import pytest
 
 import annotation
@@ -151,12 +153,16 @@ def _run_example(out_dir):
 @pytest.mark.skipif(not (_EXAMPLES / "example.vcf.gz").exists(),
                     reason="examples/example.vcf.gz not present")
 def test_bundled_gene_model_is_used_and_recorded(tmp_path):
-    """Positive control: the gene model resolves, so the candidate-gene table is
-    written and the manifest names the file that produced it."""
+    """Positive control: the gene model resolves, so every unblocked SNP's interval
+    carries a gene count (blank without a gene model) and the manifest names the file
+    that produced it. The candidate-gene table lists only the genes inside the intervals,
+    so it is written only when one holds a gene (the example's hold none)."""
     with capture_cli_log() as messages:
         names, meta = _run_example(tmp_path / "out_ok")
 
-    assert any("Isolated_SNP_candidate_genes" in n for n in names), names
+    with zipfile.ZipFile(next((tmp_path / "out_ok").glob("*.zip"))) as zf:
+        iv = pd.read_csv(io.BytesIO(zf.read("tables/Isolated_SNP_intervals_MLM.csv")))
+    assert len(iv) and iv["n_genes_in_interval"].notna().all(), iv["n_genes_in_interval"]
     assert meta["Gene model"] == "Sol_genes_SL3.csv"
     assert meta["Gene model status"].startswith("used: ")
     assert not any("Gene model unavailable" in m for m in messages), messages

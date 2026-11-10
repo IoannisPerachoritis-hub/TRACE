@@ -679,10 +679,8 @@ def _run_trait(parsed, pheno, args):
     # calls the block detector (gwas/isolated.py has no gwas.ld import).
     from gwas import isolated as _iso
     _do_rescue = not getattr(args, "no_isolated_rescue", False)
-    _iso_edge_flank_bp = (
-        int(args.isolated_edge_flank_kb) * 1000 if getattr(args, "isolated_edge_flank_kb", None)
-        else (int(ld_flank_kb) * 1000 if ld_flank_kb else 300_000)
-    )
+    _iso_edge_flank_bp = _iso.default_edge_flank_bp(
+        getattr(args, "isolated_edge_flank_kb", None), ld_flank_kb)
     _iso_max_interval_bp = int(float(getattr(args, "isolated_max_interval_mb", 5.0)) * 1_000_000)
     _iso_low_res_bp = (int(args.isolated_low_res_kb) * 1000
                        if getattr(args, "isolated_low_res_kb", None) else None)
@@ -901,22 +899,36 @@ def _run_trait(parsed, pheno, args):
         except Exception as e:
             log.warning("  Haplotype testing failed for %s: %s", model_name, e)
 
-        # Gene annotation. The gene frame was resolved and loaded once above the
-        # loop; when it is None the reason was already reported there, loudly.
+        # Each block's candidate interval: from the marker before its first SNP to the
+        # marker after its last, by the isolated-SNP rule (edge flank, 5 Mb clamp). The
+        # block's own Start/End stay its member span, which the LD steps use.
+        m_blocks_iv = m_ld_blocks
+        try:
+            _biv = _iso.block_candidate_intervals(
+                m_ld_blocks, chroms, positions, sid,
+                edge_flank_bp=_iso_edge_flank_bp, max_interval_bp=_iso_max_interval_bp)
+            m_blocks_iv = m_ld_blocks.copy()
+            _at = list(m_blocks_iv.columns).index("End (bp)") + 1
+            m_blocks_iv.insert(_at, "Interval_start", _biv["Interval_start"].to_numpy())
+            m_blocks_iv.insert(_at + 1, "Interval_end", _biv["Interval_end"].to_numpy())
+        except Exception as e:
+            log.warning("  Block candidate intervals failed for %s: %s", model_name, e)
+
+        # Gene annotation over each block's candidate interval. The gene frame was
+        # resolved and loaded once above the loop; when it is None the reason was
+        # already reported there, loudly.
         if not args.no_annotation and _iso_genes_df is not None:
             try:
                 from annotation import annotate_ld_blocks
 
-                m_ld_annotated = annotate_ld_blocks(
-                    m_ld_blocks, _iso_genes_df, n_flank=2, max_flank_dist_bp=500_000,
-                )
+                m_ld_annotated = annotate_ld_blocks(m_blocks_iv, _iso_genes_df)
             except Exception as e:
                 log.warning("  Annotation failed for %s: %s", model_name, e)
 
         # Consolidate LD blocks + annotation + haplotype into one table
         from annotation import consolidate_ld_block_table
         try:
-            m_consolidated = consolidate_ld_block_table(m_ld_blocks, m_hap_gwas, m_ld_annotated)
+            m_consolidated = consolidate_ld_block_table(m_blocks_iv, m_hap_gwas, m_ld_annotated)
             if m_consolidated is not None and not m_consolidated.empty:
                 extra_csvs[f"LD_blocks_annotated_{model_name}.csv"] = m_consolidated
         except Exception as e:

@@ -647,6 +647,18 @@ ASSOCIATION_RESULTS_HELP = (
 )
 
 
+def _block_intervals(ctx, blocks):
+    """The blocks' candidate intervals over the run's post-QC markers, by the CLI's rule
+    (gwas.isolated.block_candidate_intervals); None if they cannot be computed."""
+    try:
+        from gwas.isolated import block_candidate_intervals, edge_flank_bp_from_decay
+        return block_candidate_intervals(blocks, ctx.chroms, ctx.positions, ctx.sid,
+                                         edge_flank_bp=edge_flank_bp_from_decay(ctx.ld_decay_kb))
+    except Exception:
+        logging.exception("block candidate intervals for the block table")
+        return None
+
+
 def _render_haplotype_gwas(
     ctx,
     haplo_df_auto,
@@ -833,7 +845,7 @@ def _render_haplotype_gwas(
         """One row per detected block: the block, its haplotype test, its coherence."""
         from .block_table import merge_block_table, screen_view
         _tbl = merge_block_table(haplo_df_auto, tested_df, _ldq_full, untested=_untested,
-                                 seed_p=_seed_p)
+                                 seed_p=_seed_p, intervals=_block_intervals(ctx, haplo_df_auto))
         st.subheader("LD blocks and haplotype tests", help=ASSOCIATION_RESULTS_HELP)
         _all = st.toggle("Show all columns", value=False, key="block_table_all_columns")
         st.dataframe(screen_view(_tbl, _all), use_container_width=True)

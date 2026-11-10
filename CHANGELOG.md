@@ -5,6 +5,19 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **An LD block's genes are searched over its candidate interval; flanking genes are
+  no longer reported.** The candidate interval runs from the nearest post-QC marker
+  before the block's first SNP to the nearest after its last, by the rule unblocked
+  SNPs already followed (the same chromosome-edge flank and 5 Mb clamp around the lead
+  SNP): the haplotype's true boundary lies between the block's outer SNPs and those
+  markers. The block's own Start/End are unchanged. `LD_blocks_annotated_<model>.csv`
+  adds `Interval_start` / `Interval_end`, the significant-SNP table gives an in-block
+  SNP its block's interval, and a gene counts only when it overlaps the interval. The
+  flanking-gene columns (`upstream_/downstream_gene_*`), the `intergenic` status and the
+  `flanking_within_500kb` gene evidence are gone; an interval without genes is
+  `no_genes_nearby`. The Regional Plot shades the same interval for blocks and
+  unblocked SNPs, the block table shows it, and the GUI uses the CLI's chromosome-edge
+  flank (2 × LD decay).
 - **The haplotype plot shows the values Tukey HSD uses.** On the LD Blocks &
   Haplotypes tab, when the GWAS used PCs, the block's plot now shows the PC-adjusted
   values that Tukey HSD, the compact letters and the forest plot use (the haplotype test

@@ -26,7 +26,8 @@ def render(ctx: LDContext):
     )
 
     st.markdown(
-        "Annotate LD blocks with overlapping and flanking genes. "
+        "Annotate LD blocks with the genes in their candidate interval, from the marker "
+        "before the first SNP to the marker after the last. "
         "Gene model and descriptions auto-load when a species is selected."
     )
 
@@ -160,25 +161,18 @@ def render(ctx: LDContext):
         st.info("No LD blocks available from the selected source. Run detection first.")
         return
 
-    n_flank = st.slider(
-        "Flanking genes to report (per side)",
-        min_value=1, max_value=5, value=2,
-        help="For intergenic blocks: how many genes upstream/downstream to report.",
-    )
-
-    max_flank_kb = st.slider(
-        "Max flanking distance (kb)",
-        min_value=50, max_value=2000, value=500, step=50,
-    )
-
     if st.button("Annotate LD blocks", key="btn_annotate"):
         with st.spinner("Annotating LD blocks with gene models..."):
-            annotated = annotate_ld_blocks(
-                blocks_for_annot,
-                genes_df,
-                n_flank=n_flank,
-                max_flank_dist_bp=max_flank_kb * 1000,
-            )
+            # each block over its candidate interval: the marker before its first SNP to
+            # the marker after its last (the CLI's rule)
+            from gwas.isolated import block_candidate_intervals, edge_flank_bp_from_decay
+            _iv = block_candidate_intervals(
+                blocks_for_annot, ctx.chroms, ctx.positions, ctx.sid,
+                edge_flank_bp=edge_flank_bp_from_decay(ctx.ld_decay_kb))
+            blocks_iv = blocks_for_annot.copy()
+            blocks_iv["Interval_start"] = _iv["Interval_start"]
+            blocks_iv["Interval_end"] = _iv["Interval_end"]
+            annotated = annotate_ld_blocks(blocks_iv, genes_df)
 
             st.session_state["annotated_ld_blocks"] = annotated
 

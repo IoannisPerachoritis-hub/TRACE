@@ -49,15 +49,17 @@ BLOCK_STATUS_VALUES = (
 )
 GENE_EVIDENCE_VALUES = (
     "no_annotation_loaded", "no_gene_within_interval", "overlapping_interval",
-    "flanking_within_500kb", "custom_gene_model",
+    "custom_gene_model",
 )
 
 # annotate_ld_blocks / annotate_isolated_intervals annotation_status -> Gene_Evidence
 _STATUS_TO_EVIDENCE = {
     "overlapping": "overlapping_interval",
-    "intergenic": "flanking_within_500kb",
     "no_genes_nearby": "no_gene_within_interval",
 }
+# an interval's edge flag -> Interval_Bounded_By
+_BOUNDED_BY = {"": "typed_snps", "chr_start": "chromosome_start",
+               "chr_end": "chromosome_end", "chr_both": "chromosome_both"}
 
 # Unblocked_SNPs projection = these columns (1-5, 13-16, 22, 25-36) of the table.
 UNBLOCKED_PROJECTION = [
@@ -74,16 +76,6 @@ UNBLOCKED_PROJECTION = [
 def _empty_table():
     df = pd.DataFrame({c: pd.Series(dtype="object") for c in SIG_TABLE_COLUMNS})
     return df
-
-
-def _flank_gene_ids(row):
-    ids = []
-    for direction in ("upstream", "downstream"):
-        for i in (1, 2):
-            g = str(row.get(f"{direction}_gene_{i}", "") or "")
-            if g:
-                ids.append(g)
-    return ids
 
 
 def build_significant_snp_table(
@@ -137,16 +129,28 @@ def build_significant_snp_table(
 
     # ── in-block annotation (positional blocks, annotated once) ──
     block_rows = []
+    block_iv = {}
+    blocks_iv = None
     if blocks_df is not None and len(blocks_df) > 0:
         sc = "Start (bp)" if "Start (bp)" in blocks_df.columns else "Start"
         ec = "End (bp)" if "End (bp)" in blocks_df.columns else "End"
-        for _, b in blocks_df.iterrows():
-            block_rows.append((canon_chr(b["Chr"]), int(b[sc]), int(b[ec]),
-                               str(b.get("lead_snp", "")),
-                               set(filter(None, str(b.get("SNP_IDs", "")).split(",")))))
+        # each block's candidate interval: the marker before its first SNP to the marker
+        # after its last, by the rule the unblocked SNPs' intervals use
+        biv = _iso.block_candidate_intervals(
+            blocks_df, chroms, positions, sid,
+            edge_flank_bp=edge_flank_bp, max_interval_bp=max_interval_bp)
+        blocks_iv = blocks_df.copy()
+        blocks_iv["Interval_start"] = biv["Interval_start"]
+        blocks_iv["Interval_end"] = biv["Interval_end"]
+        for (_, b), (_, v) in zip(blocks_df.iterrows(), biv.iterrows()):
+            key = (canon_chr(b["Chr"]), int(b[sc]), int(b[ec]))
+            block_rows.append(key + (str(b.get("lead_snp", "")),
+                                     set(filter(None, str(b.get("SNP_IDs", "")).split(",")))))
+            block_iv[key] = (int(v["Interval_start"]), int(v["Interval_end"]),
+                             str(v["Interval_edge_flag"]))
     block_ann = {}
-    if genes is not None and blocks_df is not None and len(blocks_df) > 0:
-        ann = annotate_ld_blocks(blocks_df.copy(), genes, n_flank=2, max_flank_dist_bp=500_000)
+    if genes is not None and blocks_iv is not None:
+        ann = annotate_ld_blocks(blocks_iv, genes)
         for _, a in ann.iterrows():
             key = (canon_chr(a["Chr"]), int(a["Start (bp)"]), int(a["End (bp)"]))
             block_ann[key] = a
@@ -230,8 +234,13 @@ def build_significant_snp_table(
             block_status = "in_block"
             block_id = f"{cc}:{containing[1]}-{containing[2]}"
             n_in_block = len(containing[4]) if containing[4] else pd.NA
-            interval_start, interval_end = containing[1], containing[2]
-            bounded_by = "typed_snps"
+            _civ = block_iv.get((containing[0], containing[1], containing[2]))
+            if _civ is not None:
+                interval_start, interval_end = _civ[0], _civ[1]
+                bounded_by = _BOUNDED_BY.get(_civ[2], "typed_snps")
+            else:
+                interval_start, interval_end = containing[1], containing[2]
+                bounded_by = "typed_snps"
             if genes is None:
                 n_genes = pd.NA
                 cand_genes = ""
@@ -243,7 +252,7 @@ def build_significant_snp_table(
                 else:
                     n_genes = int(a.get("n_genes_overlapping", 0))
                     ov = [g for g in str(a.get("overlapping_genes", "")).split(";") if g]
-                    cand_genes = ";".join(ov + _flank_gene_ids(a))
+                    cand_genes = ";".join(ov)
                     gene_ev = _STATUS_TO_EVIDENCE.get(str(a.get("annotation_status", "")), "no_gene_within_interval")
         else:
             path = unblocked_path.get(snp, "block_formation")
@@ -263,9 +272,7 @@ def build_significant_snp_table(
             if iv is not None:
                 interval_start = int(iv["Start (bp)"])
                 interval_end = int(iv["End (bp)"])
-                bounded_by = {"": "typed_snps", "chr_start": "chromosome_start",
-                              "chr_end": "chromosome_end", "chr_both": "chromosome_both"}.get(
-                    str(iv.get("edge_flag", "")), "typed_snps")
+                bounded_by = _BOUNDED_BY.get(str(iv.get("edge_flag", "")), "typed_snps")
                 if str(iv.get("flank_up_snp_id", "")):
                     up_snp = str(iv["flank_up_snp_id"])
                 if str(iv.get("flank_dn_snp_id", "")):
@@ -276,7 +283,7 @@ def build_significant_snp_table(
                     ng = iv.get("n_genes_in_interval", pd.NA)
                     n_genes = pd.NA if pd.isna(ng) else int(ng)
                     ov = [g for g in str(iv.get("overlapping_genes", "")).split(";") if g]
-                    cand_genes = ";".join(ov + _flank_gene_ids(iv))
+                    cand_genes = ";".join(ov)
                     gene_ev = _STATUS_TO_EVIDENCE.get(str(iv.get("annotation_status", "")), "no_gene_within_interval")
             else:
                 interval_start = interval_end = pd.NA

@@ -211,10 +211,6 @@ SIGNATURE_DEFAULTS = [
     ("haplotype.run_haplotype_block_gwas", haplotype.run_haplotype_block_gwas, "min_hap_count", 5, "gwas/haplotype.py:24"),
     ("haplotype.run_haplotype_block_gwas", haplotype.run_haplotype_block_gwas, "min_group_size", 3, "gwas/haplotype.py:25"),
     ("haplotype.run_haplotype_block_gwas", haplotype.run_haplotype_block_gwas, "n_perm", 1000, "gwas/haplotype.py:26"),
-    ("annotation._find_flanking_genes", annotation._find_flanking_genes, "n_flank", 2, "annotation.py:143"),
-    ("annotation._find_flanking_genes", annotation._find_flanking_genes, "max_dist_bp", 500_000, "annotation.py:143"),
-    ("annotation.annotate_ld_blocks", annotation.annotate_ld_blocks, "n_flank", 2, "annotation.py:160"),
-    ("annotation.annotate_ld_blocks", annotation.annotate_ld_blocks, "max_flank_dist_bp", 500_000, "annotation.py:161"),
     ("plotting.compute_r2_to_lead", plotting.compute_r2_to_lead, "min_pair_n", 15, "plotting.py:409"),
     # D-102: the shipped FarmCPU final scan is the classical OLS fixed-effect test.
     ("models.run_farmcpu", models.run_farmcpu, "final_scan", "ols", "gwas/models.py:1183"),
@@ -240,8 +236,9 @@ def test_signature_default(label, fn, param, expected, loc):
 
 def test_signature_default_count_is_stable():
     """The pinned set is the signature defaults enumerated by T-72, plus D-102's
-    FarmCPU final_scan. A new load-bearing default is added here deliberately."""
-    assert len(SIGNATURE_DEFAULTS) == 33
+    FarmCPU final_scan, less the four flanking-gene defaults removed with flanking-gene
+    reporting. A new load-bearing default is added here deliberately."""
+    assert len(SIGNATURE_DEFAULTS) == 29
 
 
 # ===========================================================================

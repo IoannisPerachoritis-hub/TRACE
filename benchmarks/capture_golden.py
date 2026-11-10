@@ -46,9 +46,8 @@ HAP_COLS = [
     "F_perm", "P_perm", "PValue", "eta2",
 ]
 ANN_COLS = [
-    "Chr", "Start", "End", "n_genes_overlapping", "overlapping_genes", "annotation_status",
-    "upstream_gene_1", "upstream_dist_1", "upstream_gene_2", "upstream_dist_2",
-    "downstream_gene_1", "downstream_dist_1", "downstream_gene_2", "downstream_dist_2",
+    "Chr", "Start", "End", "Interval_start", "Interval_end",
+    "n_genes_overlapping", "overlapping_genes", "annotation_status",
 ]
 
 
@@ -170,7 +169,15 @@ def capture_golden(
     if genes_csv is not None and not ld_blocks.empty:
         genes = load_gene_annotation(str(genes_csv),
                                      str(descriptions_csv) if descriptions_csv else None)
-        annotated = annotate_ld_blocks(ld_blocks.copy(), genes, n_flank=2, max_flank_dist_bp=500_000)
+        # each block over its candidate interval (marker before its first SNP to marker
+        # after its last), with the CLI's edge flank for this flank_kb
+        from gwas.isolated import block_candidate_intervals, default_edge_flank_bp
+        blocks_iv = ld_blocks.copy()
+        _iv = block_candidate_intervals(blocks_iv, chroms_str, positions, sid,
+                                        edge_flank_bp=default_edge_flank_bp(None, flank_kb))
+        blocks_iv["Interval_start"] = _iv["Interval_start"]
+        blocks_iv["Interval_end"] = _iv["Interval_end"]
+        annotated = annotate_ld_blocks(blocks_iv, genes)
         ann_frozen, ann_missing = _freeze(annotated, ANN_COLS)
         ann_frozen.to_csv(out_dir / "annotated_blocks.csv", index=False)
         written["annotated_blocks"] = out_dir / "annotated_blocks.csv"
