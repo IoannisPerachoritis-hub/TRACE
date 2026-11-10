@@ -5,6 +5,12 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The Help page and docs/outputs.md list every file of the results ZIP**, one line
+  each, with when it is written: the per-model tables, the LD heatmaps, the QC and
+  subsampling exports, and the combined ZIP's folders and `failed_traits.txt`. The Help
+  page links each input file (VCF, phenotypes, covariates, gene and descriptions files)
+  to its docs. The Gene Annotation tab's download is now `Gene_annotation_<trait>.csv`,
+  with one underscore like the other GUI files (it was `Gene_annotation__<trait>.csv`).
 - **The example forms LD blocks at the defaults.** `examples/` now holds 100 inbred
   lines and 600 SNPs on 3 chromosomes, mosaics of four founder haplotypes, so LD decays
   with distance. Trait1's QTL (`chr02_1010000`) sits in an LD block: at the defaults

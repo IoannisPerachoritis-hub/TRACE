@@ -141,6 +141,6 @@ def render(ctx: LDContext):
     st.dataframe(table, use_container_width=True, hide_index=True)
     st.download_button(
         "Download gene annotation (CSV)", table.to_csv(index=False).encode("utf-8"),
-        file_name=f"Gene_annotation__{ctx.trait_col}.csv", mime="text/csv",
+        file_name=f"Gene_annotation_{ctx.trait_col}.csv", mime="text/csv",
         key="dl_gene_annotation",
     )

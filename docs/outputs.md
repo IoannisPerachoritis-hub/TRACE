@@ -11,7 +11,56 @@ LD-block, haplotype, subsampling and consensus CSVs that shipped in v1.0.1 are
 documented in the in-app **Help & Reference** page ("CSV Column Glossary").
 
 Two related command-line options are covered at the end: `--covar` (new) and the
-numeric branch of `--sig-thresh`.
+numeric branch of `--sig-thresh`. First, the list of every file the results ZIP holds.
+
+---
+
+## Every file of the CLI and One-Click ZIP
+
+The CLI and One-Click Full Analysis write the same ZIP for a trait. `<trait>` is the trait
+column, `<model>` is `MLM`, `MLMM` or `FarmCPU`, and `<c>`, `<start>`, `<end>` are an LD
+block's chromosome and bounds. A table with no rows is not written. `--no-isolated-rescue`
+drops the significant-SNP, unblocked-SNP and isolated-SNP tables and the SNP view index;
+`--no-annotation` leaves the genes out.
+
+| File | What it holds | Written when |
+|---|---|---|
+| `tables/GWAS_<trait>.csv` | MLM's scan: every tested SNP's p-value, effect and significance columns | always |
+| `tables/GWAS_<model>_<trait>.csv` | MLMM's or FarmCPU's scan, with the same significance columns | that model runs |
+| `tables/Significant_SNPs_<model>.csv` | every SNP significant in that model, in an LD block or unblocked | the model has a significant SNP |
+| `tables/Unblocked_SNPs_<model>.csv` | the significant SNPs outside every LD block | the model has one |
+| `tables/Isolated_SNP_intervals_<model>.csv` | the candidate interval of each unblocked significant SNP, or run of them | the model has one |
+| `tables/Isolated_SNP_candidate_genes_<model>.csv` | the genes inside those intervals | a gene lies in one (gene annotation on) |
+| `tables/LD_blocks_annotated_<model>.csv` | the model's LD blocks: bounds, candidate interval, genes and haplotype test | the model has a block |
+| `tables/LD_triage_<model>.csv` | each block's LD-quality triage and the view it recommends | the model has a block, unless `--no-triage` |
+| `tables/Haplotype_assignments_<trait>.csv` | which haplotype each sample carries in each of MLM's tested blocks | MLM has a tested block |
+| `tables/Haplotype_assignments_<trait>_<model>.csv` | the same for MLMM's or FarmCPU's tested blocks | that model has a tested block |
+| `tables/SNP_view_index_<model>.csv` | for each significant SNP of the primary model (MLM), whether the report plots it, and its plotting representative | MLM has a significant SNP |
+| `tables/CrossModel_Consensus.csv` | per significant SNP, the models that call it | two or more models run |
+| `tables/PC_diagnostics_spectrum.csv` | the genotype PCA's eigenvalue spectrum (rank, eigenvalue, share of the trace) | always |
+| `tables/QC_report_summary.csv` | the QC report: imputation, heterozygosity, relatedness and F_IS statistics | always |
+| `tables/QC_sample_heterozygosity.csv` | each sample's heterozygosity, its z-score and outlier flag | always |
+| `tables/QC_genotype_matrix.csv` | the QC'd, imputed genotypes (samples × SNPs) | `--export-qc` |
+| `tables/QC_genotype_raw.csv` | the same genotypes before imputation, missing calls kept | `--export-qc` |
+| `tables/QC_snp_map.csv` | the QC'd SNPs: ID, chromosome, position, REF and ALT | `--export-qc` |
+| `tables/QC_phenotype.csv` | the analysed trait values | `--export-qc` |
+| `tables/Subsampling_SNP_stability.csv` | each SNP's discovery frequency and p-values across the subsamples | `--subsampling` |
+| `tables/Subsampling_block_stability.csv` | each MLM LD block's discovery frequency across the subsamples | `--subsampling`, with blocks |
+| `tables/Subsampling_rep_metadata.csv` | one row per subsample: its size, status, λGC and hits | `--subsampling` |
+| `figures/Manhattan_<model>.png` | each model's Manhattan plot | unless `--no-plots` |
+| `figures/QQ_<model>.png` | each model's QQ plot | unless `--no-plots` |
+| `figures/LD_heatmap_Chr<c>_<start>_<end>.png` | the r² heatmap of each LD block whose lead is significant in its model | unless `--no-plots`, or One-Click's "Generate LD block heatmap PNGs" is off |
+| `figures/PCA_scree.png` | the PCA scree plot | unless `--no-plots` |
+| `figures/PCA_scatter.png` | PC1 against PC2 | two or more PCs, unless `--no-plots` |
+| `figures/QC_report_distributions.png` | the QC report's distributions | unless `--no-plots` |
+| `figures/Subsampling_discovery_freq_<trait>.png` | the subsampling discovery frequencies | `--subsampling`, unless `--no-plots` |
+| `report.html` | the self-contained HTML report | unless `--no-report` |
+| `run_metadata.json` | every setting of the run, for reproducibility | always |
+| `<trait>/` | in a combined ZIP, one folder per trait holding that trait's files | several traits |
+| `failed_traits.txt` | in a combined ZIP, each trait's status and the error of any that failed | a trait failed |
+
+The GWAS page's single-trait download is a ZIP of that page's own tables and figures,
+interactive HTML included; the files of the Post-GWAS tabs are their own downloads (below).
 
 ---
 
