@@ -9,7 +9,8 @@ line (below). The "?" next to each uploader gives the same rules as this page.
 
 ## Required format
 
-Plain text with one row per gene and a header row: comma-, semicolon- or tab-separated,
+A gene table, or a GFF3 file ([below](#gff3-files)). A gene table is plain text with one
+row per gene and a header row: comma-, semicolon- or tab-separated,
 UTF-8 (Excel's "CSV UTF-8" is fine), not compressed. Header names are case-insensitive,
 several aliases are accepted, and other columns are ignored. Use one column for each
 field: a file with two columns for one field (for example both `Gene_ID` and `Name`) is
@@ -29,6 +30,28 @@ by default) is tolerated. Example, a row of TRACE's SL3.1 table:
 
     Chr,Start,End,Strand,Gene_ID
     1,30726,43941,-,Solyc01g005020.3
+
+## GFF3 files
+
+A GFF3 file is read directly, plain or gzip-compressed (`.gff3`, `.gff`, `.gff3.gz`,
+`.gff.gz` in the uploaders; on the command line any name). TRACE recognises the file by
+its content, not its name: gzip by its first two bytes, then GFF3 by a `##gff-version`
+line, or by a first feature line of 9 TAB-separated columns whose ninth holds `key=value`
+attributes.
+
+- Only rows of type `gene` are read. A file with none is refused, with the feature types
+  it does have.
+- Chromosome = column 1 (matched as in a table), start and end = columns 4 and 5,
+  strand = column 7.
+- Gene ID = the `ID` attribute without a leading `gene:` (Ensembl, SGN/ITAG) or `gene-`
+  (NCBI). A gene row without an `ID` is skipped.
+- Description = the first of the `description`, `Note` and `product` attributes, with
+  GFF3's percent-encoding decoded (`%2C` → `,`, `%3B` → `;`). A descriptions file, when
+  given, overrides it for the genes it lists; the other genes keep the GFF3's.
+
+Example, an Ensembl gene row (the gaps are TABs):
+
+    1	ITAG	gene	30726	43941	.	-	.	ID=gene:Solyc01g005020.3;description=Salt Overly Sensitive 1
 
 ## Descriptions file (optional)
 
@@ -65,6 +88,10 @@ different build. Do not use it.
 
 ## Deriving a gene model from a GFF3
 
+A GFF3 is read directly ([above](#gff3-files)). To keep a gene table instead, this script
+writes the table TRACE reads from the GFF3 (the same chromosomes, positions, strands and
+IDs; descriptions are not written, so give them as a descriptions file):
+
 ```python
 import pandas as pd
 
@@ -74,7 +101,9 @@ gff = pd.read_csv("your_genome.gff3", sep="\t", comment="#",
                   names=cols, dtype=str)
 
 genes = gff[gff["type"] == "gene"].copy()
-genes["Gene_ID"] = genes["attributes"].str.extract(r"ID=([^;]+)")
+genes["Gene_ID"] = (genes["attributes"].str.extract(r"(?:^|;)ID=([^;]+)")[0]
+                    .str.replace(r"^gene[:-]", "", regex=True))
+genes = genes.dropna(subset=["Gene_ID"])
 
 out = genes.rename(columns={"seqid": "Chr", "start": "Start",
                             "end": "End", "strand": "Strand"})

@@ -5,6 +5,15 @@ All notable changes to TRACE are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **GFF3 gene files are read directly.** The gene file of the Gene Annotation tab,
+  of One-Click's overrides and of `--gene-model` may be a GFF3, plain or gzip-compressed,
+  recognised by its content rather than its name. Its `gene` rows give the chromosome,
+  start, end, strand and gene ID (the `ID` without a leading `gene:` or `gene-`); the
+  description is the first of `description`, `Note` and `product`, percent-decoded. A
+  descriptions file overrides those descriptions for the genes it lists. The uploaders
+  accept .gff3, .gff, .gff3.gz and .gff.gz. The conversion script in
+  docs/gene_model_upload.md now strips the same ID prefixes, so its table equals a direct
+  read. Gene tables load as before.
 - **Interactive HTML files open offline.** Every interactive figure the GUI exports
   (the PCA plot, the MLM, MLMM and FarmCPU interactive Manhattans, and each per-figure
   HTML download) now embeds plotly.js, through one helper

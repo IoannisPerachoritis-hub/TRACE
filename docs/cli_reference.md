@@ -161,7 +161,8 @@ LD & post-GWAS:
   --gene-model GENE_MODEL
                         Gene file for annotation (required if --species
                         custom): one row per gene with chromosome, start, end
-                        and gene ID columns; see docs/gene_model_upload.md
+                        and gene ID columns, or a GFF3 (plain or gzip); see
+                        docs/gene_model_upload.md
   --gene-desc GENE_DESC
                         Optional gene descriptions: one gene per line, the
                         gene ID, a TAB, then the description; see

@@ -75,7 +75,7 @@ AREAS: list[tuple[str, str, list[str]]] = [
          "test_lead_snp_plot_data", "test_hap_boxplot"]),
     ("Gene annotation", "LD-block gene annotation, gene-model summaries and resolution",
         ["test_annotation", "test_gene_model_summary", "test_gene_model_resolution",
-         "test_gene_files"]),
+         "test_gene_files", "test_gff3"]),
     ("Subsampling stability", "bootstrap subsampling and stability metrics",
         ["test_subsampling", "test_stability"]),
     ("HTML report", "run-report assembly and section rendering",

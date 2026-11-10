@@ -96,7 +96,7 @@ def render(ctx: LDContext):
                  + (f"; descriptions: `{desc_auto.name}`" if desc_auto is not None else ""))
 
     st.markdown("Upload your own gene file and, optionally, a descriptions file:")
-    gm_up = st.file_uploader("Gene file", type=["csv", "tsv", "txt"],
+    gm_up = st.file_uploader("Gene file", type=["csv", "tsv", "txt", "gff3", "gff", "gff3.gz", "gff.gz"],
                              key="gene_model_upload", help=GENE_FILE_HELP)
     desc_up = st.file_uploader("Descriptions file (optional)", type=["txt", "tsv"],
                                key="gene_desc_upload", help=DESCRIPTIONS_FILE_HELP)

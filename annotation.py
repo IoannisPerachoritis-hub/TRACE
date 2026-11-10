@@ -4,12 +4,15 @@ Reads Sol_genes.csv and ITAG4.0 / SL3.1 description files,
 annotates LD blocks with gene content, and computes LD decay curves.
 """
 
+import gzip
+import io
 import numpy as np
 import pandas as pd
 import re
 
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote
 
 
 
@@ -64,13 +67,17 @@ Use one column for each. Positions are in base pairs, in the same genome assembl
 
 Chromosome names are matched after common prefixes and leading zeros are removed: `chr01`, `Chr1`, `SL2.50ch01` and `1` are all chromosome 1.
 
-A GFF3 file is not read directly; convert it first ([how]({_GENE_DOC}#deriving-a-gene-model-from-a-gff3)).
-
 Example (a row of TRACE's SL3.1 table):
 
 ```
 Chr,Start,End,Strand,Gene_ID
 1,30726,43941,-,Solyc01g005020.3
+```
+
+A GFF3 file is read directly too, plain or gzip-compressed, recognised by its content. Its `gene` rows give the chromosome (column 1), start and end (columns 4 and 5), strand (column 7) and gene ID (the `ID`, without a leading `gene:` or `gene-`); the description is the first of `description`, `Note` and `product`. A descriptions file overrides those descriptions for the genes it lists ([more]({_GENE_DOC}#gff3-files)). Example (an Ensembl gene row; the gaps are TABs):
+
+```
+1\tITAG\tgene\t30726\t43941\t.\t-\t.\tID=gene:Solyc01g005020.3;description=Salt Overly Sensitive 1
 ```
 """
 
@@ -88,12 +95,111 @@ _FIELD_NAMES = {"Chr": "chromosome", "Start": "start", "End": "end", "Strand": "
                 "Gene_ID": "gene ID"}
 
 
+_GFF3_DESCRIPTION_KEYS = ("description", "Note", "product")
+
+
+def _gene_file_bytes(path):
+    """(the gene file's bytes, gunzipped when they start with gzip's magic bytes 1f 8b
+    whatever the file is called; whether they were gzip). ``path`` may also be an open
+    file."""
+    if hasattr(path, "read"):
+        raw = path.read()
+        raw = raw.encode("utf-8") if isinstance(raw, str) else raw
+    else:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    if raw[:2] == b"\x1f\x8b":
+        return gzip.decompress(raw), True
+    return raw, False
+
+
+def _is_gff3(text):
+    """A GFF3 by its content: a ``##gff-version`` line among the leading comment lines,
+    or a first data line of 9 tab-separated columns whose ninth holds key=value pairs."""
+    for line in io.StringIO(text):            # lazily: only the leading lines are read
+        line = line.rstrip("\r\n")
+        if not line.strip():
+            continue
+        if line.startswith("#"):
+            if line.lower().startswith("##gff-version"):
+                return True
+            continue
+        cols = line.split("\t")
+        return len(cols) == 9 and re.search(r"(?:^|;)\s*[^=;\s]+=", cols[8]) is not None
+    return False
+
+
+def _gff3_attributes(field):
+    """A GFF3 column-9 field as {key: value}, keys and values percent-decoded."""
+    out = {}
+    for part in field.strip().split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        out.setdefault(unquote(key.strip()), unquote(value.strip()))
+    return out
+
+
+def _read_gff3(text):
+    """A GFF3's genes: (the five-column gene table, {Gene_ID: description}).
+
+    Rows of type ``gene``: Chr = canon_chr of column 1, Start and End = columns 4 and 5,
+    Strand = column 7, Gene_ID = the ID without a leading ``gene:`` or ``gene-``, and the
+    description the first of description, Note and product. A gene row without an ID is
+    skipped. With no gene row the error lists the feature types found."""
+    rows, descriptions, types = [], {}, {}
+    for line in text.splitlines():
+        if line.startswith("##FASTA"):
+            break
+        if not line.strip() or line.startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) != 9:
+            continue
+        types[cols[2]] = types.get(cols[2], 0) + 1
+        if cols[2] != "gene":
+            continue
+        attrs = _gff3_attributes(cols[8])
+        gene_id = re.sub(r"^gene[:\-]", "", attrs.get("ID", "").strip())
+        if not gene_id:
+            continue
+        rows.append((cols[0], cols[3], cols[4], cols[6].strip() or ".", gene_id))
+        desc = next((attrs[k] for k in _GFF3_DESCRIPTION_KEYS if attrs.get(k, "").strip()), "")
+        descriptions.setdefault(gene_id, desc.strip())
+    if not rows:
+        found = ", ".join(f"{t} ({n})" for t, n in sorted(types.items())) or "none"
+        raise ValueError("This GFF3 has no gene with an ID (rows of type 'gene'); its "
+                         f"feature types are: {found}.")
+    return (_finish_gene_table(pd.DataFrame(rows, columns=["Chr", "Start", "End", "Strand",
+                                                           "Gene_ID"])),
+            descriptions)
+
+
+def _load_gene_model_and_descriptions(path):
+    """A gene file's five-column gene table and, for a GFF3, its descriptions ({} for a
+    table). The file is recognised by its content, not its name: gzip by its first two
+    bytes, then GFF3 or a table."""
+    raw, was_gzip = _gene_file_bytes(path)
+    text = raw.decode("utf-8-sig", errors="replace")
+    if _is_gff3(text):
+        return _read_gff3(text)
+    # a plain table on disk is read from its path, as before; a gzipped or already-read
+    # one from its bytes
+    return _read_gene_table(io.BytesIO(raw) if was_gzip or hasattr(path, "read") else path), {}
+
+
 def load_gene_model(path) -> pd.DataFrame:
     """
-    Load Sol_genes.csv (or similar gene coordinate file).
-    Expected columns: CHROM, START, END, STRAND, GENE
+    Load a gene file: a table (Sol_genes.csv or similar gene coordinate file) or a GFF3,
+    plain or gzip, recognised by its content.
+    Expected table columns: CHROM, START, END, STRAND, GENE
     Returns DataFrame with: Chr, Start, End, Strand, Gene_ID
     """
+    return _load_gene_model_and_descriptions(path)[0]
+
+
+def _read_gene_table(path):
+    """A gene table: comma-, semicolon- or tab-separated, with a header row."""
     # encoding="utf-8-sig" — UTF-8, with the byte-order mark Excel's "CSV UTF-8" writes
     # removed (the default cp1252 on Windows would fail on non-ASCII text)
     df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
@@ -130,6 +236,12 @@ def load_gene_model(path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Gene model file missing columns: {missing}. Found: {list(df.columns)}")
 
+    return _finish_gene_table(df)
+
+
+def _finish_gene_table(df):
+    """Canonical chromosome names and integer positions (rows without them dropped), a
+    strand ('.' when absent), sorted by chromosome number, then start."""
     df["Chr"] = df["Chr"].astype(str).map(canon_chr)
     df["Start"] = pd.to_numeric(df["Start"], errors="coerce").astype("Int64")
     df["End"] = pd.to_numeric(df["End"], errors="coerce").astype("Int64")
@@ -183,14 +295,18 @@ def chromosomes_without_genes(genotype_chroms, genes):
 
 
 def load_gene_annotation(gene_model_path, description_path=None) -> pd.DataFrame:
-    """Load gene coordinates + descriptions into a single DataFrame."""
-    genes = load_gene_model(gene_model_path)
+    """Load gene coordinates + descriptions into a single DataFrame. A GFF3's own
+    descriptions are used; a descriptions file overrides them for the genes it lists."""
+    genes, gff_desc = _load_gene_model_and_descriptions(gene_model_path)
 
     if description_path is not None:
         desc_dict = load_gene_descriptions(description_path)
         genes["Description"] = genes["Gene_ID"].map(
-            lambda g: desc_dict.get(g, desc_dict.get(re.sub(r"(\.\d+)+$", "", g), ""))
+            lambda g: desc_dict.get(g, desc_dict.get(re.sub(r"(\.\d+)+$", "", g),
+                                                     gff_desc.get(g, "")))
         )
+    elif gff_desc:
+        genes["Description"] = genes["Gene_ID"].map(lambda g: gff_desc.get(g, ""))
     else:
         genes["Description"] = ""
 

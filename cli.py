@@ -175,8 +175,8 @@ def _build_parser():
                          help="Species for annotation files (default: tomato)")
     ld_grp.add_argument("--gene-model",
                          help="Gene file for annotation (required if --species custom): one row per "
-                              "gene with chromosome, start, end and gene ID columns; see "
-                              "docs/gene_model_upload.md")
+                              "gene with chromosome, start, end and gene ID columns, or a GFF3 "
+                              "(plain or gzip); see docs/gene_model_upload.md")
     ld_grp.add_argument("--gene-desc",
                          help="Optional gene descriptions: one gene per line, the gene ID, a TAB, then "
                               "the description; see docs/gene_model_upload.md")

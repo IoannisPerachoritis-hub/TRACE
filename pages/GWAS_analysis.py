@@ -1550,7 +1550,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             ):
                 _pipe_gm_up = st.file_uploader(
                     "Gene file (overrides the bundled gene model)",
-                    type=["csv", "tsv", "txt"],
+                    type=["csv", "tsv", "txt", "gff3", "gff", "gff3.gz", "gff.gz"],
                     key="pipe_gene_model_override",
                     help=GENE_FILE_HELP,
                 )
