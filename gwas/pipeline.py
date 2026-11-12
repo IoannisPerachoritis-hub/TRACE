@@ -238,6 +238,13 @@ def failed_traits_report(traits, completed, failed):
     return "\n".join(lines) + "\n"
 
 
+def _n_snps(geno_df, sid):
+    """The number of SNP columns, geno_df.shape[1]. With the genotype table on disk the frame
+    holds the sample index only, and the SNPs are counted from their IDs (the same number)."""
+    from gwas.storepipe import is_store_frame
+    return len(sid) if is_store_frame(geno_df) else geno_df.shape[1]
+
+
 def _run_trait(parsed, pheno, args):
     from gwas.qc import (
         _pipeline_harmonize_ids,
@@ -246,6 +253,18 @@ def _run_trait(parsed, pheno, args):
         _pipeline_build_geno_matrices,
         _pipeline_build_kinship,
     )
+
+    # With the genotype table on disk (gwas/genostore.py) the per-trait stages are the store's
+    # (gwas/storepipe.py): the same arguments and results, called at the same places.
+    _st = None
+    if getattr(parsed, "is_store", False):
+        from gwas.storepipe import TraitStore
+        _st = TraitStore(parsed)
+        _pipeline_harmonize_ids = _st.harmonize_ids
+        _pipeline_phenotype_qc = _st.phenotype_qc
+        _pipeline_snp_qc = _st.snp_qc
+        _pipeline_build_geno_matrices = _st.build_geno_matrices
+        _pipeline_build_kinship = _st.build_kinship
 
     vcf_path = Path(args.vcf)
     pheno_path = Path(args.pheno)
@@ -258,7 +277,7 @@ def _run_trait(parsed, pheno, args):
     geno_df, pheno, chroms, positions, sid, info_scores, allele_map = \
         _pipeline_harmonize_ids(genotypes, samples, chroms, positions,
                                 vid, ref, alt, pheno, info_scores)
-    log.info("  %d overlapping samples, %d SNPs", geno_df.shape[0], geno_df.shape[1])
+    log.info("  %d overlapping samples, %d SNPs", geno_df.shape[0], _n_snps(geno_df, sid))
 
     log.info("Phenotype QC…")
     geno_df, pheno, y = _pipeline_phenotype_qc(
@@ -367,7 +386,7 @@ def _run_trait(parsed, pheno, args):
         from gwas import qc_report as _qcr
         _qc_trait = (pheno[args.trait].to_numpy()
                      if args.trait in getattr(pheno, "columns", []) else y.ravel())
-        _qc_rep = _qcr.compute_qc_report(
+        _qc_rep = (_st.qc_report if _st is not None else _qcr.compute_qc_report)(
             geno_df, _qc_trait, args.trait, qc_snp=qc_snp,
             geno_dosage_raw=geno_dosage_raw, geno_imputed=geno_imputed,
             impute_method=args.impute, impute_k=args.impute_k, impute_l=args.impute_l)
@@ -380,10 +399,20 @@ def _run_trait(parsed, pheno, args):
     except Exception as _qc_err:  # pragma: no cover
         log.warning("QC report skipped: %s", _qc_err)
 
+    _exp_imputed, _exp_raw = geno_imputed, geno_dosage_raw
+    if getattr(args, "export_qc", False) and _st is not None:
+        # The export writes the whole table as text. With the table on disk, up to the
+        # one-piece size the two tables are read whole for it; above it the export is refused.
+        from gwas.storepipe import one_piece_cells
+        if geno_imputed.size > one_piece_cells():
+            raise TraitPipelineError(
+                "--export-qc writes the whole genotype table as text and is not available "
+                "at this size with the genotype table on disk.")
+        _exp_imputed, _exp_raw = geno_imputed.materialize(), geno_dosage_raw.materialize()
     if getattr(args, "export_qc", False):
         log.info("Preparing QC'd genotype export for benchmarking…")
         geno_export = pd.DataFrame(
-            geno_imputed, index=list(geno_df.index), columns=sid,
+            _exp_imputed, index=list(geno_df.index), columns=sid,
         )
         geno_export.index.name = "SampleID"
         extra_csvs["QC_genotype_matrix.csv"] = geno_export.reset_index()
@@ -391,7 +420,7 @@ def _run_trait(parsed, pheno, args):
         # export destroys the missing-call evidence.  QC_genotype_matrix.csv is
         # unchanged; this is an additional file.
         geno_raw_export = pd.DataFrame(
-            geno_dosage_raw, index=list(geno_df.index), columns=sid,
+            _exp_raw, index=list(geno_df.index), columns=sid,
         )
         geno_raw_export.index.name = "SampleID"
         extra_csvs["QC_genotype_raw.csv"] = geno_raw_export.reset_index()
@@ -406,7 +435,7 @@ def _run_trait(parsed, pheno, args):
         })
         log.info("  QC export: %d samples x %d SNPs (impute=%s; raw missing %.3f%%)",
                  geno_imputed.shape[0], geno_imputed.shape[1], args.impute,
-                 float(np.isnan(geno_dosage_raw).mean()) * 100.0)
+                 float(np.isnan(_exp_raw).mean()) * 100.0)
 
     # Per-model PC counts (fall back to --n-pcs when not specified)
     n_pcs_mlm = min(args.n_pcs_mlm if args.n_pcs_mlm is not None else n_pcs, _max_avail)
@@ -449,22 +478,22 @@ def _run_trait(parsed, pheno, args):
     # Compute M_eff (always, for reference columns)
     try:
         from gwas.plotting import compute_meff_li_ji
-        _meff_val, _ = compute_meff_li_ji(geno_imputed)
+        _meff_val, _ = (_st.meff if _st is not None else compute_meff_li_ji)(geno_imputed)
         meff_thresh = 0.05 / _meff_val
-        log.info("M_eff = %d independent tests (of %d SNPs)", _meff_val, geno_df.shape[1])
+        log.info("M_eff = %d independent tests (of %d SNPs)", _meff_val, _n_snps(geno_df, sid))
     except Exception:
-        _meff_val = geno_df.shape[1]
+        _meff_val = _n_snps(geno_df, sid)
         meff_thresh = 0.05 / _meff_val
         log.warning("M_eff computation failed; using naive Bonferroni")
 
-    bonf_thresh_naive = 0.05 / geno_df.shape[1]
+    bonf_thresh_naive = 0.05 / _n_snps(geno_df, sid)
 
     # Primary threshold based on user choice
     sig_rule = getattr(args, "sig_thresh", "bonferroni")
     _sig_is_numeric = isinstance(sig_rule, (int, float)) and not isinstance(sig_rule, bool)
     if sig_rule == "bonferroni":
         primary_thresh = bonf_thresh_naive
-        log.info("Significance: Bonferroni %.2e (%d SNPs)", primary_thresh, geno_df.shape[1])
+        log.info("Significance: Bonferroni %.2e (%d SNPs)", primary_thresh, _n_snps(geno_df, sid))
     elif sig_rule == "fdr":
         primary_thresh = None  # FDR uses per-SNP q-values
         log.info("Significance: FDR q < 0.05")
@@ -484,7 +513,7 @@ def _run_trait(parsed, pheno, args):
     # The analysis rule, resolved once: the cross-model consensus, the isolated-SNP
     # rescue, the significant-SNP tables and the report read each model's own column.
     from gwas.significance import rule_from_cli_args
-    _sig_rule_obj = rule_from_cli_args(args, geno_df.shape[1], _meff_val)
+    _sig_rule_obj = rule_from_cli_args(args, _n_snps(geno_df, sid), _meff_val)
 
     if "mlm" in args.model:
         log.info("Running MLM (LOCO)…")
@@ -1315,7 +1344,7 @@ def _run_trait(parsed, pheno, args):
         "PCs_MLMM": n_pcs_mlmm if "mlmm" in args.model else "N/A",
         "PCs_FarmCPU": n_pcs_fc if "farmcpu" in args.model else "N/A",
         "Samples": int(geno_df.shape[0]),
-        "SNPs (post-QC)": int(geno_df.shape[1]),
+        "SNPs (post-QC)": int(_n_snps(geno_df, sid)),
         "SNPs (raw)": int(n_raw),
         "Isolated SNPs (no LD block)": (
             "; ".join(
@@ -1396,7 +1425,7 @@ def _run_trait(parsed, pheno, args):
             pc_selection_df=(_pc_diag["spectrum"] if _pc_diag is not None else None),
             lambda_gc=lambda_gc,
             n_samples=int(geno_df.shape[0]),
-            n_snps=int(geno_df.shape[1]),
+            n_snps=int(_n_snps(geno_df, sid)),
             info_field=info_field,
         )
 
@@ -1446,7 +1475,7 @@ def _run_trait(parsed, pheno, args):
             "sig_label": _sig_rule_obj.label,
             "n_ld_blocks": len(ld_blocks_mlm) if ld_blocks_mlm is not None else None,
             "n_samples": int(geno_df.shape[0]),
-            "n_snps": int(geno_df.shape[1]),
+            "n_snps": int(_n_snps(geno_df, sid)),
             "meff": int(_meff_val),
             # the samples dropped for a missing covariate value, for the GUI's warning
             "covariate_dropped": list(_cov_dropped),

@@ -1,0 +1,515 @@
+"""The per-trait stages of the pipeline with the genotype table on disk (gwas.genostore).
+
+One TraitStore per trait run. Its methods take the place of gwas.qc's
+_pipeline_harmonize_ids, _pipeline_phenotype_qc, _pipeline_snp_qc,
+_pipeline_build_geno_matrices and _pipeline_build_kinship, of
+gwas.qc_report.compute_qc_report and of gwas.plotting.compute_meff_li_ji, with the same
+arguments and return values, so gwas.pipeline._run_trait calls them at the same places.
+How they differ from the in-memory functions:
+
+* ``geno_df`` is a one-column frame: the sample index (as in memory) and ROW_COL, the store
+  row of each sample. Every row operation the pipeline does on the genotype frame is done on
+  it unchanged. The SNP columns live in ``self.cols`` (store variant indices, pipeline order).
+* Per-SNP and per-sample statistics come from exact integer call counts (the ingest's counts,
+  or GenotypeStore.count_pass), then the in-memory expressions. Integer counts are exact, so
+  the statistics are the in-memory values bit for bit.
+* The raw and imputed tables are LazyColumns; the mean fill is the per-SNP mean from the counts,
+  float32(float64 count / called), which is SimpleImputer's value bit for bit.
+
+Every line marked "today:" is the in-memory code it replaces (gwas/qc.py, gwas/kinship.py,
+gwas/qc_report.py, gwas/plotting.py).
+"""
+import logging
+
+import numpy as np
+import pandas as pd
+
+from gwas.genostore import LazyColumns
+from gwas.io import _clean_chr_series
+from gwas.qc import _log_or_warn, normalise_phenotype
+
+log = logging.getLogger("gwas.qc")
+ROW_COL = "__trace_store_row__"
+
+# The one-piece rule: a stage that sums across SNPs in floating point reads the table whole and
+# runs the in-memory function when the table has at most this many cells. A FIXED number, never
+# derived from free memory, so results cannot differ between machines.
+ONE_PIECE_CELLS = 100_000_000
+
+
+def one_piece_cells():
+    import os
+
+    v = os.environ.get("TRACE_STORE_ONE_PIECE_CELLS", "")      # tests only
+    return int(v) if v else ONE_PIECE_CELLS
+
+
+def is_store_frame(geno_df):
+    return getattr(geno_df, "shape", (0, 0))[1] == 1 and ROW_COL in getattr(geno_df, "columns", ())
+
+
+class TraitStore:
+    def __init__(self, parsed):
+        self.parsed = parsed
+        self.store = parsed.store
+        self.cols = np.arange(self.store.M, dtype=np.int64)
+        self.all_cols = True          # no variant removed yet
+        self.counts = None            # n1, n2, nmiss aligned with self.cols, for self.count_rows
+        self.count_rows = None
+        self.sid = None
+        from gwas import genostore as _gs
+        self.read_notes = _gs._LOG.setdefault("notes", [])   # shown in the read log
+
+    # ------------------------------------------------------------------ helpers
+    def _rows(self, geno_df):
+        return geno_df[ROW_COL].to_numpy(dtype=np.int64)
+
+    def _all_rows(self, rows):
+        return rows.size == self.store.N and bool((rows == np.arange(self.store.N)).all())
+
+    def _counts_for(self, rows):
+        """n1, n2, nmiss (int64, aligned with self.cols) and the largest value over ``rows``."""
+        st = self.parsed.stats
+        if self._all_rows(rows):
+            return {"n1": st["n1"][self.cols], "n2": st["n2"][self.cols], "nmiss": st["nmiss"][self.cols],
+                    # the largest value among the CURRENT variants (today: of the current table)
+                    "gmax": int(st["vmax"][self.cols].max()) if self.cols.size else -1, "n": int(rows.size)}
+        c = self.store.count_pass(self.cols, rows)
+        self.read_notes.append(("count_pass_snps", int(rows.size), int(self.cols.size)))
+        return c
+
+    def _row_nmiss_for(self, rows):
+        """Missing calls of each row over the current columns (int64)."""
+        if self.all_cols:
+            return self.parsed.stats["row_nmiss"][rows]
+        c = self.store.count_pass(self.cols, rows)
+        self.read_notes.append(("count_pass_rows", int(rows.size), int(self.cols.size)))
+        return c["row_nmiss"]
+
+    def frame(self, geno_df, sid=None):
+        """The in-memory genotype frame of today's code (samples x SNPs float32, NaN missing),
+        read whole. Only for the stages not yet converted to pieces."""
+        rows = self._rows(geno_df)
+        raw = np.asarray(LazyColumns(self.store, self.cols, rows, fill=None, layout="F"))
+        return pd.DataFrame(raw, index=geno_df.index, columns=self.sid if sid is None else sid)
+
+    # ------------------------------------------------- gwas.qc._pipeline_harmonize_ids
+    def harmonize_ids(self, genotypes, samples, chroms, positions, vid, ref, alt, pheno, info_scores=None):
+        # today: the SNP-ID loop (qc.py, _pipeline_harmonize_ids), unchanged
+        sid = []
+        _ref_list = []
+        _alt_list = []
+        for i, (c, p) in enumerate(zip(chroms, positions)):
+            rs = None
+            if vid is not None:
+                v = vid[i]
+                if isinstance(v, (bytes, bytearray)):
+                    v = v.decode("utf-8", errors="ignore")
+                if v is not None:
+                    v = str(v).strip()
+                    if v != "" and v != "." and v.lower() != "none":
+                        rs = v
+
+            _r = "."
+            _a = "."
+            if ref is not None:
+                rr = ref[i]
+                if isinstance(rr, (bytes, bytearray)):
+                    rr = rr.decode("utf-8", errors="ignore")
+                _r_tmp = str(rr).strip()
+                if _r_tmp not in ("", ".", "None", "none"):
+                    _r = _r_tmp
+            if alt is not None:
+                aa = alt[i]
+                for x in np.atleast_1d(aa):
+                    if x is None:
+                        continue
+                    if isinstance(x, (bytes, bytearray)):
+                        if len(x) == 0:
+                            continue
+                        x = x.decode("utf-8", errors="ignore")
+                    s_alt = str(x).strip()
+                    if s_alt not in ("", ".", "None", "none", "nan"):
+                        _a = s_alt
+                        break
+
+            if rs is not None:
+                sid.append(rs)
+            else:
+                r = _r if _r != "." else "N"
+                a = _a if _a != "." else "N"
+                sid.append(f"{c}_{p}_{r}_{a}_v{i}")
+            _ref_list.append(_r)
+            _alt_list.append(_a)
+
+        sid = np.asarray(sid, dtype=str)
+        if len(np.unique(sid)) != len(sid):
+            sid = np.array([f"{s}_{i}" for i, s in enumerate(sid)], dtype=str)
+            if pd.Series(sid).duplicated().any():
+                sid = np.asarray([f"{s}__v{i}" for i, s in enumerate(sid)], dtype=str)
+
+        # today: geno_df = pd.DataFrame(genotypes, index=samples, columns=sid)
+        geno_df = pd.DataFrame({ROW_COL: np.arange(len(samples), dtype=np.int64)}, index=samples)
+
+        # Filter split multi-allelic records (keep highest MAF per chr:pos)
+        chrom_pos_key = pd.Series([f"{c}:{p}" for c, p in zip(chroms, positions)])
+        if chrom_pos_key.duplicated().any():
+            _n_before_multi = len(chrom_pos_key)
+            # today: n_called / ac / an / af / maf_tmp from the whole table (all VCF samples);
+            # here from the ingest-time counts: the same exact integers, the same expressions
+            st = self.parsed.stats
+            n_called = (self.store.N - st["nmiss"]).astype(float)
+            ac = (st["n1"] + 2 * st["n2"]).astype(float)
+            an = 2.0 * n_called
+            af = np.divide(ac, an, out=np.full_like(ac, np.nan, dtype=float), where=(an > 0))
+            maf_tmp = np.minimum(af, 1.0 - af)
+
+            # today: for each unique key in order of first appearance, the single index or
+            # mask[np.argmax(maf_tmp[mask])]; then np.sort. The same choice per key, found by
+            # grouping (today's loop compares every key with all keys).
+            dup = chrom_pos_key.duplicated(keep=False).to_numpy()
+            keep_idx = list(np.flatnonzero(~dup))            # keys that occur once
+            d_idx = np.flatnonzero(dup)
+            codes, _uniq = pd.factorize(chrom_pos_key.to_numpy()[d_idx])
+            order = np.argsort(codes, kind="stable")
+            bounds = np.flatnonzero(np.diff(codes[order])) + 1
+            for grp in np.split(d_idx[order], bounds):       # each: one key's records, ascending
+                keep_idx.append(grp[np.argmax(maf_tmp[grp])])
+
+            keep_idx = np.sort(keep_idx)
+            _n_multi_removed = _n_before_multi - len(keep_idx)
+            if _n_multi_removed > 0:
+                _log_or_warn(
+                    f"{_n_multi_removed} multi-allelic records collapsed "
+                    f"(kept highest-MAF allele per chr:pos)."
+                )
+            self.cols = self.cols[keep_idx]
+            self.all_cols = False
+            chroms = chroms[keep_idx]
+            positions = positions[keep_idx]
+            sid = sid[keep_idx]
+            _ref_list = [_ref_list[j] for j in keep_idx]
+            _alt_list = [_alt_list[j] for j in keep_idx]
+            if info_scores is not None:
+                info_scores = info_scores[keep_idx]
+
+        # today: Harmonize sample IDs (unchanged)
+        geno_ids = pd.Series(geno_df.index.astype(str)).str.strip()
+        pheno_ids = pd.Series(pheno.index.astype(str)).str.strip()
+
+        if geno_ids.duplicated().any():
+            geno_df = geno_df.loc[(~geno_ids.duplicated()).to_numpy()].copy()
+            geno_ids = pd.Series(geno_df.index.astype(str)).str.strip()
+
+        if pheno_ids.duplicated().any():
+            pheno = pheno.loc[(~pheno_ids.duplicated()).to_numpy()].copy()
+            pheno_ids = pd.Series(pheno.index.astype(str)).str.strip()
+
+        geno_df.index = np.asarray(geno_ids.to_numpy(dtype=object), dtype=str)
+        pheno_orig = pheno.copy()  # keep before intersection for fallback matching
+
+        common_ids = geno_df.index.intersection(pheno.index)
+
+        if len(common_ids) == 0:
+            geno_norm = geno_ids.str.lstrip("0").replace("", "0")
+            pheno_norm = pheno_ids.str.lstrip("0").replace("", "0")
+            geno_df_try = geno_df.copy()
+            geno_df_try.index = np.asarray(geno_norm.to_numpy(dtype=object), dtype=str)
+            pheno_try = pheno_orig.copy()
+            pheno_try.index = np.asarray(pheno_norm.to_numpy(dtype=object), dtype=str)
+            common_norm = geno_df_try.index.intersection(pheno_try.index)
+            if len(common_norm) > 0:
+                _log_or_warn(
+                    "Sample IDs matched after stripping leading zeros "
+                    f"(e.g., VCF '{geno_ids.iloc[0]}' -> phenotype "
+                    f"'{pheno_ids.iloc[0]}'). "
+                    f"Proceeding with {len(common_norm)} matched samples."
+                )
+                geno_df = geno_df_try.loc[common_norm]
+                pheno = pheno_try.loc[common_norm]
+                common_ids = common_norm
+            else:
+                raise ValueError(
+                    "No overlapping sample IDs between genotype and phenotype files. "
+                    "Check that accession names match exactly (case-sensitive). "
+                    f"VCF samples (first 5): {geno_ids.head().tolist()} | "
+                    f"Phenotype IDs (first 5): {pheno_ids.head().tolist()}"
+                )
+        else:
+            geno_df = geno_df.loc[common_ids]
+            pheno = pheno.loc[common_ids]
+
+        n_geno = len(geno_ids)
+        n_pheno = len(pheno_ids)
+        n_common = len(common_ids)
+        if n_common < min(n_geno, n_pheno):
+            pct = n_common / max(n_geno, n_pheno) * 100
+            _log_or_warn(
+                f"Partial sample overlap: {n_common} of {n_geno} VCF samples matched "
+                f"{n_common} of {n_pheno} phenotype samples ({pct:.0f}% overlap)."
+            )
+
+        allele_map = {s: (_ref_list[j], _alt_list[j]) for j, s in enumerate(sid)}
+        self.sid = sid
+        return geno_df, pheno, chroms, positions, sid, info_scores, allele_map
+
+    # -------------------------------------------------- gwas.qc._pipeline_phenotype_qc
+    def phenotype_qc(self, geno_df, pheno, trait_col, norm_option, ind_miss_thresh):
+        raw_values = pheno[trait_col]
+        _n_numeric = pd.to_numeric(raw_values, errors="coerce").notna().sum()
+        if _n_numeric == 0:
+            raise ValueError(
+                f"Trait column '{trait_col}' contains no numeric values "
+                f"(first 5: {raw_values.head().tolist()}). "
+                "Ensure the trait column contains numeric measurements, not categories."
+            )
+        if _n_numeric < len(raw_values):
+            _n_non = len(raw_values) - _n_numeric
+            _log_or_warn(
+                f"{_n_non} non-numeric values in trait '{trait_col}' will be treated as missing."
+            )
+
+        y = pd.to_numeric(pheno[trait_col], errors="coerce").values.reshape(-1, 1)
+
+        keep_non_nan = ~np.isnan(y).ravel()
+        y = y[keep_non_nan]
+        geno_df = geno_df.iloc[keep_non_nan, :]
+        pheno = pheno.iloc[keep_non_nan, :]
+
+        if np.nanstd(y) < 1e-8:
+            raise ValueError(
+                f"Trait '{trait_col}' has near-zero variance after filtering. "
+                "GWAS is not meaningful."
+            )
+
+        pheno = pheno.reindex(geno_df.index)
+
+        # today: sample_missing = geno_df.isna().mean(axis=1)   (missing calls / SNPs, float64)
+        _rows = self._rows(geno_df)
+        with np.errstate(divide="ignore", invalid="ignore"):   # no SNP left: NaN, as pandas gives silently
+            sample_missing = pd.Series(self._row_nmiss_for(_rows) / float(self.cols.size), index=geno_df.index)
+        keep_samples = sample_missing < ind_miss_thresh
+
+        geno_df = geno_df.loc[keep_samples]
+        pheno = pheno.loc[keep_samples]
+
+        if geno_df.shape[0] == 0:
+            raise ValueError(
+                f"All samples removed by missingness filter (threshold={ind_miss_thresh}). "
+                "Try a less strict threshold."
+            )
+
+        y = pd.to_numeric(pheno[trait_col], errors="coerce").to_numpy().reshape(-1, 1)
+
+        keep_y = ~np.isnan(y).ravel()
+        geno_df = geno_df.iloc[keep_y, :]
+        pheno = pheno.iloc[keep_y, :]
+        y = y[keep_y, :]
+
+        if not geno_df.index.equals(pheno.index):
+            raise RuntimeError("Genotype and phenotype indices misaligned after filtering.")
+        if geno_df.shape[0] != y.shape[0]:
+            raise RuntimeError("Genotype and phenotype lengths differ after filtering.")
+
+        y_flat, _norm_note = normalise_phenotype(y.ravel(), norm_option)
+        y = y_flat.reshape(-1, 1)
+        if _norm_note and norm_option not in ("none", "", None):
+            log.warning("Phenotype '%s': %s", trait_col, _norm_note)
+
+        return geno_df, pheno, y
+
+    # -------------------------------------------------------- gwas.qc._pipeline_snp_qc
+    def snp_qc(self, geno_df, chroms, positions, sid,
+               maf_thresh, miss_thresh, mac_thresh, drop_alt,
+               info_scores=None, info_thresh=0.0,
+               canonical=None, max_het=None, het_excess_p=None):
+        n_initial_snps = int(self.cols.size)
+        rows = self._rows(geno_df)
+        c = self._counts_for(rows)
+        n = int(rows.size)
+
+        # today: missing_rate = geno_df.isna().mean(axis=0)
+        missing_rate = c["nmiss"] / float(n)
+
+        # today: _dmax from the float table; the store holds the same integers
+        _dmax = float(c["gmax"]) if (c["nmiss"] < n).any() else 0.0
+        if _dmax > 2.5:
+            raise ValueError(
+                f"Genotype dosage > 2 detected (maximum observed: {_dmax:g}). "
+                "TRACE models diploid panels; polyploid dosage coding is not "
+                "supported. Disomic allopolyploid panels coded 0/1/2 per subgenome "
+                "are supported -- see Limitations."
+            )
+        # today: AC = np.nansum(dos, axis=0); n_called = np.sum(~np.isnan(dos), axis=0)
+        AC = (c["n1"] + 2 * c["n2"]).astype(np.float64)
+        n_called = n - c["nmiss"]
+        AN = 2.0 * n_called
+        AF = np.divide(AC, AN, out=np.full_like(AC, np.nan, dtype=float), where=(AN > 0))
+        maf = np.minimum(AF, 1.0 - AF)
+        mac = np.minimum(AC, AN - AC)
+
+        n_het = c["n1"]
+        het_rate = np.divide(n_het, n_called,
+                             out=np.full_like(AC, np.nan, dtype=float),
+                             where=(n_called > 0))
+        het_median = float(np.nanmedian(het_rate)) if np.isfinite(het_rate).any() else 0.0
+
+        het_fail = np.zeros(len(maf), dtype=bool)
+        if max_het is not None:
+            het_fail |= np.isfinite(het_rate) & (het_rate > float(max_het))
+        if het_excess_p is not None:
+            from scipy.special import erfc
+            He = 2.0 * AF * (1.0 - AF)
+            exp_het = n_called * He
+            var_het = n_called * He * (1.0 - He)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                z = np.divide(n_het - exp_het, np.sqrt(var_het),
+                              out=np.full_like(AC, np.nan, dtype=float),
+                              where=(var_het > 0))
+            p_excess = 0.5 * erfc(z / np.sqrt(2.0))
+            het_fail |= np.isfinite(p_excess) & (p_excess < float(het_excess_p))
+
+        has_info = (info_scores is not None and info_thresh > 0
+                    and len(info_scores) == len(maf))
+        if has_info:
+            info_fail = ~np.isfinite(info_scores) | (info_scores < info_thresh)
+        else:
+            info_fail = np.zeros(len(maf), dtype=bool)
+
+        qc_snp = {
+            "Total SNPs": int(len(maf)),
+            "Fail MAF": int((maf < maf_thresh).sum()),
+            "Fail Missingness": int((missing_rate >= miss_thresh).sum()),
+            "Fail MAC": int((mac < mac_thresh).sum()),
+            "Fail INFO": int(info_fail.sum()),
+            "Median het": het_median,
+            "Fail HetExcess": int(het_fail.sum()),
+        }
+
+        keep_mask = (
+                (maf >= maf_thresh) &
+                (missing_rate < miss_thresh) &
+                (mac >= mac_thresh) &
+                (~info_fail) &
+                (~het_fail)
+        )
+        keep_mask = np.asarray(keep_mask, dtype=bool)
+        qc_snp["Fail ANY"] = int((~keep_mask).sum())
+        qc_snp["Pass ALL"] = int(keep_mask.sum())
+
+        if keep_mask.sum() == 0:
+            raise ValueError("All SNPs failed QC with current thresholds.")
+
+        cols = self.cols[keep_mask]
+        cnt = {k: c[k][keep_mask] for k in ("n1", "n2", "nmiss")}
+        chroms = chroms[keep_mask]
+        positions = positions[keep_mask]
+        sid = sid[keep_mask]
+        if info_scores is not None:
+            info_scores = info_scores[keep_mask]
+
+        chroms_raw = chroms.copy()
+        chr_label, chr_num, chr_order_labels, chr_order_map = _clean_chr_series(chroms, canonical=canonical)
+        chroms = chr_label.astype(str)
+        chroms_num = chr_num.astype(int)
+
+        n_alt = int((chroms == "ALT").sum())
+        qc_snp["ALT chromosomes"] = n_alt
+
+        _alt_raw = pd.Series(chroms_raw).astype(str)[np.asarray(chroms) == "ALT"]
+        _nonauto = _alt_raw.str.fullmatch(
+            r"(?i)(chr)?(x|y|z|w|mt|m|pt|pltd|mtdna|chloroplast|mitochondri\w*)")
+        n_nonauto = int(_nonauto.fillna(False).sum()) if len(_alt_raw) else 0
+        qc_snp["Non-autosomal markers"] = n_nonauto
+        qc_snp["Unplaced/scaffold markers"] = int(len(_alt_raw) - n_nonauto)
+        if n_nonauto > 0:
+            _log_or_warn(
+                f"{n_nonauto} markers on non-autosomal sequences (X, Y, MT) excluded; "
+                "TRACE models autosomes only.")
+
+        if n_alt > 0 and n_alt == len(chroms):
+            sample = list(pd.Series(chroms_raw).unique()[:10])
+            raise ValueError(
+                "None of the chromosome names in your VCF were recognized as "
+                "numeric chromosomes. TRACE strips common species prefixes and "
+                "keeps entries that resolve to integers (e.g., 'chr1' -> '1', "
+                "'SL4.0ch01' -> '1').\n\n"
+                f"Your VCF contains these CHROM values: {sample}\n\n"
+                "If your species uses non-numeric chromosome names (e.g., wheat "
+                "'1A'/'1B'/'1D'), recode them to integers before loading."
+            )
+
+        if drop_alt:
+            keep = chroms != "ALT"
+            cols = cols[keep]
+            cnt = {k: v[keep] for k, v in cnt.items()}
+            chroms = chroms[keep]
+            chroms_num = chroms_num[keep]
+            positions = positions[keep]
+            sid = sid[keep]
+            if info_scores is not None:
+                info_scores = info_scores[keep]
+
+        ord_idx = np.lexsort((positions.astype(int), chroms_num.astype(int)))
+        cols = cols[ord_idx]
+        cnt = {k: v[ord_idx] for k, v in cnt.items()}
+        chroms = chroms[ord_idx]
+        chroms_num = chroms_num[ord_idx]
+        positions = positions[ord_idx]
+        sid = sid[ord_idx]
+        if info_scores is not None:
+            info_scores = info_scores[ord_idx]
+
+        self.cols = cols
+        self.all_cols = False
+        self.counts = cnt
+        self.count_rows = rows
+        self.sid = sid
+        return geno_df, chroms, chroms_num, positions, sid, n_initial_snps, qc_snp, info_scores
+
+    # ------------------------------------------- gwas.qc._pipeline_build_geno_matrices
+    def build_geno_matrices(self, geno_df, method="mean", impute_k=5, impute_l=20):
+        if method == "ldknni":
+            from gwas.pipeline import TraitPipelineError
+            raise TraitPipelineError(
+                "--impute ldknni ranks every SNP against all others and needs the whole genotype "
+                "table in memory; it is not available with --geno-store disk.")
+        rows = self._rows(geno_df)
+        if self.count_rows is None or rows.shape != self.count_rows.shape or not (rows == self.count_rows).all():
+            raise RuntimeError("the sample set changed between SNP QC and the genotype tables")
+        c = self.counts
+        n = int(rows.size)
+        # today: snp_imputation_rate = geno_df.isna().mean(axis=0).values.astype(np.float32)
+        snp_imputation_rate = (c["nmiss"] / float(n)).astype(np.float32)
+        # today: SimpleImputer(strategy="mean").fit_transform(geno_df).astype("float32"):
+        # a missing call becomes the SNP's mean over its called samples
+        fill = ((c["n1"] + 2 * c["n2"]).astype(np.float64) / (n - c["nmiss"])).astype(np.float32)
+        self.fill = fill
+        geno_dosage_raw = LazyColumns(self.store, self.cols, rows, fill=None, dtype=np.float32, layout="F")
+        geno_imputed = LazyColumns(self.store, self.cols, rows, fill=fill, dtype=np.float32, layout="F")
+        iid = np.c_[geno_df.index.values, geno_df.index.values].astype(str)
+        return geno_dosage_raw, snp_imputation_rate, geno_imputed, iid
+
+    # ------------------------------------------------- gwas.qc._pipeline_build_kinship
+    def build_kinship(self, geno_df, geno_imputed, chroms, positions):
+        """Today's function on the tables read whole (converted to pieces in a later step)."""
+        from gwas.qc import _pipeline_build_kinship
+
+        return _pipeline_build_kinship(self.frame(geno_df), np.asarray(geno_imputed), chroms, positions)
+
+    # ---------------------------------------------- gwas.qc_report.compute_qc_report
+    def qc_report(self, geno_df, trait_values, trait_col, **kw):
+        """Today's function on the tables read whole (converted to pieces in a later step)."""
+        from gwas import qc_report as _qcr
+
+        for k in ("geno_dosage_raw", "geno_imputed"):
+            if kw.get(k) is not None:
+                kw[k] = np.asarray(kw[k])
+        return _qcr.compute_qc_report(self.frame(geno_df), trait_values, trait_col, **kw)
+
+    # ------------------------------------------------ gwas.plotting.compute_meff_li_ji
+    def meff(self, geno_imputed):
+        """Today's function on the table read whole (the one-piece rule comes in a later step)."""
+        from gwas.plotting import compute_meff_li_ji
+
+        return compute_meff_li_ji(np.asarray(geno_imputed))
