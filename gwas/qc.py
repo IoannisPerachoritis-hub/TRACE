@@ -12,15 +12,32 @@ from gwas.io import load_vcf_cached, _clean_chr_series, _extract_info_scores
 log = logging.getLogger(__name__)
 
 
+def _in_streamlit_page() -> bool:
+    """True while a Streamlit page runs this code (a script run context exists). False in the
+    CLI and in plain tests, where st.warning prints nothing."""
+    if st is None:
+        return False
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+    except Exception:
+        return False
+    try:
+        return get_script_run_ctx(suppress_warning=True) is not None
+    except TypeError:                     # a Streamlit without suppress_warning
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
+
+
 def _log_or_warn(msg: str) -> None:
-    """Emit a Streamlit warning if available, otherwise log."""
-    if st is not None:
+    """A warning of the pipeline: on the page in the GUI, in the log everywhere else (the CLI)."""
+    if _in_streamlit_page():
         try:
             st.warning(msg)
+            return
         except Exception:
-            log.warning(msg)
-    else:
-        log.warning(msg)
+            pass
+    log.warning(msg)
 
 
 def allele_freq_from_called_dosage(G_dos):
