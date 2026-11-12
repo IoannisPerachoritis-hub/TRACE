@@ -110,8 +110,9 @@ linear-algebra library (OpenBLAS or MKL). Between thread counts, the last digits
 change (by about 1 part in 10 million; no significance call changed in our tests), and with
 `--boot-jobs` above 1 the subsampling results depend on the threads of each worker: the thread
 count you set (for example `OPENBLAS_NUM_THREADS`) or, if you set none, cores / workers. Every
-run records the library and its version, the thread count, the cores, `--boot-jobs` and the
-threads per worker in `run_metadata.json` and in the report's provenance table.
+run records the libraries and their versions (numpy and scipy each bring their own, so both are
+named, numpy's first), the thread count, the cores, `--boot-jobs` and the threads per worker in
+`run_metadata.json` and in the report's provenance table.
 To reproduce a run exactly, set the same thread count, for example `OPENBLAS_NUM_THREADS=4`.
 
 ## Docker

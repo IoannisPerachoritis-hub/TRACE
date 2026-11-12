@@ -29,6 +29,32 @@ def test_keys_and_values(monkeypatch):
     assert subsampling_threads(1) is None
 
 
+def test_blas_libraries_are_named_in_a_fixed_order(monkeypatch):
+    """numpy and scipy each load an OpenBLAS, and threadpoolctl lists them in an order that changes
+    from one process to the next (seen in TRACE's Linux image), so run_metadata.json and the
+    report named one or the other at random. Both are named, numpy's first, whatever the order;
+    the thread count is numpy's."""
+    import threadpoolctl
+
+    np_lib = {"user_api": "blas", "internal_api": "openblas", "version": "0.3.30", "num_threads": 4,
+              "filepath": "/env/site-packages/numpy.libs/libscipy_openblas64_-a1.so"}
+    sp_lib = {"user_api": "blas", "internal_api": "openblas", "version": "0.3.31.188.0", "num_threads": 7,
+              "filepath": "/env/site-packages/scipy.libs/libscipy_openblas-b2.so"}
+    omp = {"user_api": "openmp", "internal_api": "openmp", "version": None, "num_threads": 12,
+           "filepath": "/env/site-packages/scikit_learn.libs/libgomp-c3.so"}
+    seen = set()
+    for order in ([np_lib, sp_lib, omp], [omp, sp_lib, np_lib], [sp_lib, omp, np_lib]):
+        monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda o=order: [dict(x) for x in o])
+        seen.add(blas_info())
+    assert seen == {("openblas 0.3.30 (numpy); openblas 0.3.31.188.0 (scipy)", 4)}
+    # numpy/.libs (the older wheels' folder) and a library of neither package
+    np_old = dict(np_lib, filepath="/env/site-packages/numpy/.libs/libopenblas-d4.so")
+    mkl = {"user_api": "blas", "internal_api": "mkl", "version": "2024.0", "num_threads": 2,
+           "filepath": "/env/lib/libmkl_rt.so.2"}
+    monkeypatch.setattr(threadpoolctl, "threadpool_info", lambda: [dict(mkl), dict(np_old)])
+    assert blas_info() == ("openblas 0.3.30 (numpy); mkl 2024.0", 4)
+
+
 def test_blas_thread_count_follows_the_environment():
     code = "from gwas.provenance import blas_info; print(blas_info()[1])"
     for n in ("1", "3"):

@@ -1,7 +1,8 @@
 """The machine facts that decide the last bits of a run's numbers, for its provenance.
 
-The linear algebra library (OpenBLAS or MKL) splits matrix products over its threads, and the
-order of the partial sums changes the last bits of the results: between 1 and 12 threads the
+The linear algebra libraries (OpenBLAS or MKL; numpy and scipy each bring their own) split
+matrix products over their threads, and the order of the partial sums changes the last bits of
+the results: between 1 and 12 threads the
 p-values of the same run differ by up to about 5 parts in 10 million (scaling audit, section
 8.4). With --boot-jobs above 1, each subsampling worker gets the thread count set in the
 environment (OPENBLAS_NUM_THREADS and the like) or, when none is set, max(cores / workers, 1),
@@ -19,28 +20,55 @@ WORKER_THREAD_VARS = {"openblas": "OPENBLAS_NUM_THREADS", "mkl": "MKL_NUM_THREAD
                       "blis": "BLIS_NUM_THREADS", "openmp": "OMP_NUM_THREADS"}
 
 
-def _numpy_blas():
-    """threadpoolctl's entry for the BLAS numpy uses, or None."""
+def _owner(lib):
+    """The package a BLAS library file belongs to ("numpy", "scipy"), from the folder it sits in
+    (numpy.libs/ or numpy/.libs/ in the wheels); "" when it is neither."""
+    from pathlib import Path
+
+    parents = Path(lib.get("filepath") or "").parents
+    for p in list(parents)[:2]:
+        name = p.name.lower()
+        for pkg in ("numpy", "scipy"):
+            if name == pkg or name.startswith(pkg + "."):
+                return pkg
+    return ""
+
+
+def _blas_libs():
+    """threadpoolctl's BLAS entries in a fixed order: numpy's first, then scipy's, then the rest
+    by file path. numpy and scipy each bring their own OpenBLAS, and threadpoolctl lists them in
+    an order that changes from one process to the next (seen on Linux)."""
     try:
         import numpy  # noqa: F401  -- loads numpy's BLAS, which threadpoolctl lists
         from threadpoolctl import threadpool_info
 
-        for lib in threadpool_info():
-            if lib.get("user_api") == "blas":
-                return lib
+        libs = [lib for lib in threadpool_info() if lib.get("user_api") == "blas"]
     except Exception:
-        pass
-    return None
+        return []
+    rank = {"numpy": 0, "scipy": 1}
+    return sorted(libs, key=lambda lib: (rank.get(_owner(lib), 2), str(lib.get("filepath") or "")))
+
+
+def _numpy_blas():
+    """threadpoolctl's entry for the BLAS numpy uses (the first of _blas_libs), or None."""
+    libs = _blas_libs()
+    return libs[0] if libs else None
 
 
 def blas_info():
-    """(library and version, threads in effect) of the BLAS numpy uses, from threadpoolctl;
-    ("unknown", None) when it cannot be read."""
-    lib = _numpy_blas()
-    if lib is None:
+    """(the BLAS libraries with their versions, numpy's first, for example "openblas 0.3.30
+    (numpy); openblas 0.3.31 (scipy)"; the threads numpy's uses), from threadpoolctl;
+    ("unknown", None) when they cannot be read. Both libraries take part in the analysis
+    (FaST-LMM works through scipy), so both are named."""
+    libs = _blas_libs()
+    if not libs:
         return "unknown", None
-    name = f"{lib.get('internal_api', '?')} {lib.get('version') or ''}".strip()
-    return name, lib.get("num_threads")
+    names = []
+    for lib in libs:
+        name = f"{lib.get('internal_api', '?')} {lib.get('version') or ''}".strip()
+        owner = _owner(lib)
+        names.append(f"{name} ({owner})" if owner else name)
+    return "; ".join(dict.fromkeys(names)), libs[0].get("num_threads")
 
 
 def _processors():
