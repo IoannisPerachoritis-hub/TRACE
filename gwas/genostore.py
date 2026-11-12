@@ -544,6 +544,7 @@ def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_reco
     import allel
     import pandas as pd
 
+    from gwas.io import info_one_value_per_record
     from gwas.qc import _pipeline_parse_vcf_biallelic
 
     t0 = time.perf_counter()
@@ -568,8 +569,6 @@ def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_reco
     info_acc = {k: [] for k in info_keys}
     info_seen = {k: False for k in info_keys}
     info_finite = {k: False for k in info_keys}
-    info_bad_shape = {k: False for k in info_keys}
-    info_raw_n = {k: 0 for k in info_keys}
     n_all = 0
     have = {"vid": False, "ref": False, "alt": False}
     samples = None
@@ -632,15 +631,11 @@ def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_reco
                         # gwas.io._extract_info_scores, per chunk: the same conversion; whether
                         # the field has any finite value is decided over ALL records, as today
                         info_seen[k] = True
-                        raw = np.asarray(real_info[k]).ravel()
+                        raw = info_one_value_per_record(real_info[k], chunk.get("variants/ALT", None))
                         sc = pd.to_numeric(raw, errors="coerce").astype(np.float32)
-                        info_raw_n[k] += int(raw.size)
                         if sc.size and np.any(np.isfinite(sc)):
                             info_finite[k] = True
-                        if raw.size == n_rec:
-                            info_acc[k].append(sc[kept])
-                        else:
-                            info_bad_shape[k] = True      # several values per record (Number=A, ...)
+                        info_acc[k].append(sc[kept])
                 n_all += n_rec
                 M += int(g8.shape[1])
                 n_chunks += 1
@@ -656,13 +651,8 @@ def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_reco
         raise DeferredParseError(ValueError(_NO_RECORDS))
     cat = np.concatenate
     info_scores = info_field = None
-    for k in info_keys:              # today: the first field with any finite value over all records
+    for k in info_keys:              # the first field with any finite value over all records
         if info_seen[k] and info_finite[k]:
-            if info_bad_shape[k]:
-                # today the per-record mask is applied to the flattened field and numpy stops
-                raise DeferredParseError(IndexError(
-                    "boolean index did not match indexed array along dimension 0; dimension is "
-                    f"{info_raw_n[k]} but corresponding boolean dimension is {n_all}"))
             info_scores, info_field = cat(info_acc[k]), k.split("/", 1)[1]
             break
     stats = {"n1": cat(acc["n1"]), "n2": cat(acc["n2"]), "nmiss": cat(acc["nmiss"]),

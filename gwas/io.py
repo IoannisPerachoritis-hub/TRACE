@@ -181,11 +181,26 @@ def _extract_info_scores(callset):
         key = f"variants/{field}"
         arr = callset.get(key, None)
         if arr is not None:
-            raw = np.asarray(arr).ravel()
+            raw = info_one_value_per_record(arr, callset.get("variants/ALT", None))
             scores = pd.to_numeric(raw, errors="coerce").astype(np.float32)
             if scores.size > 0 and np.any(np.isfinite(scores)):
                 return scores, field
     return None, None
+
+
+def info_one_value_per_record(arr, alt=None):
+    """One value per VCF record of an INFO field. A field declared Number=A (one value per ALT
+    allele; Beagle 5 declares DR2 so) or Number=R (REF, then each ALT) is read by scikit-allel as
+    records x k; the value TRACE uses is the first ALT allele's: column 0 for Number=A, column 1
+    for Number=R (told apart by k against the ALT array's width). For the biallelic records the
+    parse keeps, that is the record's only ALT allele. A field with one value per record
+    (Number=1) is returned as it is."""
+    a = np.asarray(arr)
+    if a.ndim < 2:
+        return a.ravel()
+    n_alt = np.asarray(alt).shape[1] if alt is not None and np.ndim(alt) == 2 else None
+    col = 1 if (n_alt is not None and a.shape[1] == n_alt + 1) else 0
+    return a[:, col]
 
 
 def _clean_chr_series(chr_array_like, canonical=None):
