@@ -1,0 +1,419 @@
+"""The genotype table kept on disk and read in pieces (``--geno-store disk``).
+
+GenotypeStore   one file, ``calls.i8``: one byte per call (the ALT-allele count, -1 for a
+                missing call), variant-major (n_variants x n_samples), so the bytes of a run of
+                variants are one contiguous read. Reads are explicit (seek + read), never
+                memory-mapped: a mapped file counts as resident memory on Windows and in
+                containers, which misleads memory guards (scaling audit, section 9.5).
+LazyColumns     a samples x SNPs table that stays on disk: a selection of store rows and
+                columns, an optional per-SNP fill value (the mean-imputed table) and the layout
+                (C or F) today's in-memory array has at the point where it stands in. Every
+                read returns an ndarray with today's values, number format and layout, so the
+                code that receives it does today's arithmetic. A conversion of the whole table
+                (np.asarray) still works, and is logged with its call site.
+as_columns      ``np.asarray(x, dtype)`` for an array; the same table, still on disk, for a
+                LazyColumns. Code shared by both modes uses it where it used ``np.asarray``.
+
+Nothing here is used unless the table is kept on disk; the in-memory path is unchanged.
+
+Diagnostics (environment variables, read when used; tests and measurements only):
+  TRACE_STORE_FORBID_MATERIALIZE=1  a whole-table conversion raises MemoryError instead of
+                                    reading (proves a run never reads the table whole).
+  TRACE_STORE_MAX_BLOCK_CELLS=N     a piecewise read of more than N cells raises MemoryError
+                                    (one-piece reads by design are logged, not limited).
+  TRACE_STORE_PIECE=N               every streaming pass reads N SNP columns at a time instead
+                                    of its default (results must not depend on it).
+"""
+import json
+import os
+import sys
+
+import numpy as np
+
+# --------------------------------------------------------------------------- read accounting
+_LOG = {"file_reads": 0, "file_bytes": 0, "blocks": 0, "max_block_cells": 0, "max_block_shape": None,
+        "max_block_site": None, "materialized": [], "by_site": {}}
+_HERE = os.path.normcase(os.path.abspath(__file__))
+
+
+def _forbid_materialize():
+    return os.environ.get("TRACE_STORE_FORBID_MATERIALIZE", "") == "1"
+
+
+def _max_block_cells():
+    return int(os.environ.get("TRACE_STORE_MAX_BLOCK_CELLS", "0") or 0)    # 0 = no limit
+
+
+def _call_site():
+    """file:line:function of the first frame outside this module (who asked for the block)."""
+    f = sys._getframe(1)
+    while f is not None and os.path.normcase(os.path.abspath(f.f_code.co_filename)) == _HERE:
+        f = f.f_back
+    if f is None:
+        return "?"
+    return f"{os.path.basename(f.f_code.co_filename)}:{f.f_lineno}:{f.f_code.co_name}"
+
+
+def _note_block(shape, whole=False, table_cols=None):
+    """Log one block read (every read of the table passes here once, with the caller's site).
+    ``whole``: a whole-table read by design (one-piece rule, export). ``table_cols``: the width of
+    the table the block is cut from; a block that covers all of it is counted as covers_all."""
+    cells = int(shape[0]) * int(shape[1])
+    site = _call_site()
+    _LOG["blocks"] += 1
+    s = _LOG["by_site"].setdefault(site, {"blocks": 0, "max_cells": 0, "max_cols": 0, "whole": 0,
+                                          "covers_all": 0, "max_frac": 0.0})
+    s["blocks"] += 1
+    s["max_cells"] = max(s["max_cells"], cells)
+    s["max_cols"] = max(s["max_cols"], int(shape[1]))
+    s["whole"] += int(bool(whole))
+    if table_cols:
+        frac = int(shape[1]) / float(table_cols)
+        s["max_frac"] = max(s["max_frac"], round(frac, 6))
+        s["covers_all"] += int(int(shape[1]) >= int(table_cols))
+        _LOG["table_cells"] = max(_LOG.get("table_cells", 0), int(shape[0]) * int(table_cols))
+    if cells > _LOG["max_block_cells"]:
+        _LOG["max_block_cells"] = cells
+        _LOG["max_block_shape"] = tuple(int(x) for x in shape)
+        _LOG["max_block_site"] = site
+    if whole:
+        _LOG["materialized"].append({"site": site, "shape": [int(x) for x in shape]})
+    limit = _max_block_cells()
+    if limit and cells > limit and not whole:
+        raise MemoryError(f"genotype block of {shape[0]} x {shape[1]} cells exceeds "
+                          f"TRACE_STORE_MAX_BLOCK_CELLS ({limit}) at {site}")
+
+
+def read_log():
+    """A copy of the read log: file reads and bytes, blocks per call site, whole-table reads."""
+    return json.loads(json.dumps(_LOG))
+
+
+def reset_read_log():
+    _LOG.clear()
+    _LOG.update(file_reads=0, file_bytes=0, blocks=0, max_block_cells=0, max_block_shape=None,
+                max_block_site=None, materialized=[], by_site={})
+
+
+def piece(default):
+    """The number of SNP columns a streaming pass reads at a time (TRACE_STORE_PIECE overrides)."""
+    v = os.environ.get("TRACE_STORE_PIECE", "")
+    return int(v) if v else int(default)
+
+
+def is_lazy(x):
+    return isinstance(x, LazyColumns)
+
+
+def as_columns(x, dtype=None):
+    """``np.asarray(x, dtype=dtype)`` for an array (the expression the pipeline has always used);
+    for a LazyColumns the same table, still on disk, with that dtype."""
+    if isinstance(x, LazyColumns):
+        return x if dtype is None else x.astype(dtype)
+    return np.asarray(x) if dtype is None else np.asarray(x, dtype=dtype)
+
+
+# ------------------------------------------------------------------------------- the store
+def encode_calls(G):
+    """The store's bytes for a samples x SNPs table of calls (NaN = missing): int8 (n x m),
+    -1 for missing. Calls are whole numbers (ALT-allele counts) in the int8 range."""
+    G = np.asarray(G)
+    return np.where(np.isnan(G), -1, G).astype(np.int8)
+
+
+def write_store(store_dir, G):
+    """A new store in the folder ``store_dir`` holding the table ``G`` (samples x SNPs, NaN =
+    missing). Used by tests; the VCF ingest writes the same file chunk by chunk."""
+    G = np.asarray(G)
+    os.makedirs(store_dir, exist_ok=True)
+    with open(os.path.join(store_dir, "calls.i8"), "wb") as out:
+        out.write(np.ascontiguousarray(encode_calls(G).T).tobytes())
+    return GenotypeStore(store_dir, G.shape[0], G.shape[1])
+
+
+class GenotypeStore:
+    """The genotype table on disk: ``calls.i8`` (n_variants x n_samples int8, -1 missing)."""
+
+    def __init__(self, store_dir, n_samples, n_variants):
+        from pathlib import Path
+
+        self.dir = Path(store_dir)
+        self.N, self.M = int(n_samples), int(n_variants)
+        self.path = self.dir / "calls.i8"
+        self._fh = open(self.path, "rb", buffering=0)
+
+    def close(self):
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+    def _read_run(self, a, b):
+        """Variants a..b-1 as an int8 (b - a, N) C array (one file read)."""
+        a, b = int(a), int(b)
+        self._fh.seek(a * self.N)
+        buf = np.fromfile(self._fh, dtype=np.int8, count=(b - a) * self.N)
+        if buf.size != (b - a) * self.N:
+            raise IOError(f"short read from {self.path}: variants {a}..{b}")
+        _LOG["file_reads"] += 1
+        _LOG["file_bytes"] += int(buf.size)
+        return buf.reshape(b - a, self.N)
+
+    def gather(self, cols, rows=None, piece=4096, _log=True, table_cols=None):
+        """int8 (n x len(cols)), F-ordered: the calls of store variants ``cols`` (any order) for
+        the samples ``rows`` (store row indices; None = all, in store order). Ascending runs of
+        variants within ``piece`` of each other are read with one file read. The read is logged
+        (``_log=False`` for LazyColumns.block, which logs it itself)."""
+        cols = np.asarray(cols, dtype=np.int64)
+        n = self.N if rows is None else int(len(rows))
+        if _log:
+            _note_block((n, cols.size), table_cols=table_cols)
+        out = np.empty((n, cols.size), dtype=np.int8, order="F")
+        k = 0
+        while k < cols.size:
+            lo, j = int(cols[k]), k
+            while j + 1 < cols.size and cols[j + 1] > cols[j] and int(cols[j + 1]) - lo < piece:
+                j += 1
+            run = self._read_run(lo, int(cols[j]) + 1)                 # (w, N)
+            if int(cols[j]) - lo != j - k:                             # not a contiguous run
+                run = run[cols[k:j + 1] - lo]
+            if rows is not None:
+                run = np.take(run, rows, axis=1)                       # (k', n)
+            out[:, k:j + 1] = run.T
+            k = j + 1
+        return out
+
+    def count_pass(self, cols, rows=None, piece=8192):
+        """Exact call counts over ``rows`` for the variants ``cols``: per variant n1, n2, nmiss
+        (int64); per row the number of missing calls (int64); the largest value (gmax)."""
+        cols = np.asarray(cols, dtype=np.int64)
+        n = self.N if rows is None else int(len(rows))
+        n1 = np.empty(cols.size, dtype=np.int64)
+        n2 = np.empty(cols.size, dtype=np.int64)
+        nm = np.empty(cols.size, dtype=np.int64)
+        row_nm = np.zeros(n, dtype=np.int64)
+        gmax = -1
+        step = globals()["piece"](piece)
+        for k in range(0, cols.size, step):
+            g = self.gather(cols[k:k + step], rows, table_cols=cols.size)
+            miss = g < 0
+            n1[k:k + step] = (g == 1).sum(axis=0, dtype=np.int64)
+            n2[k:k + step] = (g == 2).sum(axis=0, dtype=np.int64)
+            nm[k:k + step] = miss.sum(axis=0, dtype=np.int64)
+            row_nm += miss.sum(axis=1, dtype=np.int64)
+            if g.size:
+                gmax = max(gmax, int(g.max()))
+        return {"n1": n1, "n2": n2, "nmiss": nm, "row_nmiss": row_nm, "gmax": gmax, "n": n}
+
+
+# ----------------------------------------------------------------------- the lazy table
+class LazyColumns:
+    """A samples x SNPs float table that stays on disk (see the module docstring).
+
+    store   the GenotypeStore
+    cols    store variant indices, in the pipeline's SNP order
+    rows    store row indices (None = every sample, in store order)
+    fill    float32 per column: the value of a missing call (the mean-imputed table); None for
+            the raw table, whose missing calls are NaN
+    dtype   the number format blocks come back in
+    layout  "F" or "C": the layout today's array has where this object stands in
+    """
+
+    ndim = 2
+
+    def __init__(self, store, cols, rows=None, fill=None, dtype=np.float32, layout="F"):
+        self.store = store
+        self.cols = np.asarray(cols, dtype=np.int64)
+        self.rows = None if rows is None else np.asarray(rows, dtype=np.int64)
+        self.fill = fill
+        self.dtype = np.dtype(dtype)
+        self.layout = layout
+
+    # -- ndarray-like surface
+    @property
+    def shape(self):
+        return (self.store.N if self.rows is None else int(self.rows.size), int(self.cols.size))
+
+    @property
+    def size(self):
+        return self.shape[0] * self.shape[1]
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __repr__(self):
+        return (f"LazyColumns(shape={self.shape}, dtype={self.dtype}, layout={self.layout}, "
+                f"{'imputed' if self.fill is not None else 'raw'})")
+
+    def _derive(self, **kw):
+        new = LazyColumns.__new__(LazyColumns)
+        new.__dict__.update(self.__dict__)
+        new.__dict__.update(kw)
+        return new
+
+    def astype(self, dtype, copy=True):
+        return self._derive(dtype=np.dtype(dtype))
+
+    def as_layout(self, layout):
+        return self._derive(layout=layout)
+
+    def lazy_cols(self, sel):
+        """A lazy column subset (``sel``: index array, slice or boolean mask over this object's
+        columns)."""
+        sel = self._col_index(sel)
+        return self._derive(cols=self.cols[sel], fill=None if self.fill is None else self.fill[sel])
+
+    def lazy_rows(self, sel):
+        """A lazy row subset; like numpy's ``A[rows]``, its blocks are C-ordered (a slice keeps
+        the layout, as a numpy row slice is a view)."""
+        n = self.shape[0]
+        base = np.arange(self.store.N, dtype=np.int64) if self.rows is None else self.rows
+        if isinstance(sel, slice):
+            return self._derive(rows=base[sel])
+        sel = np.asarray(sel)
+        if sel.ndim != 1:
+            raise NotImplementedError("LazyColumns: row selections must be one-dimensional")
+        if sel.dtype == bool:
+            if sel.shape != (n,):
+                raise IndexError("boolean row mask of the wrong length")
+            sel = np.flatnonzero(sel)
+        return self._derive(rows=base[sel], layout="C")
+
+    def _col_index(self, sel):
+        m = self.shape[1]
+        if isinstance(sel, slice):
+            return np.arange(*sel.indices(m), dtype=np.int64)
+        sel = np.asarray(sel)
+        if sel.dtype == bool:
+            if sel.shape != (m,):
+                raise IndexError("boolean column mask of the wrong length")
+            return np.flatnonzero(sel)
+        sel = sel.astype(np.int64, copy=False).ravel()
+        return np.where(sel < 0, sel + m, sel)
+
+    def block(self, sel, layout=None, _whole=False, _strided=False):
+        """ndarray (n x k): today's values of the local columns ``sel`` in this object's dtype;
+        ``layout`` "F" or "C" (default: this object's layout). ``_strided`` (C layout only): the
+        block comes back as a view of a buffer one column wider, so its rows are NOT contiguous,
+        as a column slice ``G[:, a:b]`` of today's whole C-ordered table is not. BLAS takes
+        another path for a contiguous one- to three-column operand, and the last bits change
+        (scaling audit, section 8.3, family C)."""
+        sel = self._col_index(sel)
+        g8 = self.store.gather(self.cols[sel], self.rows, _log=False)
+        out = np.empty(g8.shape, dtype=np.float32, order="F")
+        out[...] = g8
+        miss = g8 < 0
+        if self.fill is None:
+            out[miss] = np.nan
+        elif miss.any():
+            out[miss] = np.broadcast_to(self.fill[sel], out.shape)[miss]
+        del g8, miss
+        if self.dtype != np.float32:
+            out = out.astype(self.dtype)                    # keeps the F layout
+        if (layout or self.layout) == "C":
+            if _strided:
+                buf = np.empty((out.shape[0], out.shape[1] + 1), dtype=out.dtype, order="C")
+                buf[:, :out.shape[1]] = out
+                out = buf[:, :out.shape[1]]
+            else:
+                out = np.ascontiguousarray(out)
+        _note_block(out.shape, whole=_whole, table_cols=self.shape[1])
+        return out
+
+    def __getitem__(self, key):
+        if not isinstance(key, tuple):
+            key = (key, slice(None))
+        if len(key) != 2:
+            raise IndexError("LazyColumns takes [rows, cols]")
+        rk, ck = key
+        full_r = isinstance(rk, slice) and rk == slice(None)
+        full_c = isinstance(ck, slice) and ck == slice(None)
+        if not full_r:
+            if not isinstance(rk, slice) and np.ndim(rk) == 0:
+                raise NotImplementedError("LazyColumns: single-row reads are not supported")
+            sub = self.lazy_rows(rk)
+            if full_c:
+                return sub
+            if not isinstance(ck, (slice, int, np.integer)):
+                raise NotImplementedError("LazyColumns: [index rows, index cols] is point-wise in numpy")
+            return sub[:, ck]
+        if full_c:
+            return self
+        if isinstance(ck, (int, np.integer)):
+            # a column of a C-ordered table is a strided 1-D view in numpy: keep it strided
+            return self.block([int(ck)], _strided=(self.layout == "C"))[:, 0]
+        if isinstance(ck, slice):
+            idx = self._col_index(ck)
+            if ck.step in (None, 1):
+                # a slice keeps the source layout; of a C-ordered table it is a strided view
+                return self.block(idx, _strided=(self.layout == "C"))
+            return self.block(idx, layout="F")
+        return self.block(ck, layout="F")                    # numpy: A[:, index array] is F-ordered
+
+    def materialize(self):
+        """The whole table as today's array (logged with its call site; refusable)."""
+        if _forbid_materialize():
+            raise MemoryError("whole-table read refused (TRACE_STORE_FORBID_MATERIALIZE=1) "
+                              f"at {_call_site()}")
+        return self.block(np.arange(self.shape[1]), _whole=True)
+
+    def __array__(self, dtype=None, copy=None):
+        out = self.materialize()
+        if dtype is not None and np.dtype(dtype) != out.dtype:
+            out = out.astype(dtype)                          # keeps the layout, as np.asarray(x, dtype)
+        return out
+
+    # -- FaST-LMM
+    def snp_reader(self, iid, sid, pos):
+        """A pysnptools SnpReader over this table: every block FaST-LMM asks for is today's
+        float32 value cast to the number format and order it requests."""
+        return _make_reader(self, iid, sid, pos)
+
+
+def _make_reader(lazy, iid, sid, pos):
+    from pysnptools.snpreader import SnpReader
+
+    class LazySnpReader(SnpReader):
+        def __init__(self):
+            super(LazySnpReader, self).__init__()
+            self._row, self._col, self._col_property = iid, sid, pos
+
+        def __repr__(self):
+            return f"LazySnpReader({len(self._col)} SNPs)"
+
+        @property
+        def row(self):
+            return self._row
+
+        @property
+        def col(self):
+            return self._col
+
+        @property
+        def col_property(self):
+            return self._col_property
+
+        def copyinputs(self, copier):
+            pass
+
+        def _read(self, row_index_or_none, col_index_or_none, order, dtype, force_python_only, view_ok,
+                  num_threads):
+            dtype = np.dtype(dtype)
+            if order == "A":
+                order = "F"
+            m = len(self._col)
+            if col_index_or_none is None:
+                ci = np.arange(m)
+            elif isinstance(col_index_or_none, slice):
+                ci = np.arange(m)[col_index_or_none]
+            else:
+                ci = np.asarray(col_index_or_none)
+            blk = lazy.astype(np.float32).block(ci, layout="F")
+            if row_index_or_none is not None:
+                ri = (np.arange(blk.shape[0])[row_index_or_none] if isinstance(row_index_or_none, slice)
+                      else np.asarray(row_index_or_none))
+                blk = blk[ri, :]
+            val = np.empty(blk.shape, dtype=dtype, order=order)
+            val[...] = blk
+            return val
+
+    return LazySnpReader()
