@@ -13,6 +13,10 @@ LazyColumns     a samples x SNPs table that stays on disk: a selection of store 
                 (np.asarray) still works, and is logged with its call site.
 as_columns      ``np.asarray(x, dtype)`` for an array; the same table, still on disk, for a
                 LazyColumns. Code shared by both modes uses it where it used ``np.asarray``.
+ingest_vcf      the VCF read in record chunks (scikit-allel's iter_vcf_chunks); each chunk is
+                parsed by today's gwas.qc._pipeline_parse_vcf_biallelic and written to the
+                store, so the stored calls are today's parsed values. Returns a StoreParsed,
+                which stands in for gwas.pipeline.ParsedGenotypes.
 
 Nothing here is used unless the table is kept on disk; the in-memory path is unchanged.
 
@@ -23,10 +27,15 @@ Diagnostics (environment variables, read when used; tests and measurements only)
                                     (one-piece reads by design are logged, not limited).
   TRACE_STORE_PIECE=N               every streaming pass reads N SNP columns at a time instead
                                     of its default (results must not depend on it).
+  TRACE_STORE_CHUNK_RECORDS=N       the ingest reads N VCF records per chunk instead of its
+                                    default (results must not depend on it).
 """
 import json
 import os
 import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -135,8 +144,6 @@ class GenotypeStore:
     """The genotype table on disk: ``calls.i8`` (n_variants x n_samples int8, -1 missing)."""
 
     def __init__(self, store_dir, n_samples, n_variants):
-        from pathlib import Path
-
         self.dir = Path(store_dir)
         self.N, self.M = int(n_samples), int(n_variants)
         self.path = self.dir / "calls.i8"
@@ -417,3 +424,223 @@ def _make_reader(lazy, iid, sid, pos):
             return val
 
     return LazySnpReader()
+
+
+# ---------------------------------------------------------------------------------- ingest
+@dataclass
+class StoreParsed:
+    """Stands in for gwas.pipeline.ParsedGenotypes: the same metadata, the table on disk.
+    ``stats`` holds exact call counts over all samples and all variants (n1, n2, nmiss and the
+    largest value per variant; missing calls per sample; the largest value overall)."""
+
+    store: GenotypeStore
+    samples: np.ndarray
+    chroms: np.ndarray
+    positions: np.ndarray
+    vid: object
+    ref: object
+    alt: object
+    info_scores: object
+    info_field: object
+    stats: dict = field(default_factory=dict)
+    ingest: dict = field(default_factory=dict)
+    is_store: bool = True
+
+    @property
+    def genotypes(self):
+        return LazyColumns(self.store, np.arange(self.store.M))
+
+
+def _info_keys():
+    from gwas.io import _INFO_QUALITY_FIELDS
+
+    return tuple(f"variants/{f}" for f in _INFO_QUALITY_FIELDS)
+
+
+def _sanitized_plain_vcf(vcf_path, store_dir):
+    """The cleaned copy of a plain-text VCF (gwas.io.sanitize_plain_vcf_stream) in ``store_dir``.
+    Raises load_vcf_cached's error when the '#CHROM' line is missing."""
+    from gwas.io import sanitize_plain_vcf_stream
+
+    out = Path(store_dir) / "sanitized.vcf"
+    if not sanitize_plain_vcf_stream(vcf_path, out):
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        raise RuntimeError(
+            "VCF file is missing the mandatory '#CHROM' header line. "
+            "The file may be truncated or corrupted."
+        )
+    return out
+
+
+class DeferredParseError(Exception):
+    """A stop that the in-memory path raises when it PARSES the callset, that is after the
+    phenotype file and the trait names were checked. The chunked ingest meets it earlier; the
+    CLI raises ``original`` at the place the in-memory path would."""
+
+    def __init__(self, original):
+        super().__init__(str(original))
+        self.original = original
+
+
+_NO_RECORDS = ("VCF file contains no variant records. "
+               "Check that the file has data lines below the #CHROM header.")
+
+
+def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_records=None):
+    """Read the VCF in record chunks into a new store in ``store_dir``; return a StoreParsed.
+
+    The fields are those of gwas.io.load_vcf_cached. A plain-text VCF is first cleaned as
+    load_vcf_cached cleans it (into the store folder, deleted after the read). Each chunk is
+    parsed by gwas.qc._pipeline_parse_vcf_biallelic, so the stored calls decode to today's
+    parsed values and the metadata arrays are today's, concatenated. The imputation-quality
+    field is chosen over all records, as gwas.io._extract_info_scores does. The chunk length
+    comes from a byte budget (a GT chunk holds records x samples x 2 bytes), at most 65,536
+    records (scikit-allel's default); ``chunk_records`` (or TRACE_STORE_CHUNK_RECORDS) sets it.
+    """
+    import gzip
+
+    import allel
+    import pandas as pd
+
+    from gwas.qc import _pipeline_parse_vcf_biallelic
+
+    t0 = time.perf_counter()
+    vcf_path = Path(vcf_path)
+    store_dir = Path(store_dir)
+    store_dir.mkdir(parents=True, exist_ok=False)          # always a new folder
+    with open(vcf_path, "rb") as fh:
+        gz = fh.read(2) == b"\x1f\x8b"
+    tmp_plain = None
+    if gz:
+        stream = gzip.open(vcf_path, mode="rb")
+    else:
+        tmp_plain = _sanitized_plain_vcf(vcf_path, store_dir)
+        stream = open(tmp_plain, "rb")
+
+    info_keys = _info_keys()
+    fields = ["calldata/GT", "variants/CHROM", "variants/POS", "variants/ALT", "variants/REF",
+              "variants/ID"] + list(info_keys)
+    acc = {k: [] for k in ("chroms", "positions", "vid", "ref", "alt", "n1", "n2", "nmiss", "vmax")}
+    info_acc = {k: [] for k in info_keys}
+    info_seen = {k: False for k in info_keys}
+    info_finite = {k: False for k in info_keys}
+    info_bad_shape = {k: False for k in info_keys}
+    info_raw_n = {k: 0 for k in info_keys}
+    n_all = 0
+    have = {"vid": False, "ref": False, "alt": False}
+    samples = None
+    row_nmiss = None
+    M = n_chunks = 0
+    gmax = -1
+    calls_path = store_dir / "calls.i8"
+    try:
+        _f, samples_raw, _h, it = allel.iter_vcf_chunks(stream, fields=list(fields), chunk_length=65536)
+        n_samp = max(1, len(samples_raw))
+        L = int(min(65536, max(1024, chunk_bytes // (2 * n_samp))))
+        if chunk_records is None and os.environ.get("TRACE_STORE_CHUNK_RECORDS", ""):
+            chunk_records = int(os.environ["TRACE_STORE_CHUNK_RECORDS"])
+        if chunk_records is not None:
+            L = int(chunk_records)
+        if L != 65536:
+            stream.close()
+            stream = gzip.open(vcf_path, mode="rb") if gz else open(tmp_plain, "rb")
+            _f, samples_raw, _h, it = allel.iter_vcf_chunks(stream, fields=list(fields), chunk_length=L)
+        with open(calls_path, "wb") as out:
+            for chunk, _len, _c, _p in it:
+                chunk = dict(chunk)
+                chunk["samples"] = samples_raw
+                if chunk.get("calldata/GT") is None or chunk["calldata/GT"].shape[0] == 0:
+                    raise DeferredParseError(ValueError(_NO_RECORDS))   # as _pipeline_parse_vcf_biallelic
+                n_rec = int(chunk["calldata/GT"].shape[0])
+                # Which records of this chunk today's parse keeps: a record counter rides
+                # through it as the first imputation-quality field; the real fields are set
+                # aside and handled below over all records.
+                real_info = {k: chunk.get(k) for k in info_keys}
+                chunk[info_keys[0]] = np.arange(n_rec, dtype=np.float64)
+                for k in info_keys[1:]:
+                    chunk.pop(k, None)
+                G, smp, ch, ps, v_id, ref, alt, kept, _fld = _pipeline_parse_vcf_biallelic(chunk)
+                kept = np.asarray(kept).astype(np.int64) if kept is not None else np.arange(G.shape[1])
+                if samples is None:
+                    samples = smp
+                    row_nmiss = np.zeros(len(samples), dtype=np.int64)
+                g8 = encode_calls(G)                                    # (N, m) F view of (m, N) C
+                out.write(np.ascontiguousarray(g8.T).tobytes())
+                miss = g8 < 0
+                acc["n1"].append((g8 == 1).sum(axis=0, dtype=np.int64))
+                acc["n2"].append((g8 == 2).sum(axis=0, dtype=np.int64))
+                acc["nmiss"].append(miss.sum(axis=0, dtype=np.int64))
+                acc["vmax"].append(g8.max(axis=0) if g8.shape[0] else np.full(g8.shape[1], -1, np.int8))
+                row_nmiss += miss.sum(axis=1, dtype=np.int64)
+                if g8.size:
+                    gmax = max(gmax, int(g8.max()))
+                acc["chroms"].append(ch)
+                acc["positions"].append(ps)
+                for name, arr in (("vid", v_id), ("ref", ref), ("alt", alt)):
+                    if arr is not None:
+                        have[name] = True
+                        acc[name].append(arr)
+                for k in info_keys:
+                    if real_info[k] is not None:
+                        # gwas.io._extract_info_scores, per chunk: the same conversion; whether
+                        # the field has any finite value is decided over ALL records, as today
+                        info_seen[k] = True
+                        raw = np.asarray(real_info[k]).ravel()
+                        sc = pd.to_numeric(raw, errors="coerce").astype(np.float32)
+                        info_raw_n[k] += int(raw.size)
+                        if sc.size and np.any(np.isfinite(sc)):
+                            info_finite[k] = True
+                        if raw.size == n_rec:
+                            info_acc[k].append(sc[kept])
+                        else:
+                            info_bad_shape[k] = True      # several values per record (Number=A, ...)
+                n_all += n_rec
+                M += int(g8.shape[1])
+                n_chunks += 1
+                del G, g8, miss, chunk
+    finally:
+        stream.close()
+        if tmp_plain is not None:
+            try:
+                os.remove(tmp_plain)
+            except OSError:
+                pass
+    if n_chunks == 0 or samples is None:
+        raise DeferredParseError(ValueError(_NO_RECORDS))
+    cat = np.concatenate
+    info_scores = info_field = None
+    for k in info_keys:              # today: the first field with any finite value over all records
+        if info_seen[k] and info_finite[k]:
+            if info_bad_shape[k]:
+                # today the per-record mask is applied to the flattened field and numpy stops
+                raise DeferredParseError(IndexError(
+                    "boolean index did not match indexed array along dimension 0; dimension is "
+                    f"{info_raw_n[k]} but corresponding boolean dimension is {n_all}"))
+            info_scores, info_field = cat(info_acc[k]), k.split("/", 1)[1]
+            break
+    stats = {"n1": cat(acc["n1"]), "n2": cat(acc["n2"]), "nmiss": cat(acc["nmiss"]),
+             "row_nmiss": row_nmiss, "gmax": gmax, "vmax": cat(acc["vmax"]), "n": int(len(samples))}
+    store = GenotypeStore(store_dir, len(samples), M)
+    parsed = StoreParsed(
+        store=store, samples=samples, chroms=cat(acc["chroms"]), positions=cat(acc["positions"]),
+        vid=cat(acc["vid"]) if have["vid"] else None, ref=cat(acc["ref"]) if have["ref"] else None,
+        alt=cat(acc["alt"]) if have["alt"] else None, info_scores=info_scores, info_field=info_field,
+        stats=stats,
+        ingest={"seconds": round(time.perf_counter() - t0, 3), "chunks": n_chunks, "chunk_length": L,
+                "calls_bytes": int(calls_path.stat().st_size), "gz": bool(gz)})
+    for p in (parsed.samples, parsed.chroms, parsed.positions, parsed.vid, parsed.ref, parsed.alt,
+              parsed.info_scores):
+        if isinstance(p, np.ndarray):
+            p.setflags(write=False)          # a trait must never modify the shared parse
+    (store_dir / "meta.json").write_text(json.dumps(
+        {"format": "int8, variant-major (variants x samples), -1 = missing call",
+         "n_samples": int(len(samples)), "n_variants": int(M), "vcf": str(vcf_path), **parsed.ingest},
+        indent=1))
+    if log is not None:
+        log.info("  genotype table on disk: %s (%d samples x %d variants, %.1f MB, %d chunks, %.1f s)",
+                 store_dir, len(samples), M, parsed.ingest["calls_bytes"] / 1e6, n_chunks,
+                 parsed.ingest["seconds"])
+    return parsed

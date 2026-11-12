@@ -116,6 +116,51 @@ if st is not None:
     )(load_vcf_cached)
 
 
+def sanitize_plain_vcf_stream(src_path, dst_path, read_bytes=8 * 2**20):
+    """load_vcf_cached's clean-up of a plain-text VCF (steps 2, 4 and 6), piece by piece:
+    ``dst_path`` gets exactly the bytes load_vcf_cached writes to its temporary file, without
+    the whole file in memory. Returns True if a cleaned line contains "#CHROM".
+
+    load_vcf_cached: bytes.decode("utf-8-sig", errors="ignore"); str.splitlines(); per line
+    strip(), drop wrapping double quotes, '""' -> '"'; "\\n".join (no final newline);
+    encode("utf-8"). Here the text is decoded incrementally and split with the same
+    str.splitlines; an unfinished last line is carried to the next piece, and so is a line
+    ending in "\\r", which may be the first half of "\\r\\n".
+    """
+    import codecs
+
+    dec = codecs.getincrementaldecoder("utf-8-sig")(errors="ignore")
+    saw_chrom = False
+    first = True
+    carry = ""
+    with open(src_path, "rb") as fi, open(dst_path, "wb") as fo:
+        while True:
+            b = fi.read(int(read_bytes))
+            final = not b
+            text = carry + dec.decode(b, final=final)
+            carry = ""
+            parts = text.splitlines(keepends=True)
+            if not final and parts:
+                last = parts[-1]
+                if last.endswith("\r") or len(last.splitlines()[0]) == len(last):
+                    carry = parts.pop()
+            out = []
+            for p in parts:
+                line = p.splitlines()[0].strip() if p else ""
+                if line.startswith('"') and line.endswith('"'):
+                    line = line[1:-1]
+                line = line.replace('""', '"')
+                if "#CHROM" in line:
+                    saw_chrom = True
+                out.append(line if first else "\n" + line)
+                first = False
+            if out:
+                fo.write("".join(out).encode("utf-8"))
+            if final:
+                break
+    return saw_chrom
+
+
 # ── Imputation quality score extraction ─────────────────────
 _INFO_QUALITY_FIELDS = ("DR2", "R2", "INFO", "AR2", "IMP_QUAL")
 
