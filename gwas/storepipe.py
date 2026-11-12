@@ -25,11 +25,13 @@ import numpy as np
 import pandas as pd
 
 from gwas.genostore import LazyColumns
+from gwas.genostore import piece as _piece
 from gwas.io import _clean_chr_series
 from gwas.qc import _log_or_warn, normalise_phenotype
 
 log = logging.getLogger("gwas.qc")
 ROW_COL = "__trace_store_row__"
+PRUNE_BUFFER_COLS = 8192     # columns of one chromosome held at a time while LD-pruning
 
 # The one-piece rule: a stage that sums across SNPs in floating point reads the table whole and
 # runs the in-memory function when the table has at most this many cells. A FIXED number, never
@@ -491,11 +493,162 @@ class TraitStore:
         return geno_dosage_raw, snp_imputation_rate, geno_imputed, iid
 
     # ------------------------------------------------- gwas.qc._pipeline_build_kinship
-    def build_kinship(self, geno_df, geno_imputed, chroms, positions):
-        """Today's function on the tables read whole (converted to pieces in a later step)."""
-        from gwas.qc import _pipeline_build_kinship
+    def build_kinship(self, geno_df, geno_imputed, chroms, positions,
+                      r2_thresh=0.2, window_bp=500_000, step_bp=100_000):
+        """Kinship without the whole table: the allele frequencies come from the counts; the
+        standardised columns are made per block with today's elementwise expressions; the LD
+        pruning runs today's loop over one chromosome at a time, reading the chromosome's
+        columns through a sliding buffer; the pruned set is assembled in memory and today's
+        GRM function runs on it unchanged."""
+        from gwas.kinship import _build_grm_from_Z
+        from gwas.utils import _mean_impute_cols
 
-        return _pipeline_build_kinship(self.frame(geno_df), np.asarray(geno_imputed), chroms, positions)
+        c = self.counts
+        n = int(geno_imputed.shape[0])
+        # today: p = allele_freq_from_called_dosage(G_called); valid_af = valid_af_mask_...(G_called)
+        n_called = (n - c["nmiss"]).astype(float)
+        AC = (c["n1"] + 2 * c["n2"]).astype(np.float64)
+        AN = 2.0 * n_called
+        p = np.divide(AC, AN, out=np.full_like(AC, np.nan, dtype=float), where=(AN > 0))
+        valid_af = np.isfinite(p) & (p > 0.0) & (p < 1.0) & (AN >= 4.0)
+
+        vloc = np.flatnonzero(valid_af)                 # local columns of geno_for_grm
+        p_grm = p[valid_af]
+        denom = np.sqrt(2.0 * p_grm * (1.0 - p_grm))
+        denom[~np.isfinite(denom) | (denom == 0)] = 1.0
+
+        def z32(local):
+            """float32 F block: today's Z[:, local] (local indexes the valid-AF columns)."""
+            g = geno_imputed.block(vloc[local], layout="F")
+            Z = (g - 2.0 * p_grm[local]) / denom[local]
+            return np.nan_to_num(Z, nan=0.0).astype(np.float32, copy=False)
+
+        chroms_for_grm = np.asarray(chroms)[valid_af]
+        positions_for_grm = np.asarray(positions)[valid_af]
+
+        # today: _ld_prune_for_grm_by_chr_bp(chroms_for_grm, positions_for_grm, Z, ...): the same
+        # loop; Zc[:, loc] comes from a sliding buffer of the chromosome's columns
+        chroms_s = np.asarray(chroms_for_grm).astype(str)
+        positions_i = np.asarray(positions_for_grm).astype(int)
+        m_valid = int(vloc.size)
+        keep_global = np.zeros(m_valid, dtype=bool)
+        max_buf = 0
+
+        for ch in np.unique(chroms_s):
+            if str(ch) == "ALT":
+                continue
+
+            idx_chr = np.where(chroms_s == ch)[0]
+            if idx_chr.size < 2:
+                keep_global[idx_chr] = True
+                continue
+
+            idx_chr = idx_chr[np.argsort(positions_i[idx_chr])]
+            pos_chr = positions_i[idx_chr]
+            m = idx_chr.size
+            keep = np.ones(m, dtype=bool)
+
+            start_pos = int(pos_chr.min())
+            end_pos = int(pos_chr.max())
+            buf_lo = buf_hi = 0
+            buf = None
+
+            for w_start in range(start_pos, end_pos + 1, int(step_bp)):
+                w_end = w_start + int(window_bp)
+                loc = np.where((pos_chr >= w_start) & (pos_chr <= w_end) & keep)[0]
+                if loc.size < 2:
+                    continue
+
+                MAX_LOC_SNPS = 800
+                if loc.size > MAX_LOC_SNPS:
+                    step = max(1, loc.size // MAX_LOC_SNPS)
+                    loc = loc[::step]
+
+                # today: Zw = Zc[:, loc]  (Zc = np.asarray(Z, float)[:, idx_chr], F-ordered float64)
+                a, b = int(loc[0]), int(loc[-1]) + 1
+                if buf is None or a < buf_lo or b > buf_hi:
+                    buf_lo = a
+                    buf_hi = min(m, max(b, a + _piece(PRUNE_BUFFER_COLS)))
+                    buf = np.asfortranarray(z32(idx_chr[buf_lo:buf_hi]), dtype=float)
+                    max_buf = max(max_buf, buf.shape[1])
+                Zw = buf[:, loc - buf_lo]
+                Zw = _mean_impute_cols(Zw)
+                v = np.var(Zw, axis=0)
+                okv = v > 1e-12
+                if okv.sum() < 2:
+                    continue
+
+                Zw = Zw[:, okv]
+                loc2 = loc[okv]
+
+                Zw = Zw - Zw.mean(axis=0, keepdims=True)
+                sd = Zw.std(axis=0, keepdims=True)
+                sd[sd == 0] = 1.0
+                Zw = Zw / sd
+
+                C = (Zw.T @ Zw) / (Zw.shape[0] - 1)
+                C = np.clip(C, -1.0, 1.0)
+
+                if not np.isfinite(C).all():
+                    continue
+                R2 = C * C
+
+                for i in range(R2.shape[0]):
+                    if not keep[loc2[i]]:
+                        continue
+                    high = np.where(R2[i, :] > r2_thresh)[0]
+                    high = high[high > i]
+                    keep[loc2[high]] = False
+
+            keep_global[idx_chr[keep]] = True
+            del buf
+
+        if keep_global.sum() < 10:
+            keep_prune = np.ones(m_valid, dtype=bool)      # today: the unpruned Z comes back
+        else:
+            keep_prune = keep_global
+
+        # today: var_ok = np.nanvar(Z_pruned, axis=0) > 0; Z_grm = Z_pruned[:, var_ok].astype(float32)
+        kept = np.flatnonzero(keep_prune)
+        var_ok = np.empty(kept.size, dtype=bool)
+        blocks = []
+        step = _piece(4096)
+        for k in range(0, kept.size, step):
+            zb = z32(kept[k:k + step])
+            vk = np.nanvar(np.asfortranarray(zb, dtype=float), axis=0) > 0
+            var_ok[k:k + step] = vk
+            blocks.append(zb[:, vk])
+        Z_grm = np.empty((n, int(var_ok.sum())), dtype=np.float32, order="F")
+        k = 0
+        for zb in blocks:
+            Z_grm[:, k:k + zb.shape[1]] = zb
+            k += zb.shape[1]
+        del blocks
+
+        if not np.isfinite(Z_grm).all():
+            Z_grm = np.nan_to_num(Z_grm, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+
+        chroms_pruned = np.asarray(chroms_for_grm)[keep_prune]
+        positions_pruned = np.asarray(positions_for_grm)[keep_prune]
+        chroms_grm = chroms_pruned[var_ok]
+        positions_grm = positions_pruned[var_ok]
+
+        m = int(Z_grm.shape[1])
+        if m < 10 or not np.isfinite(m):
+            K = np.eye(Z_grm.shape[0], dtype=np.float32)
+            kinship_model = "identity_GRM_low_snp_count"
+        else:
+            K = _build_grm_from_Z(Z_grm)
+            kinship_model = "LD_pruned_Z_over_m"
+
+        diag_mean = float(np.nanmean(np.diag(K)))
+        if np.isfinite(diag_mean) and diag_mean > 1e-8:
+            K /= diag_mean
+
+        self.read_notes.append(("kinship", {"n": n, "m_post_qc": int(self.cols.size), "m_valid_af": int(m_valid),
+                                            "m_pruned": int(Z_grm.shape[1]), "prune_buffer_cols_max": int(max_buf),
+                                            "kinship_model": kinship_model}))
+        return K, Z_grm, chroms_grm, positions_grm, kinship_model
 
     # ---------------------------------------------- gwas.qc_report.compute_qc_report
     def qc_report(self, geno_df, trait_values, trait_col, **kw):

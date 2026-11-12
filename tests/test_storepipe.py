@@ -218,6 +218,52 @@ def test_early_stages_equal_in_memory(tmp_path, monkeypatch, case, argset, piece
         parsed.store.close()
 
 
+def _kinship_pca_loco(out, kinship, chroms, positions):
+    """S10 to S12: kinship, PCA and the LOCO kernels, as gwas.pipeline._run_trait calls them."""
+    from gwas.kinship import _build_loco_kernels_impl, _compute_pcs_full_impl
+
+    K, Z, chroms_grm, positions_grm, model = kinship(out["S08"]["geno_df"], out["S09"]["imp"],
+                                                       chroms, positions)
+    res = dict(K=K, Z=Z, chroms_grm=chroms_grm, positions_grm=positions_grm, model=model)
+    try:      # today's PCA stops on a table with fewer than 20 SNPs: the same stop in both modes
+        res["pcs"], res["eig"] = _compute_pcs_full_impl(Z, max_pcs=20)
+    except ValueError as e:
+        res["pcs_error"] = str(e)
+        return res
+    K0, K_by_chr, _ = _build_loco_kernels_impl(out["S09"]["iid"], Z, chroms_grm, K)
+    res.update(K0=np.asarray(K0.val), K0_iid=np.asarray(K0.iid),
+               K_by_chr={c: np.asarray(k.val) for c, k in sorted(K_by_chr.items())})
+    return res
+
+
+@pytest.mark.parametrize("argset", list(ARGSETS))
+@pytest.mark.parametrize("case", ["example_v1", "example_v2", "edge", "tiny"])
+@pytest.mark.parametrize("piece", ["1", "64", "997"])
+def test_kinship_pca_loco_equal_in_memory(tmp_path, monkeypatch, case, argset, piece):
+    monkeypatch.setenv("TRACE_STORE_PIECE", piece)
+    if case == "tiny":            # few SNPs: the unpruned-set and identity-GRM branches
+        vcf, pheno, trait = _cases(tmp_path)["edge"]
+        lines = Path(vcf).read_text().splitlines()
+        head = [l for l in lines if l.startswith("#")]
+        body = [l for l in lines if not l.startswith("#")][:30]
+        (tmp_path / "tiny.vcf").write_text("\n".join(head + body) + "\n")
+        vcf = tmp_path / "tiny.vcf"
+    else:
+        vcf, pheno, trait = _cases(tmp_path)[case]
+    a = _args(trait=trait, **ARGSETS[argset])
+    mem = _memory(vcf, pheno, trait, a)
+    sto, st, parsed = _store(vcf, pheno, trait, a, tmp_path / "s")
+    try:
+        km = _kinship_pca_loco(mem, gqc._pipeline_build_kinship, mem["S08"]["chroms"], mem["S08"]["positions"])
+        ks = _kinship_pca_loco(sto, st.build_kinship, sto["S08"]["chroms"], sto["S08"]["positions"])
+        for k in km:
+            _same(ks[k], km[k], f"S10-S12.{k}")
+        if case == "tiny":
+            assert ks["model"] == "identity_GRM_low_snp_count" or ks["Z"].shape[1] < 40
+    finally:
+        parsed.store.close()
+
+
 def test_edge_case_exercises_the_count_passes(tmp_path, monkeypatch):
     """The synthetic case drops samples and records, so the counts come from store passes,
     not from the ingest's totals (both routes are compared above)."""
