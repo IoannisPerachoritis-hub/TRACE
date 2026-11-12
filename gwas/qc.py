@@ -283,6 +283,15 @@ def _pipeline_harmonize_ids(genotypes, samples, chroms, positions, vid, ref, alt
         pheno = pheno.loc[(~pheno_ids.duplicated()).to_numpy()].copy()
         pheno_ids = pd.Series(pheno.index.astype(str)).str.strip()
 
+    # Match on the IDs without blanks around them (the duplicate checks above use them too):
+    # with the raw IDs, a padded phenotype row never matched and was left out without a word.
+    _n_blank = int((pd.Series(pheno.index.astype(str)) != pheno_ids.reset_index(drop=True)).sum())
+    if _n_blank:
+        pheno = pheno.copy()
+        pheno.index = pd.Index(np.asarray(pheno_ids.to_numpy(dtype=object), dtype=str), name=pheno.index.name)
+        _log_or_warn(f"{_n_blank} phenotype sample IDs had blanks around them; the blanks were "
+                     "removed before matching the IDs to the VCF.")
+
     # Force numpy string dtype on indices — pd.Series.values can return
     # ArrowStringArray on newer pandas+pyarrow, which propagates through
     # gwas_pipeline()'s @st.cache_data return and breaks downstream caching.
