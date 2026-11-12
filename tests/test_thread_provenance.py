@@ -14,7 +14,9 @@ KEYS = ["BLAS library", "BLAS threads", "CPU cores (logical)", "CPU cores (physi
         "Subsampling workers (--boot-jobs)", "Subsampling BLAS threads per worker"]
 
 
-def test_keys_and_values():
+def test_keys_and_values(monkeypatch):
+    for v in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "BLIS_NUM_THREADS", "OMP_NUM_THREADS"):
+        monkeypatch.delenv(v, raising=False)
     p = thread_provenance(SimpleNamespace(subsampling=False, boot_jobs=1))
     assert list(p) == KEYS
     assert p["CPU cores (logical)"] == os.cpu_count()

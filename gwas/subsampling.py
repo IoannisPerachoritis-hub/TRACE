@@ -260,14 +260,14 @@ def subsample_gwas_resampling(
     _rep_threads = None
     if _is_lazy(geno_imputed):
         # The table stays on disk and is read by this process only, so the replicates run
-        # one after another whatever n_jobs says. joblib gives each of its workers
-        # max(cpu_count // n_jobs, 1) BLAS threads, and a replicate's last bits depend on
-        # that thread count, so each replicate here runs under the same limit: the results
-        # are those of the parallel run.
+        # one after another whatever n_jobs says. A replicate's last bits depend on its BLAS
+        # thread count, so each one runs under the limits a joblib worker starts with (the
+        # environment's OPENBLAS_NUM_THREADS and the like, or max(cpu_count // n_jobs, 1)):
+        # the results are those of the parallel run.
         geno_imputed = geno_imputed.astype(np.float32).as_layout("C")
         if n_jobs != 1:
-            from joblib import cpu_count, effective_n_jobs
-            _rep_threads = max(cpu_count() // effective_n_jobs(n_jobs), 1)
+            from gwas.provenance import worker_threadpool_limits
+            _rep_threads = worker_threadpool_limits(n_jobs)
         n_jobs = 1
     else:
         geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
@@ -310,7 +310,7 @@ def subsample_gwas_resampling(
             if progress_callback is not None:
                 progress_callback(rep, int(n_reps))
 
-            if _rep_threads is not None:      # the BLAS thread count of a joblib worker
+            if _rep_threads is not None:      # the thread counts of a joblib worker
                 from threadpoolctl import threadpool_limits
                 with threadpool_limits(limits=_rep_threads):
                     rep_idx, pvals_rep, meta = _subsample_one_rep(
