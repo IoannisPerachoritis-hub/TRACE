@@ -269,7 +269,11 @@ def _pipeline_harmonize_ids(genotypes, samples, chroms, positions, vid, ref, alt
             if len(mask) == 1:
                 keep_idx.append(mask[0])
             else:
-                best = mask[np.argmax(maf_tmp[mask])]
+                # a copy with called genotypes (an all-missing copy has a NaN MAF, which
+                # np.argmax would return first); among those, the highest MAF, the first on a tie
+                called = mask[np.isfinite(maf_tmp[mask])]
+                cand = called if called.size else mask
+                best = cand[np.argmax(maf_tmp[cand])]
                 keep_idx.append(best)
 
         keep_idx = np.sort(keep_idx)

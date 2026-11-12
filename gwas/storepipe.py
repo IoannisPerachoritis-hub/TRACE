@@ -178,7 +178,10 @@ class TraitStore:
             order = np.argsort(codes, kind="stable")
             bounds = np.flatnonzero(np.diff(codes[order])) + 1
             for grp in np.split(d_idx[order], bounds):       # each: one key's records, ascending
-                keep_idx.append(grp[np.argmax(maf_tmp[grp])])
+                # today's rule, with a copy that has called genotypes first (see gwas.qc)
+                called = grp[np.isfinite(maf_tmp[grp])]
+                cand = called if called.size else grp
+                keep_idx.append(cand[np.argmax(maf_tmp[cand])])
 
             keep_idx = np.sort(keep_idx)
             _n_multi_removed = _n_before_multi - len(keep_idx)
