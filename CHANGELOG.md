@@ -25,6 +25,24 @@ All notable changes to TRACE are documented in this file.
   results are byte-identical between runs at the same thread count; no default changes.
 
 ### Fixed
+- **Quality fields declared per allele stopped the parse.** An imputation-quality field declared
+  `Number=A` or `Number=R` in the VCF header (Beagle 5 declares DR2 so) stopped the run with an
+  IndexError. It is now read as one value per record, the ALT allele's.
+- **Phenotype IDs with blanks around them are matched.** The blanks were removed for the
+  duplicate check only, so a padded ID never matched its VCF sample and that sample was left
+  out without a message (25 of 50 samples in a test file). IDs are now matched without the blanks,
+  and the log says how many had them.
+- **An infinite trait value stops the run with a clear message.** A value such as -inf (from a
+  log of zero taken before the file was written) crashed FaST-LMM. The run now stops before the
+  scan, naming the count and the first ten samples. A missing value is still dropped as before.
+- **The CLI shows the pipeline's warnings.** Messages such as the collapse of duplicate
+  positions, partial sample overlap and non-numeric trait values went to a Streamlit call that
+  prints nothing outside a page; without a page they now go to the log. The GUI is unchanged.
+- **The collapse of records at one position keeps a copy with calls.** It could keep a copy
+  without any call, which SNP QC then removed, losing the position although a called copy existed.
+- **`--seed` says what it covers:** the subsampling draws. Haplotype permutations are seeded per
+  block from the block's position and the trait, so their p-values do not depend on it (the help
+  text said they did). No seeding changed.
 - **M_eff could come out one too high because of rounding.** The Li & Ji M_eff is a whole number
   in exact arithmetic (the eigenvalues sum to the number of SNPs), but TRACE took the ceiling of
   the floating-point sum, so a sum a few units in the last place above the whole number gave one

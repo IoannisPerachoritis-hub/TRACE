@@ -122,8 +122,11 @@ Subsampling stability:
   --boot-jobs BOOT_JOBS
                         Parallel workers for subsampling (default: 1, -1=all
                         cores)
-  --seed SEED           RNG seed for subsampling and permutation (default:
-                        42). Set to make CLI runs bit-for-bit reproducible.
+  --seed SEED           RNG seed for the subsampling draws (default: 42).
+                        Haplotype permutation p-values do not use it: each
+                        block's permutations are seeded per block from its
+                        position and the trait, so they are reproducible
+                        whatever the seed.
 
 LD & post-GWAS:
   --ld-r2 LD_R2         LD r^2 threshold for block detection (default: 0.6)

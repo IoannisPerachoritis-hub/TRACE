@@ -131,8 +131,10 @@ def _build_parser():
     boot_grp.add_argument("--boot-jobs", type=int, default=1,
                            help="Parallel workers for subsampling (default: 1, -1=all cores)")
     boot_grp.add_argument("--seed", type=int, default=42,
-                           help="RNG seed for subsampling and permutation (default: 42). "
-                                "Set to make CLI runs bit-for-bit reproducible.")
+                           help="RNG seed for the subsampling draws (default: 42). Haplotype "
+                                "permutation p-values do not use it: each block's permutations "
+                                "are seeded per block from its position and the trait, so they "
+                                "are reproducible whatever the seed.")
 
     # LD + Haplotype + Annotation
     ld_grp = parser.add_argument_group("LD & post-GWAS")

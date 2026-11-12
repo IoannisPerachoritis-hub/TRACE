@@ -70,7 +70,7 @@ If you have not installed the package (`pip install -e .`), use
 | `--maf` | Minor-allele-frequency filter | 0.05 |
 | `--miss` | Maximum per-SNP missingness | 0.10 |
 | `--sig-thresh` | Significance rule: `meff`, `bonferroni`, `fdr`, or a numeric p-value (e.g. `5e-8`) | `bonferroni` |
-| `--seed` | RNG seed for subsampling / permutation | 42 |
+| `--seed` | RNG seed for subsampling (haplotype permutations are seeded per block from its position and the trait) | 42 |
 | `--subsampling` | Enable subsampling stability analysis | Off |
 | `--export-qc` | Export QC'd matrices for external tools | Off |
 | `--no-plots` | Skip plot generation | Off |
