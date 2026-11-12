@@ -794,63 +794,10 @@ class TraitStore:
         }
 
     # ------------------------------------------------ gwas.plotting.compute_meff_li_ji
-    def meff(self, geno_imputed, piece=4096):
-        """M_eff (Li and Ji). At or below ONE_PIECE_CELLS the table is read whole and the
-        function of gwas.plotting runs unchanged (same bits). Above it the n x n Gram matrix is
-        accumulated over column blocks: another summation order, so the eigenvalues and,
-        through the final ceiling, M_eff can differ from a one-piece computation."""
-        from gwas.plotting import compute_meff_li_ji
+    def meff(self, geno_imputed):
+        """M_eff (Li and Ji): the same function as with the table in memory
+        (gwas.plotting._compute_meff_li_ji_impl), which sums its Gram matrix over blocks of SNP
+        columns and gives the whole number, so both modes give the same M_eff at every size."""
+        from gwas.plotting import _compute_meff_li_ji_impl
 
-        n, m = geno_imputed.shape
-        if n * m <= one_piece_cells():
-            self.read_notes.append(("meff_one_piece", int(n), int(m)))
-            return compute_meff_li_ji(geno_imputed.block(np.arange(m), layout="F", _whole=True))
-        log.info("M_eff computed in blocks (the table has more than %s calls); it can differ "
-                 "by 1 from a calculation in one piece", f"{one_piece_cells():,}")
-        # blocks of at most 4,096 SNPs and about 16 million cells (a block is n x width float64)
-        piece = _piece(min(int(piece), max(1, 16_000_000 // max(1, n))))
-        G64 = geno_imputed.astype(np.float64)
-
-        def zblock(a, b):
-            # today's standardisation, per column (each column is whole, so its mean and SD are
-            # today's values bit for bit)
-            G = G64.block(np.arange(a, b), layout="F")
-            mu = G.mean(axis=0)
-            sd = G.std(axis=0)
-            sd[sd < 1e-8] = 1.0
-            return (G - mu) / sd
-
-        if n >= m:
-            # today: C = (Z.T @ Z) / n; fill_diagonal(C, 1.0); eigvalsh(C). Here C is filled block
-            # by block (block pairs); each entry is still one dot product over all n samples.
-            self.read_notes.append(("meff_blocked_m_by_m", int(n), int(m)))
-            C = np.empty((m, m), dtype=np.float64)
-            starts = list(range(0, m, piece))
-            for i, a in enumerate(starts):
-                b = min(m, a + piece)
-                Zi = zblock(a, b)
-                C[a:b, a:b] = Zi.T @ Zi
-                for c in starts[i + 1:]:
-                    d = min(m, c + piece)
-                    blk = Zi.T @ zblock(c, d)
-                    C[a:b, c:d] = blk
-                    C[c:d, a:b] = blk.T
-            C /= float(n)
-            np.fill_diagonal(C, 1.0)
-            eigs = np.linalg.eigvalsh(C)
-        else:
-            self.read_notes.append(("meff_blocked", int(n), int(m)))
-            D = np.zeros((n, n), dtype=np.float64)
-            for k in range(0, m, piece):
-                Z = zblock(k, min(m, k + piece))
-                D += Z @ Z.T
-            D /= float(n)
-            eigs = np.linalg.eigvalsh(D)
-        eigs = np.clip(eigs, 0.0, None)[::-1]
-        meff = 0.0
-        for lam in eigs:
-            if lam >= 1.0:
-                meff += 1.0 + (lam % 1.0)
-            elif lam > 0:
-                meff += lam
-        return int(np.ceil(meff)), eigs
+        return _compute_meff_li_ji_impl(geno_imputed)

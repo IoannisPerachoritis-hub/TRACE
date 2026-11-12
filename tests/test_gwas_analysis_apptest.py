@@ -178,10 +178,11 @@ def test_meff_failure_writes_no_meff_column_for_any_model(monkeypatch):
     default) alike."""
     import gwas.plotting as gp
 
-    def _fail(geno):
+    def _fail(geno, block=None):
         raise RuntimeError("forced M_eff failure")
 
     monkeypatch.setattr(gp, "compute_meff_li_ji", _fail)
+    monkeypatch.setattr(gp, "_compute_meff_li_ji_impl", _fail)   # what the shared pipeline calls
     at = AppTest.from_file(_PAGE, default_timeout=300)
     _seed_from_memory(at, run=True, extra={"sig_rule_select": "M_eff: Li & Ji (LD-aware Bonferroni)"})
     at.run()

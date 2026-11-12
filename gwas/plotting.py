@@ -509,6 +509,95 @@ def compute_r2_to_lead(geno_dosage_raw, sid, lead_snp_id, snp_mask, min_pair_n=1
 # M_EFF — LI & JI (2005) EFFECTIVE NUMBER OF INDEPENDENT TESTS
 # ============================================================
 
+MEFF_BLOCK = 4096   # SNP columns per block of the M_eff Gram matrix
+
+
+def meff_from_eigenvalues(eigenvalues):
+    """M_eff (Li & Ji 2005) as the whole number it is in exact arithmetic.
+
+    The eigenvalues of the SNPs' correlation matrix sum to m' (the number of SNPs that are not
+    constant), so the Li & Ji sum, sum of I(lam >= 1) + (lam mod 1), equals
+    m' + #(lam >= 1) - sum of floor(lam): a whole number. In floating point it comes out a few
+    units in the last place above or below it, and a ceiling of the raw sum turns "just above"
+    into one too many. Here eigenvalues within 1e-9 of a whole number are set to it
+    (gwas.ld.li_ji_sum, as for the per-block M_eff), and the result is ceil(sum - 1e-6): the
+    whole number, however the sum was rounded, and however the matrix was summed."""
+    from gwas.ld import li_ji_sum
+    return int(np.ceil(li_ji_sum(eigenvalues) - 1e-6))
+
+
+def meff_eigenvalues(geno_imputed, block=MEFF_BLOCK):
+    """The eigenvalues (descending, clipped at 0) behind M_eff: those of the dual Gram matrix
+    D = Z Z' / n of the standardised SNP columns (n x n), or with at least as many samples as
+    SNPs those of C = Z' Z / n with a unit diagonal (m x m). The non-zero eigenvalues of the two
+    are the same; D is much smaller when n << m.
+
+    The matrix is summed over blocks of ``block`` SNP columns (None: the whole table at once).
+    Each column is standardised whole (its mean and SD over all samples), so the blocks change
+    only the order of the sums in the matrix: the last bits of the eigenvalues, not the
+    whole-number M_eff of meff_from_eigenvalues. ``geno_imputed`` may be an array or a table
+    kept on disk (gwas.genostore.LazyColumns); with blocks, neither is copied whole."""
+    from gwas.genostore import is_lazy, piece
+
+    lazy = is_lazy(geno_imputed)
+    n, m = geno_imputed.shape
+    if block is None:
+        G = (geno_imputed.astype(np.float64).block(np.arange(m), layout="F", _whole=True)
+             if lazy else np.asarray(geno_imputed, dtype=np.float64))
+        mu = G.mean(axis=0)
+        sd = G.std(axis=0)
+        sd[sd < 1e-8] = 1.0
+        Z = (G - mu) / sd
+        if n < m:
+            eigs = np.linalg.eigvalsh((Z @ Z.T) / float(n))
+        else:
+            C = (Z.T @ Z) / float(n)
+            np.fill_diagonal(C, 1.0)
+            eigs = np.linalg.eigvalsh(C)
+        return np.clip(eigs, 0.0, None)[::-1]
+
+    # blocks of at most ``block`` SNPs and about 16 million cells (a block is n x width float64)
+    step = piece(min(int(block), max(1, 16_000_000 // max(1, n))))
+    G64 = geno_imputed.astype(np.float64) if lazy else None
+
+    def zblock(a, b):
+        G = G64.block(np.arange(a, b), layout="F") if lazy else np.asarray(geno_imputed[:, a:b], dtype=np.float64)
+        mu = G.mean(axis=0)
+        sd = G.std(axis=0)
+        sd[sd < 1e-8] = 1.0
+        return (G - mu) / sd
+
+    if n < m:
+        D = np.zeros((n, n), dtype=np.float64)
+        for k in range(0, m, step):
+            Z = zblock(k, min(m, k + step))
+            D += Z @ Z.T
+        D /= float(n)
+        eigs = np.linalg.eigvalsh(D)
+    else:
+        C = np.empty((m, m), dtype=np.float64)
+        starts = list(range(0, m, step))
+        for i, a in enumerate(starts):
+            b = min(m, a + step)
+            Zi = zblock(a, b)
+            C[a:b, a:b] = Zi.T @ Zi
+            for c in starts[i + 1:]:
+                d = min(m, c + step)
+                blk = Zi.T @ zblock(c, d)
+                C[a:b, c:d] = blk
+                C[c:d, a:b] = blk.T
+        C /= float(n)
+        np.fill_diagonal(C, 1.0)
+        eigs = np.linalg.eigvalsh(C)
+    return np.clip(eigs, 0.0, None)[::-1]
+
+
+def _compute_meff_li_ji_impl(geno_imputed, block=MEFF_BLOCK):
+    """(M_eff, eigenvalues) without Streamlit's cache: what the pipeline calls, in both modes."""
+    eigs = meff_eigenvalues(geno_imputed, block=block)
+    return meff_from_eigenvalues(eigs), eigs
+
+
 def compute_meff_li_ji(geno_imputed):
     """
     Estimate the effective number of independent SNP tests (Li & Ji 2005).
@@ -516,12 +605,13 @@ def compute_meff_li_ji(geno_imputed):
     Algorithm
     ---------
     1. Standardise each SNP column (zero mean, unit variance).
-    2. Eigendecompose the dual Gram matrix D = Z Z.T / n  (n×n).
-       The non-zero eigenvalues of D equal those of the m×m correlation
-       matrix C = Z.T Z / n, but D is much smaller when n << m
-       (e.g., 165×165 vs 44 000×44 000).  The remaining m − n eigenvalues
-       of C are exactly 0 and contribute nothing to M_eff.
-    3. M_eff = Σ_i  [ I(λ_i ≥ 1) + (λ_i mod 1) ]  for λ_i > 0
+    2. Eigendecompose the dual Gram matrix D = Z Z.T / n  (n×n), summed over blocks of
+       MEFF_BLOCK SNP columns (meff_eigenvalues). The non-zero eigenvalues of D equal those
+       of the m×m correlation matrix C = Z.T Z / n, but D is much smaller when n << m
+       (e.g., 165×165 vs 44 000×44 000). The remaining m − n eigenvalues of C are exactly 0
+       and contribute nothing to M_eff.
+    3. M_eff = Σ_i  [ I(λ_i ≥ 1) + (λ_i mod 1) ]  for λ_i > 0, a whole number in exact
+       arithmetic, computed as that whole number (meff_from_eigenvalues).
        (Negative eigenvalues from floating-point errors are clipped to 0.)
 
     Parameters
@@ -533,38 +623,7 @@ def compute_meff_li_ji(geno_imputed):
     meff       : int   — effective number of independent tests
     eigenvalues: ndarray — eigenvalues sorted descending (clipped ≥ 0)
     """
-    G = np.asarray(geno_imputed, dtype=np.float64)
-    n, m = G.shape
-
-    # Standardise columns (zero mean, unit variance → correlation structure)
-    mu = G.mean(axis=0)
-    sd = G.std(axis=0)
-    sd[sd < 1e-8] = 1.0
-    Z = (G - mu) / sd
-
-    # Dual-matrix trick: eigendecompose the n×n matrix instead of m×m.
-    # Non-zero eigenvalues of Z.T@Z/n == non-zero eigenvalues of Z@Z.T/n.
-    # When n << m this is orders of magnitude faster and gives the exact answer.
-    if n < m:
-        D = (Z @ Z.T) / float(n)
-        eigs = np.linalg.eigvalsh(D)
-    else:
-        C = (Z.T @ Z) / float(n)
-        np.fill_diagonal(C, 1.0)
-        eigs = np.linalg.eigvalsh(C)
-
-    eigs = np.clip(eigs, 0.0, None)[::-1]   # descending, clip negatives
-
-    # Li & Ji formula
-    meff = 0.0
-    for lam in eigs:
-        if lam >= 1.0:
-            meff += 1.0 + (lam % 1.0)
-        elif lam > 0:
-            meff += lam
-    # Remaining m - n eigenvalues are exactly 0 → contribute nothing
-
-    return int(np.ceil(meff)), eigs
+    return _compute_meff_li_ji_impl(geno_imputed)
 
 if st is not None:
     compute_meff_li_ji = st.cache_data(

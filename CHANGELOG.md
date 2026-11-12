@@ -19,6 +19,19 @@ All notable changes to TRACE are documented in this file.
   with a warning at 16.8 million markers or more. See docs/large_datasets.md.
   `scripts/compare_result_zips.py` compares the results of two runs file by file.
 
+### Fixed
+- **M_eff could come out one too high because of rounding.** The Li & Ji M_eff is a whole number
+  in exact arithmetic (the eigenvalues sum to the number of SNPs), but TRACE took the ceiling of
+  the floating-point sum, so a sum a few units in the last place above the whole number gave one
+  more (and several more when eigenvalues are themselves whole numbers, which happens with exact
+  copies of markers). Eigenvalues within 1e-9 of a whole number are now set to it, as the
+  per-block M_eff already did, and the sum gives that whole number. On the data shipped and used
+  in the paper: the old example 73 to 72, pepper (BX, FWe) 503 to 502, tomato 248 unchanged, the
+  new example 115 unchanged. Only M_eff and what uses it change (the M_eff threshold, the
+  Significant_Meff columns and what follows from them); Bonferroni and FDR results do not. The
+  M_eff matrix is now summed over blocks of 4,096 SNPs, in memory as on disk: the same M_eff
+  (checked on 469 tables at block sizes from 1 to 4,096) with far less memory.
+
 ### Changed
 - **LD-block detection keeps the r2 matrices of its last eight windows only.** It kept every
   window it had computed, which at a million SNPs grew past the size of the genotype table. A

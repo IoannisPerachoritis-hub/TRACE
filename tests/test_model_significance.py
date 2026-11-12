@@ -64,6 +64,8 @@ def _small_meff(monkeypatch):
     """M_eff = 5 (threshold 0.01): on the planted data the real M_eff picks the same SNPs
     as Bonferroni, so a check of Significant_Meff could not tell the two apart."""
     monkeypatch.setattr(gp, "compute_meff_li_ji", lambda geno: (5, np.array([])))
+    # the pipeline calls the uncached function (gwas.pipeline._run_trait)
+    monkeypatch.setattr(gp, "_compute_meff_li_ji_impl", lambda geno, block=None: (5, np.array([])))
 
 
 # 0.05: since MLMM conditions on its real cofactors (batch 10), it has no SNP between the

@@ -512,8 +512,10 @@ def _run_trait(parsed, pheno, args):
     _stagelog.mark("S16_meff")
     # Compute M_eff (always, for reference columns)
     try:
-        from gwas.plotting import compute_meff_li_ji
-        _meff_val, _ = (_st.meff if _st is not None else compute_meff_li_ji)(geno_imputed)
+        # the uncached function, in both modes (Streamlit's cache cannot hash a table on disk);
+        # it sums its matrix in blocks of SNPs and gives the whole number (gwas/plotting.py)
+        from gwas.plotting import _compute_meff_li_ji_impl
+        _meff_val, _ = _compute_meff_li_ji_impl(geno_imputed)
         meff_thresh = 0.05 / _meff_val
         log.info("M_eff = %d independent tests (of %d SNPs)", _meff_val, _n_snps(geno_df, sid))
     except Exception:

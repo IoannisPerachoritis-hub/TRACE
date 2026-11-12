@@ -93,6 +93,8 @@ def views():
     out = {}
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(gp, "compute_meff_li_ji", lambda geno: (5, np.array([])))
+        # the shared pipeline calls the uncached function (gwas.pipeline._run_trait)
+        mp.setattr(gp, "_compute_meff_li_ji_impl", lambda geno, block=None: (5, np.array([])))
         st.cache_data.clear()
         at = AppTest.from_file(_PAGE, default_timeout=900)
         ss = at.session_state

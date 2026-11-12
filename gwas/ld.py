@@ -1837,20 +1837,12 @@ def meff_li_ji_from_corr(r_matrix):
     "ok" | "nonfinite_r" | "too_few_snps". The result is NOT ceil-rounded
     (rounding is inappropriate for m of order 3-30).
 
-    DELIBERATE DIVERGENCE from compute_meff_li_ji (gwas/plotting.py), pending a
-    decision -- NOT an oversight. The Li & Ji term `1.0 + (lam % 1.0)` is
-    discontinuous at every integer eigenvalue, and a perfectly correlated
-    m-marker block has lam_max = m EXACTLY, i.e. sitting on that discontinuity:
-    LAPACK returning m - 1 ulp instead of m flips the term by ~1.0, so the same
-    block scored 1.0 or 2.0 depending on the BLAS build. The eigenvalue snap
-    below removes that knife edge for the per-block statistic.
-
-    The same snap is NOT applied in compute_meff_li_ji because the genome-wide
-    sum is forced to within ~1e-13 of an integer by trace(D) = m (per-column
-    standardisation), and that function then applies int(np.ceil(...)) -- so
-    snapping there would move published M_eff values (measured: tomato 242 -> 241,
-    pepper 526 -> 525). That is a separate, type-(c) decision; see the
-    genome-wide M_eff work order."""
+    The sum is li_ji_sum, which sets eigenvalues within float noise of a whole number
+    to it: the Li & Ji term `1.0 + (lam % 1.0)` is discontinuous at every integer
+    eigenvalue, and a perfectly correlated m-marker block has lam_max = m EXACTLY,
+    i.e. sitting on that discontinuity, so without the snap the same block scored
+    1.0 or 2.0 depending on the BLAS build. The genome-wide M_eff
+    (gwas.plotting.compute_meff_li_ji) applies the same snap before its ceiling."""
     R = np.asarray(r_matrix, dtype=np.float64)
     if R.ndim != 2 or R.shape[0] != R.shape[1] or R.shape[0] < 2:
         return np.nan, "too_few_snps"
@@ -1864,10 +1856,18 @@ def meff_li_ji_from_corr(r_matrix):
         eigs = np.linalg.eigvalsh(R)
     except np.linalg.LinAlgError:
         return np.nan, "nonfinite_r"
-    # Snap eigenvalues that are within float noise of an integer (see docstring):
-    # `1.0 + (lam % 1.0)` jumps by ~1.0 across an integer, and a rank-1 block's
-    # lam_max IS an integer in exact arithmetic, so the unsnapped term is
-    # BLAS-dependent.
+    return li_ji_sum(eigs), "ok"
+
+
+def li_ji_sum(eigenvalues):
+    """The Li & Ji (2005) sum over eigenvalues, in the order given: 1 + (lam mod 1) for an
+    eigenvalue of at least 1, lam for one between 0 and 1. Eigenvalues within 1e-9 of a whole
+    number are first set to it: the term `1.0 + (lam % 1.0)` jumps by about 1.0 across a whole
+    number, and an eigenvalue that is a whole number in exact arithmetic (a rank-1 block's
+    lam_max) comes out of LAPACK a unit in the last place below or above it depending on the
+    BLAS build. Used per block (meff_li_ji_from_corr) and genome wide
+    (gwas.plotting.meff_from_eigenvalues)."""
+    eigs = np.asarray(eigenvalues, dtype=np.float64)
     _near = np.round(eigs)
     eigs = np.where(np.abs(eigs - _near) < 1e-9, _near, eigs)
     meff = 0.0
@@ -1876,7 +1876,7 @@ def meff_li_ji_from_corr(r_matrix):
             meff += 1.0 + (lam % 1.0)
         elif lam > 0:
             meff += lam
-    return float(meff), "ok"
+    return float(meff)
 
 
 def _ldq_pick_lead(lead_tokens, member_sids, pval_by_snp):

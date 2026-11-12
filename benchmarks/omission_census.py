@@ -31,7 +31,9 @@ BLOCKS_CSV = ROOT / "tests" / "golden" / "tomato_locule" / "ld_blocks.csv"
 
 SEED_P = 1e-5          # --ld-seed-p default (cli.py:133)
 TOP_N = 10             # --ld-top-n default (cli.py:135)
-MEFF = 242.0           # genome-wide Li&Ji M_eff for this run (T-61 manifest); manuscript states ~250
+MEFF = 242.0           # genome-wide Li&Ji M_eff for this run (T-61 manifest); manuscript states ~250.
+                       # 242 is the rule before batch 12 (the ceiling of the raw sum); the whole-number
+                       # rule gives 241 on this table. The census is not rerun, so the value stays.
 MEFF_THRESH = 0.05 / MEFF   # ~2.07e-4 (manuscript ~2e-4)
 
 
