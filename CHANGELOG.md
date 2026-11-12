@@ -4,7 +4,25 @@ All notable changes to TRACE are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Large datasets: the genotype table can be kept on disk** (`--geno-store`). The VCF is then
+  read in pieces into a file of one byte per genotype call, and every step reads from that file
+  only the columns it works on, so memory no longer grows with samples x SNPs. The results are
+  byte-identical to a run with the table in memory (at the same thread count). By default
+  (`--geno-store auto`) TRACE estimates, before reading the genotypes, how much memory an
+  in-memory run would need; when that does not fit in the free memory it keeps the table on disk
+  and says so in one log line and in `run_metadata.json`. `--geno-store memory` and
+  `--geno-store disk` force a mode; `memory` stops before reading when it will not fit. The
+  table file goes into a new folder inside `--output` (or `--geno-store-dir`), which is removed
+  when the run ends. TRACE checks the free disk space first. Not available with the table on
+  disk: `--impute ldknni`, and `--export-qc` above 100 million calls; the QC report is skipped
+  with a warning at 16.8 million markers or more. See docs/large_datasets.md.
+  `scripts/compare_result_zips.py` compares the results of two runs file by file.
+
 ### Changed
+- **LD-block detection keeps the r2 matrices of its last eight windows only.** It kept every
+  window it had computed, which at a million SNPs grew past the size of the genotype table. A
+  window that comes back is recomputed, with the same result; no output changes.
 - **The Help page and docs/outputs.md list every file of the results ZIP**, one line
   each, with when it is written: the per-model tables, the LD heatmaps, the QC and
   subsampling exports, and the combined ZIP's folders and `failed_traits.txt`. The Help

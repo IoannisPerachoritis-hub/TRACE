@@ -1513,7 +1513,8 @@ def _run_trait(parsed, pheno, args):
         extra_model_dfs=extra_model_dfs or None,
         extra_tables=extra_csvs or None,
         report_html=report_html,
-        metadata=meta,
+        # where the genotype table was kept: run_metadata.json only (the CLI's plan)
+        metadata={**meta, **(getattr(args, "_geno_store_meta", None) or {})},
     )
     zip_bytes = zip_buf.getvalue()
     del zip_buf

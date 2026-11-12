@@ -110,7 +110,9 @@ def test_a_run_on_disk_equals_memory_and_leaves_nothing(tmp_path, monkeypatch):
     assert r == {"memory": ("ok", None), "disk": ("ok", None)}
     mem, disk = _zip_members(tmp_path / "out_memory"), _zip_members(tmp_path / "out_disk")
     assert mem.keys() == disk.keys()
-    differ = [k for k in mem if mem[k] != disk[k]]
+    # every member identical, except the keys of run_metadata.json that say where the table was kept
+    norm = _compare_script()._normalise
+    differ = [k for k in mem if norm(k[1], mem[k]) != norm(k[1], disk[k])]
     assert differ == [], differ
     assert sorted(p.name for p in (tmp_path / "out_disk").iterdir()) == sorted(
         p.name for p in (tmp_path / "out_memory").iterdir())
@@ -179,3 +181,89 @@ def test_stage_digests_equal_in_both_modes(tmp_path, monkeypatch, piece):
         rows[mode] = json.loads((tmp_path / mode / "taps_T.json").read_text())
     assert len(rows["memory"]) > 30
     assert rows["disk"] == rows["memory"]
+
+
+def _metadata(folder):
+    import json
+    import zipfile
+
+    z = sorted(Path(folder).glob("*.zip"))[0]
+    with zipfile.ZipFile(z) as f:
+        return json.loads(f.read("run_metadata.json"))
+
+
+def _compare_script():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "compare_result_zips", Path(__file__).resolve().parents[1] / "scripts" / "compare_result_zips.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_auto_chooses_disk_when_free_memory_is_low(tmp_path, monkeypatch, caplog):
+    """The free memory reported to the plan is lowered (not real memory exhausted): auto keeps
+    the table on disk, says so in the log and in run_metadata.json, and the results equal a run
+    with the table in memory."""
+    import logging
+
+    from gwas import storeplan
+
+    vcf, pheno = _vcf(tmp_path / "v.vcf")
+    caplog.set_level(logging.INFO, logger="cli")
+    monkeypatch.setattr(storeplan, "available_memory_bytes", lambda: 64 * 2 ** 20)
+    assert _run(["--vcf", vcf, "--pheno", pheno, "--trait", "T", "--output", tmp_path / "auto",
+                 "--no-plots"], monkeypatch) == ("ok", None)
+    meta = _metadata(tmp_path / "auto")
+    assert meta["Genotype table"] == "disk" and meta["Genotype table choice"] == "auto"
+    assert "so TRACE keeps the genotype table on disk. Results are the same either way." in meta["Genotype table reason"]
+    assert any("keeps the genotype table on disk" in r.getMessage() for r in caplog.records)
+    assert not list((tmp_path / "auto").glob(STORE_GLOB))
+
+    monkeypatch.undo()
+    assert _run(["--vcf", vcf, "--pheno", pheno, "--trait", "T", "--output", tmp_path / "mem",
+                 "--no-plots", "--geno-store", "memory"], monkeypatch) == ("ok", None)
+    assert _metadata(tmp_path / "mem")["Genotype table"] == "memory"
+    za = sorted((tmp_path / "auto").glob("*.zip"))[0]
+    zm = sorted((tmp_path / "mem").glob("*.zip"))[0]
+    import io
+    buf = io.StringIO()
+    assert _compare_script().compare(za, zm, out=buf) == 0, buf.getvalue()
+
+
+def test_auto_keeps_a_small_run_in_memory(tmp_path, monkeypatch):
+    vcf, pheno = _vcf(tmp_path / "v.vcf")
+    assert _run(["--vcf", vcf, "--pheno", pheno, "--trait", "T", "--output", tmp_path / "o",
+                 "--no-plots", "--no-report"], monkeypatch) == ("ok", None)
+    meta = _metadata(tmp_path / "o")
+    assert meta["Genotype table"] == "memory" and "in memory" in meta["Genotype table reason"]
+    report_keys = set(meta) - set(__import__("gwas.storeplan", fromlist=["MODE_KEYS"]).MODE_KEYS)
+    assert "Genotype table" not in report_keys
+
+
+def test_forced_memory_stops_before_reading_when_it_will_not_fit(tmp_path, monkeypatch):
+    from gwas import storeplan
+
+    vcf, pheno = _vcf(tmp_path / "v.vcf")
+    monkeypatch.setattr(storeplan, "available_memory_bytes", lambda: 2 ** 20)
+    kind, msg = _run(["--vcf", vcf, "--pheno", pheno, "--trait", "T", "--output", tmp_path / "o",
+                      "--geno-store", "memory"], monkeypatch)
+    assert kind == "SystemExit" and "would need about" in msg and "--geno-store disk" in msg
+    assert not list((tmp_path / "o").glob("*.zip"))
+
+
+def test_report_is_the_same_in_both_modes(tmp_path, monkeypatch):
+    """The mode keys go into run_metadata.json only, not into the report's provenance table."""
+    import zipfile
+
+    vcf, pheno = _vcf(tmp_path / "v.vcf")
+    html = {}
+    for mode in ("memory", "disk"):
+        o = tmp_path / mode
+        assert _run(["--vcf", vcf, "--pheno", pheno, "--trait", "T", "--output", o, "--no-plots",
+                     "--geno-store", mode], monkeypatch) == ("ok", None)
+        with zipfile.ZipFile(sorted(o.glob("*.zip"))[0]) as f:
+            html[mode] = [l for l in f.read("report.html").decode().splitlines() if "Generated:" not in l]
+    assert html["memory"] == html["disk"]
+    assert not any("Genotype table" in l for l in html["memory"])

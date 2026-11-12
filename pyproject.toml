@@ -49,6 +49,11 @@ dependencies = [
     "tqdm>=4.60,<5",
     "click>=8.0,<9",
     "colorama>=0.4,<1",
+    # free memory and container limits for --geno-store auto; BLAS thread limits and the
+    # thread count recorded in run_metadata.json (both already installed by fastlmm and
+    # scikit-learn; listed because TRACE imports them itself)
+    "psutil>=5.9,<8",
+    "threadpoolctl>=3.1,<4",
     # pysnptools imports six but does not declare it; python-dateutil 4 no longer
     # pulls it in transitively, so without this line `import fastlmm.association` fails.
     "six>=1.16,<2",

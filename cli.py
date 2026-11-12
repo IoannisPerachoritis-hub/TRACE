@@ -234,12 +234,14 @@ def _build_parser():
 
     # Large datasets: where the genotype table is kept
     big_grp = parser.add_argument_group("Large datasets")
-    big_grp.add_argument("--geno-store", default="memory", choices=["memory", "disk"],
-                         help="Where the genotype table is kept. 'memory' (default): in memory. "
-                              "'disk': the VCF is read in pieces into a file of one byte per "
-                              "genotype call, and every step reads the table from that file in "
-                              "pieces. Results are the same either way; 'disk' needs far less "
-                              "memory for large datasets.")
+    big_grp.add_argument("--geno-store", default="auto", choices=["auto", "memory", "disk"],
+                         help="Where the genotype table is kept. 'auto' (default): in memory when "
+                              "an in-memory run fits in the free memory, otherwise on disk; the log "
+                              "says which and why. 'memory': in memory (the run stops before "
+                              "reading if it will not fit). 'disk': the VCF is read in pieces into "
+                              "a file of one byte per genotype call, and every step reads the table "
+                              "from that file in pieces. Results are the same either way "
+                              "(docs/large_datasets.md).")
     big_grp.add_argument("--geno-store-dir", default=None,
                          help="Folder in which a run with the table on disk makes its own new "
                               "subfolder for the table file, removed when the run ends "
@@ -668,12 +670,28 @@ def run_pipeline(args):
     _ensure_writable_output_dir(output_dir)
     log.info("Output directory: %s", output_dir)
 
+    # ── Where the genotype table is kept: decided before anything is read ──
+    from gwas import storeplan as _sp
+
+    _store_base = Path(args.geno_store_dir) if getattr(args, "geno_store_dir", None) else output_dir
+    _plan = _sp.plan(vcf_path, choice=getattr(args, "geno_store", "auto"), store_base=_store_base,
+                     models=args.model, subsampling=getattr(args, "subsampling", False),
+                     boot_jobs=getattr(args, "boot_jobs", 1), export_qc=getattr(args, "export_qc", False),
+                     impute=getattr(args, "impute", "mean"))
+    log.info(_plan.message)
+    if _plan.stop:
+        sys.exit("Error: " + _plan.stop)
+    for _old_dir, _old_bytes in _sp.stale_store_folders(_store_base) if _store_base.exists() else []:
+        log.warning("A genotype table folder of an earlier run that did not finish is still here: "
+                    "%s (%.2f GB). Delete it to free the space.", _old_dir, _old_bytes / 1e9)
+    args._geno_store_meta = _plan.metadata()     # run_metadata.json only
+
     # ── Load data ────────────────────────────────────────
     from gwas.io import load_vcf_cached
 
     _stagelog.mark("S01_vcf_read")
     log.info("Loading VCF: %s", vcf_path)
-    _on_disk = getattr(args, "geno_store", "memory") == "disk"
+    _on_disk = _plan.mode == "disk"
     parsed = None
     _store_dir = None
     _deferred_stop = None
@@ -682,9 +700,6 @@ def run_pipeline(args):
         import shutil as _sh
 
         from gwas.genostore import DeferredParseError, ingest_vcf
-        if getattr(args, "impute", "mean") == "ldknni":
-            sys.exit("Error: --impute ldknni ranks every SNP against all others and needs the whole "
-                     "genotype table in memory; it is not available with --geno-store disk.")
         _store_dir = _new_geno_store_dir(args, output_dir)
         try:
             parsed = ingest_vcf(vcf_path, _store_dir, log=log)
