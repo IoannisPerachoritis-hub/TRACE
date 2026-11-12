@@ -329,6 +329,16 @@ class TraitStore:
         if _norm_note and norm_option not in ("none", "", None):
             log.warning("Phenotype '%s': %s", trait_col, _norm_note)
 
+        # An infinite value (for example a log of zero taken before the file was written) reaches
+        # FaST-LMM, which stops with an error that does not say why: stop here, saying which samples.
+        _inf = ~np.isfinite(y.ravel())
+        if _inf.any():
+            _ids = [str(s) for s in np.asarray(geno_df.index)[_inf][:10]]
+            raise ValueError(
+                f"{int(_inf.sum())} infinite trait values in '{trait_col}' (for example from a log of "
+                f"zero); fix or remove them. Samples: {', '.join(_ids)}"
+                + (" and more." if _inf.sum() > 10 else "."))
+
         return geno_df, pheno, y
 
     # -------------------------------------------------------- gwas.qc._pipeline_snp_qc
