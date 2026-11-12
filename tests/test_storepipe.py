@@ -264,6 +264,87 @@ def test_kinship_pca_loco_equal_in_memory(tmp_path, monkeypatch, case, argset, p
         parsed.store.close()
 
 
+def _qc_report_args(out, a, trait):
+    pheno = out["S06"]["pheno"]
+    return dict(qc_snp=out["S08"]["qc_snp"], geno_dosage_raw=out["S09"]["raw"],
+                geno_imputed=out["S09"]["imp"], impute_method=a.impute, impute_k=a.impute_k,
+                impute_l=a.impute_l), pheno[trait].to_numpy()
+
+
+@pytest.mark.parametrize("cap", [None, 7])
+@pytest.mark.parametrize("case", ["example_v1", "example_v2", "edge"])
+@pytest.mark.parametrize("piece", ["1", "64", "997"])
+def test_qc_report_and_meff_equal_in_memory(tmp_path, monkeypatch, case, piece, cap):
+    """S13 and S16. ``cap`` lowers the sample cap of the concordance scan, so its marker
+    subsample (5,000 markers drawn with seed 42) is exercised too."""
+    from gwas import qc_report as qcr
+    from gwas.plotting import compute_meff_li_ji
+
+    monkeypatch.setenv("TRACE_STORE_PIECE", piece)
+    vcf, pheno, trait = _cases(tmp_path)[case]
+    a = _args(trait=trait)
+    mem = _memory(vcf, pheno, trait, a)
+    sto, st, parsed = _store(vcf, pheno, trait, a, tmp_path / "s")
+    try:
+        extra = {} if cap is None else {"dup_sample_cap": cap}
+        kw_m, tv = _qc_report_args(mem, a, trait)
+        kw_s, _ = _qc_report_args(sto, a, trait)
+        rm = qcr.compute_qc_report(mem["S08"]["geno_df"], tv, trait, **kw_m, **extra)
+        rs = st.qc_report(sto["S08"]["geno_df"], tv, trait, **kw_s, **extra)
+        _same(rs, rm, "S13")
+        _same(qcr.qc_report_dataframes(rs), qcr.qc_report_dataframes(rm), "S13 tables")
+        mm, em = compute_meff_li_ji(mem["S09"]["imp"])
+        ms, es = st.meff(sto["S09"]["imp"])
+        assert ms == mm and type(ms) is type(mm)
+        # values only: Streamlit's cache hands back a copy, a fresh call a reversed view
+        assert es.dtype == em.dtype and np.ascontiguousarray(es).tobytes() == np.ascontiguousarray(em).tobytes()
+    finally:
+        parsed.store.close()
+
+
+@pytest.mark.parametrize("case", ["example_v1", "example_v2", "edge"])
+@pytest.mark.parametrize("piece", ["1", "7", "64"])
+def test_meff_blocked_above_the_one_piece_size(tmp_path, monkeypatch, case, piece):
+    """Above the one-piece size (forced down here) M_eff is summed in blocks: the eigenvalues
+    agree to rounding, and the whole-number M_eff to within 1 (the ceiling of a near-integer;
+    scaling audit, section 8.5)."""
+    from gwas.plotting import compute_meff_li_ji
+
+    vcf, pheno, trait = _cases(tmp_path)[case]
+    a = _args(trait=trait)
+    mem = _memory(vcf, pheno, trait, a)
+    sto, st, parsed = _store(vcf, pheno, trait, a, tmp_path / "s")
+    try:
+        mm, em = compute_meff_li_ji(mem["S09"]["imp"])
+        monkeypatch.setenv("TRACE_STORE_ONE_PIECE_CELLS", "10")
+        monkeypatch.setenv("TRACE_STORE_PIECE", piece)
+        ms, es = st.meff(sto["S09"]["imp"])
+        assert isinstance(ms, int) and abs(ms - mm) <= 1
+        assert es.shape == em.shape and np.allclose(es, em, rtol=1e-9, atol=1e-9)
+        # more samples than SNPs: the m x m branch
+        few = sto["S09"]["imp"].lazy_cols(np.arange(9))
+        m9, e9 = compute_meff_li_ji(np.asarray(mem["S09"]["imp"])[:, :9])
+        ms9, es9 = st.meff(few)
+        assert abs(ms9 - m9) <= 1 and np.allclose(es9, e9, rtol=1e-9, atol=1e-9)
+    finally:
+        parsed.store.close()
+
+
+def test_qc_report_refuses_at_2_24_markers(tmp_path, monkeypatch):
+    import gwas.storepipe as sp
+
+    vcf, pheno, trait = _cases(tmp_path)["example_v1"]
+    a = _args(trait=trait)
+    sto, st, parsed = _store(vcf, pheno, trait, a, tmp_path / "s")
+    try:
+        kw, tv = _qc_report_args(sto, a, trait)
+        monkeypatch.setattr(sp, "CONCORDANCE_MAX_MARKERS", int(sto["S08"]["sid"].size))
+        with pytest.raises(ValueError, match="fewer than"):
+            st.qc_report(sto["S08"]["geno_df"], tv, trait, **kw)
+    finally:
+        parsed.store.close()
+
+
 def test_edge_case_exercises_the_count_passes(tmp_path, monkeypatch):
     """The synthetic case drops samples and records, so the counts come from store passes,
     not from the ingest's totals (both routes are compared above)."""

@@ -37,6 +37,8 @@ PRUNE_BUFFER_COLS = 8192     # columns of one chromosome held at a time while LD
 # runs the in-memory function when the table has at most this many cells. A FIXED number, never
 # derived from free memory, so results cannot differ between machines.
 ONE_PIECE_CELLS = 100_000_000
+# The QC report's sample concordance sums 0/1 products in float32: exact below 2**24 markers.
+CONCORDANCE_MAX_MARKERS = 2 ** 24
 
 
 def one_piece_cells():
@@ -651,18 +653,204 @@ class TraitStore:
         return K, Z_grm, chroms_grm, positions_grm, kinship_model
 
     # ---------------------------------------------- gwas.qc_report.compute_qc_report
-    def qc_report(self, geno_df, trait_values, trait_col, **kw):
-        """Today's function on the tables read whole (converted to pieces in a later step)."""
+    def qc_report(self, geno_df, trait_values, trait_col, qc_snp=None, n_original_samples=None,
+                  het_z_thresh=3.0, dup_conc_thresh=0.99, dup_sample_cap=2000,
+                  geno_dosage_raw=None, geno_imputed=None, impute_method="mean",
+                  impute_k=5, impute_l=20, piece=4096):
+        """The report dict of gwas.qc_report.compute_qc_report from one pass over the store.
+        Per-sample and per-marker statistics come from exact counts; the concordance products
+        are accumulated in float32 over column blocks: sums of 0/1 products, exact integers
+        while there are fewer than 2**24 markers. At 2**24 markers or more the report is not
+        made (the in-memory function loses exactness there without saying so)."""
         from gwas import qc_report as _qcr
 
-        for k in ("geno_dosage_raw", "geno_imputed"):
-            if kw.get(k) is not None:
-                kw[k] = np.asarray(kw[k])
-        return _qcr.compute_qc_report(self.frame(geno_df), trait_values, trait_col, **kw)
+        rows = self._rows(geno_df)
+        n, m = int(rows.size), int(self.cols.size)
+        samples = geno_df.index.to_numpy().astype(str)
+        c = self.counts
+
+        # today (duplicate_pairs): above sample_cap samples, 5,000 markers drawn with seed 42
+        marker_subsample = None
+        subsampled = False
+        if n > dup_sample_cap and marker_subsample is None:
+            marker_subsample = min(m, 5000)
+        dup_cols = None
+        if marker_subsample is not None and marker_subsample < m:
+            rng = np.random.default_rng(42)
+            dup_cols = np.sort(rng.choice(m, size=marker_subsample, replace=False))
+            subsampled = True
+        used_m = m if dup_cols is None else int(dup_cols.size)
+        if used_m >= CONCORDANCE_MAX_MARKERS:
+            raise ValueError(
+                f"the sample concordance counts need fewer than {CONCORDANCE_MAX_MARKERS:,} markers "
+                f"with the genotype table on disk ({used_m:,} markers)")
+
+        piece = _piece(piece)
+        row_called = np.zeros(n, dtype=np.int64)
+        row_het = np.zeros(n, dtype=np.int64)
+        n_both = np.zeros((n, n), dtype=np.float32)
+        n_equal = np.zeros((n, n), dtype=np.float32)
+
+        def _acc(g):
+            called = (g >= 0).astype(np.float32)
+            nb = called @ called.T
+            ne = np.zeros((n, n), dtype=np.float32)
+            for d in (0, 1, 2):
+                ind = (g == d).astype(np.float32)
+                ne += ind @ ind.T
+            return nb, ne
+
+        for k in range(0, m, piece):
+            g = self.store.gather(self.cols[k:k + piece], rows, table_cols=m)
+            row_called += (g >= 0).sum(axis=1, dtype=np.int64)
+            row_het += (g == 1).sum(axis=1, dtype=np.int64)
+            if dup_cols is None:
+                nb, ne = _acc(g)
+                n_both += nb
+                n_equal += ne
+        if dup_cols is not None:
+            for k in range(0, dup_cols.size, piece):
+                nb, ne = _acc(self.store.gather(self.cols[dup_cols[k:k + piece]], rows, table_cols=m))
+                n_both += nb
+                n_equal += ne
+
+        # ---- per_sample_heterozygosity (today: the same lines, on the counts)
+        n_called_r, n_het_r = row_called, row_het
+        with np.errstate(invalid="ignore", divide="ignore"):
+            het = np.where(n_called_r > 0, n_het_r / n_called_r, np.nan)
+        mean = float(np.nanmean(het))
+        sd = float(np.nanstd(het, ddof=1))
+        z = (het - mean) / sd if sd > 0 else np.zeros_like(het)
+        flagged = np.abs(z) > het_z_thresh
+        per_sample = pd.DataFrame({"sample": samples, "heterozygosity": het, "z": z, "flagged": flagged})
+        flag_idx = [i for i in np.argsort(-np.abs(z)) if flagged[i]]
+        sample_het = {
+            "mean": mean, "sd": sd, "median": float(np.nanmedian(het)), "z_thresh": het_z_thresh,
+            "n_flagged": int(flagged.sum()), "per_sample": per_sample,
+            "flagged_samples": [{"sample": samples[i], "heterozygosity": float(het[i]), "z": float(z[i])}
+                                for i in flag_idx],
+        }
+
+        # ---- duplicate_pairs (today: the lines after the products)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            conc = np.where(n_both > 0, n_equal / n_both, 0.0)
+        iu, ju = np.triu_indices(n, k=1)
+        keep = (conc[iu, ju] >= dup_conc_thresh) & (n_both[iu, ju] > 0)
+        pairs = []
+        for i, j in zip(iu[keep], ju[keep]):
+            nb = int(round(float(n_both[i, j])))
+            n_diff = nb - int(round(float(n_equal[i, j])))
+            pairs.append({"sample_a": samples[i], "sample_b": samples[j],
+                          "concordance": round(float(conc[i, j]), 4),
+                          "n_markers_compared": nb, "n_markers_differ": n_diff})
+        pairs.sort(key=lambda p: (-p["concordance"], p["n_markers_differ"]))
+        dup_pairs = {"conc_thresh": dup_conc_thresh, "n_pairs_scanned": n * (n - 1) // 2,
+                     "n_markers_used": int(used_m), "marker_subsampled": subsampled,
+                     "n_pairs_flagged": len(pairs), "pairs": pairs}
+
+        # ---- per_variant_fis (today: the same lines, on the counts)
+        he_min = 0.05
+        n_called = n - c["nmiss"]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            ho = np.where(n_called > 0, c["n1"] / n_called, np.nan)
+            ac = (c["n1"] + 2 * c["n2"]).astype(np.float64)
+            an = 2.0 * n_called
+            p = np.where(an > 0, ac / an, np.nan)
+            he = 2.0 * p * (1.0 - p)
+            fis = np.where(he > 0, 1.0 - ho / he, np.nan)
+        mask = (he > he_min) & np.isfinite(fis)
+        sub = fis[mask]
+        variant_fis = {
+            "he_min": he_min, "n_markers": int(len(ho)), "n_he_gt_min": int(mask.sum()),
+            "median_fis": float(np.median(sub)) if sub.size else float("nan"),
+            "pct5_fis": float(np.percentile(sub, 5)) if sub.size else float("nan"),
+            "pct95_fis": float(np.percentile(sub, 95)) if sub.size else float("nan"),
+            "ho": ho, "fis": fis,
+        }
+
+        # ---- _imputation_summary (mean fill: the counts give every reported number)
+        n_cells = n * m
+        n_missing = int(c["nmiss"].sum())
+        per_marker_missing = c["nmiss"] > 0
+        imputation = {"method": impute_method}
+        imputation.update(
+            missing_cells=n_missing,
+            missing_pct=round(100.0 * n_missing / n_cells, 4) if n_cells else 0.0,
+            markers_with_missing=int(per_marker_missing.sum()),
+            markers_zero_missing=int((~per_marker_missing).sum()),
+            cells_filled=n_missing,
+            noop=(n_missing == 0),
+        )
+
+        return {
+            "sample_het": sample_het,
+            "dup_pairs": dup_pairs,
+            "variant_fis": variant_fis,
+            "trait": _qcr.trait_summary(trait_values, trait_col, n_original=n_original_samples),
+            "qc_snp": dict(qc_snp) if qc_snp else {},
+            "n_samples": n,
+            "n_markers": m,
+            "imputation": imputation,
+        }
 
     # ------------------------------------------------ gwas.plotting.compute_meff_li_ji
-    def meff(self, geno_imputed):
-        """Today's function on the table read whole (the one-piece rule comes in a later step)."""
+    def meff(self, geno_imputed, piece=4096):
+        """M_eff (Li and Ji). At or below ONE_PIECE_CELLS the table is read whole and the
+        function of gwas.plotting runs unchanged (same bits). Above it the n x n Gram matrix is
+        accumulated over column blocks: another summation order, so the eigenvalues and,
+        through the final ceiling, M_eff can differ from a one-piece computation."""
         from gwas.plotting import compute_meff_li_ji
 
-        return compute_meff_li_ji(np.asarray(geno_imputed))
+        n, m = geno_imputed.shape
+        if n * m <= one_piece_cells():
+            self.read_notes.append(("meff_one_piece", int(n), int(m)))
+            return compute_meff_li_ji(geno_imputed.block(np.arange(m), layout="F", _whole=True))
+        log.info("M_eff computed in blocks (the table has more than %s calls); it can differ "
+                 "by 1 from a calculation in one piece", f"{one_piece_cells():,}")
+        # blocks of at most 4,096 SNPs and about 16 million cells (a block is n x width float64)
+        piece = _piece(min(int(piece), max(1, 16_000_000 // max(1, n))))
+        G64 = geno_imputed.astype(np.float64)
+
+        def zblock(a, b):
+            # today's standardisation, per column (each column is whole, so its mean and SD are
+            # today's values bit for bit)
+            G = G64.block(np.arange(a, b), layout="F")
+            mu = G.mean(axis=0)
+            sd = G.std(axis=0)
+            sd[sd < 1e-8] = 1.0
+            return (G - mu) / sd
+
+        if n >= m:
+            # today: C = (Z.T @ Z) / n; fill_diagonal(C, 1.0); eigvalsh(C). Here C is filled block
+            # by block (block pairs); each entry is still one dot product over all n samples.
+            self.read_notes.append(("meff_blocked_m_by_m", int(n), int(m)))
+            C = np.empty((m, m), dtype=np.float64)
+            starts = list(range(0, m, piece))
+            for i, a in enumerate(starts):
+                b = min(m, a + piece)
+                Zi = zblock(a, b)
+                C[a:b, a:b] = Zi.T @ Zi
+                for c in starts[i + 1:]:
+                    d = min(m, c + piece)
+                    blk = Zi.T @ zblock(c, d)
+                    C[a:b, c:d] = blk
+                    C[c:d, a:b] = blk.T
+            C /= float(n)
+            np.fill_diagonal(C, 1.0)
+            eigs = np.linalg.eigvalsh(C)
+        else:
+            self.read_notes.append(("meff_blocked", int(n), int(m)))
+            D = np.zeros((n, n), dtype=np.float64)
+            for k in range(0, m, piece):
+                Z = zblock(k, min(m, k + piece))
+                D += Z @ Z.T
+            D /= float(n)
+            eigs = np.linalg.eigvalsh(D)
+        eigs = np.clip(eigs, 0.0, None)[::-1]
+        meff = 0.0
+        for lam in eigs:
+            if lam >= 1.0:
+                meff += 1.0 + (lam % 1.0)
+            elif lam > 0:
+                meff += lam
+        return int(np.ceil(meff)), eigs
