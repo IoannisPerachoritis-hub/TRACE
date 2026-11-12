@@ -16,6 +16,7 @@ from utils.pub_theme import (
     LD_HEATMAP_CMAP, export_matplotlib, export_plotly,
 )
 from annotation import canon_chr
+from gwas.genostore import as_columns as _as_columns   # the table kept on disk
 
 def compute_cumulative_positions(df, chr_col="Chr", pos_col="Pos"):
     """
@@ -479,7 +480,7 @@ def compute_r2_to_lead(geno_dosage_raw, sid, lead_snp_id, snp_mask, min_pair_n=1
         raise ValueError(f"Lead SNP '{lead_snp_id}' not found in sid array.")
     lead_idx_global = int(matches[0])
 
-    G = np.asarray(geno_dosage_raw, dtype=float)
+    G = _as_columns(geno_dosage_raw, float)
     g_lead = G[:, lead_idx_global]
 
     win_indices = np.where(snp_mask)[0]
@@ -1220,7 +1221,7 @@ def plot_ld_block_heatmap(geno, chroms, positions, block_chr, block_start, block
         raise ValueError(
             f"LD heatmap needs at least 2 SNPs; Chr{info['block_chr']} "
             f"{info['block_start']}-{info['block_end']} has {idx.size}")
-    r2 = pairwise_r2(np.asarray(geno)[:, idx], min_pair_n=min_pair_n)
+    r2 = pairwise_r2(_as_columns(geno)[:, idx], min_pair_n=min_pair_n)
     info["r2"] = r2
     m = int(idx.size)
 

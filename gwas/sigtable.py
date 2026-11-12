@@ -28,6 +28,7 @@ import pandas as pd
 
 from annotation import canon_chr
 from gwas import isolated as _iso
+from gwas.genostore import as_columns as _as_columns, is_lazy as _is_lazy   # the table kept on disk
 
 # 38-column normative order (integration §2.1).
 SIG_TABLE_COLUMNS = [
@@ -160,7 +161,15 @@ def build_significant_snp_table(
     if geno_dosage_raw is not None:
         try:
             from gwas.ld import maf_from_matrix
-            maf_vec = maf_from_matrix(np.asarray(geno_dosage_raw, float), geno_encoding)
+            if _is_lazy(geno_dosage_raw):
+                # the same per-SNP values, block by block (each is a function of one column)
+                from gwas.genostore import piece as _piece
+                _g = geno_dosage_raw.astype(float)
+                _p = _piece(4096)
+                maf_vec = np.concatenate([maf_from_matrix(_g[:, _k:_k + _p], geno_encoding)
+                                          for _k in range(0, _g.shape[1], _p)])
+            else:
+                maf_vec = maf_from_matrix(np.asarray(geno_dosage_raw, float), geno_encoding)
             maf_map = {str(s): float(m) for s, m in zip(np.asarray(sid).astype(str), maf_vec)}
         except Exception:
             maf_map = {}
@@ -196,7 +205,7 @@ def build_significant_snp_table(
         n_window = hi - lo
         n_poly = n_window
         if geno_dosage_raw is not None and n_window > 0:
-            g = np.asarray(geno_dosage_raw, float)[:, cols[lo:hi]]
+            g = _as_columns(geno_dosage_raw, float)[:, cols[lo:hi]]
             n_poly = int((np.nanvar(g, axis=0) > 0).sum())
         return n_window, n_poly
 

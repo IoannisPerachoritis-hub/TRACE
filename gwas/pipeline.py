@@ -23,6 +23,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from gwas.genostore import as_columns as _as_columns, is_lazy as _is_lazy   # the table kept on disk
+from gwas import stagelog as _stagelog   # per-stage marks (TRACE_STAGE_LOG; off by default)
+
 log = logging.getLogger("cli")
 
 
@@ -273,12 +276,14 @@ def _run_trait(parsed, pheno, args):
     vid, ref, alt = parsed.vid, parsed.ref, parsed.alt
     info_scores, info_field = parsed.info_scores, parsed.info_field
 
+    _stagelog.mark("S05_ids")
     log.info("Harmonizing sample IDs…")
     geno_df, pheno, chroms, positions, sid, info_scores, allele_map = \
         _pipeline_harmonize_ids(genotypes, samples, chroms, positions,
                                 vid, ref, alt, pheno, info_scores)
     log.info("  %d overlapping samples, %d SNPs", geno_df.shape[0], _n_snps(geno_df, sid))
 
+    _stagelog.mark("S06_pheno_qc")
     log.info("Phenotype QC…")
     geno_df, pheno, y = _pipeline_phenotype_qc(
         geno_df, pheno, args.trait, args.norm, args.ind_miss,
@@ -288,6 +293,7 @@ def _run_trait(parsed, pheno, args):
     # ── Optional user covariates: load + align to the phenotype-QC'd sample set,
     #    dropping samples that lack a covariate value BEFORE PCA/kinship so every
     #    downstream array (iid/geno/K/PCs) is built on the covar-complete set ──
+    _stagelog.mark("S07_covariates")
     covar_df_sel = None
     _covar_frame = getattr(args, "covar_frame", None)  # GUI: the uploaded table, already read
     _cov_dropped, _cov_n_before = [], None
@@ -314,6 +320,7 @@ def _run_trait(parsed, pheno, args):
         log.info("  --covar: %d covariate(s) [%s] on %d samples",
                  covar_df_sel.shape[1], ", ".join(_cov_names), geno_df.shape[0])
 
+    _stagelog.mark("S08_snp_qc")
     log.info("SNP QC (MAF=%.3f, miss=%.2f, MAC=%d, INFO=%.2f)…",
              args.maf, args.miss, args.mac, args.info_thresh)
     canonical = (tuple(str(i) for i in range(1, args.n_chromosomes + 1))
@@ -325,18 +332,21 @@ def _run_trait(parsed, pheno, args):
                          max_het=args.max_het, het_excess_p=args.het_excess_p)
     log.info("  QC: %s", qc_snp)
 
+    _stagelog.mark("S09_matrices")
     log.info("Building genotype matrices (impute=%s)…", args.impute)
     geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = \
         _pipeline_build_geno_matrices(geno_df, method=args.impute,
                                       impute_k=args.impute_k, impute_l=args.impute_l)
     qc_snp["Imputation method"] = args.impute
 
+    _stagelog.mark("S10_kinship")
     log.info("Building kinship matrix…")
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
         _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions)
     log.info("  Kinship model: %s", kinship_model)
 
     # ── PCA ──────────────────────────────────────────────
+    _stagelog.mark("S11_pca")
     from gwas.kinship import _compute_pcs_full_impl
     pcs_full, pca_eigenvalues = _compute_pcs_full_impl(Z_for_pca, max_pcs=20)
     _max_avail = pcs_full.shape[1] if pcs_full is not None else 0
@@ -347,6 +357,7 @@ def _run_trait(parsed, pheno, args):
     )
 
     # ── LOCO kernels ─────────────────────────────────────
+    _stagelog.mark("S12_loco")
     from gwas.kinship import _build_loco_kernels_impl
     K0, K_by_chr, _ = _build_loco_kernels_impl(iid, Z_for_pca, chroms_grm, K)
 
@@ -377,6 +388,7 @@ def _run_trait(parsed, pheno, args):
         return CovarData(iid, np.c_[_pc, user_covar_mat],
                          names=[f"PC{i + 1}" for i in range(int(k))] + list(user_covar_names))
 
+    _stagelog.mark("S13_qc_report")
     extra_csvs = {}  # additional CSVs to include in ZIP
     figures = {}     # figures to include in ZIP
 
@@ -399,6 +411,7 @@ def _run_trait(parsed, pheno, args):
     except Exception as _qc_err:  # pragma: no cover
         log.warning("QC report skipped: %s", _qc_err)
 
+    _stagelog.mark("S14_export_qc")
     _exp_imputed, _exp_raw = geno_imputed, geno_dosage_raw
     if getattr(args, "export_qc", False) and _st is not None:
         # The export writes the whole table as text. With the table on disk, up to the
@@ -446,6 +459,7 @@ def _run_trait(parsed, pheno, args):
     # The lambda-GC auto-PC selector was removed (D-FINAL): TRACE uses the fixed
     # --n-pcs default and reports the genotype-PCA eigenvalue spectrum so the user can
     # judge the choice.  No criterion, no recommended k; one eigendecomposition, no model fits.
+    _stagelog.mark("S15_pc_diagnostics")
     _pc_diag = None
     try:
         from gwas.pc_diagnostics import compute_pc_diagnostics
@@ -475,6 +489,7 @@ def _run_trait(parsed, pheno, args):
     extra_model_dfs = {}
     cofactor_tables = {}
 
+    _stagelog.mark("S16_meff")
     # Compute M_eff (always, for reference columns)
     try:
         from gwas.plotting import compute_meff_li_ji
@@ -516,6 +531,7 @@ def _run_trait(parsed, pheno, args):
     _sig_rule_obj = rule_from_cli_args(args, _n_snps(geno_df, sid), _meff_val)
 
     if "mlm" in args.model:
+        _stagelog.mark("S17_mlm")
         log.info("Running MLM (LOCO)…")
         gwas_df = _run_gwas_impl(
             geno_imputed, y, pcs_full, n_pcs_mlm, sid, positions,
@@ -525,9 +541,11 @@ def _run_trait(parsed, pheno, args):
         gwas_df["PValue"] = np.clip(gwas_df["PValue"].astype(float), 1e-300, 1.0)
         gwas_df["-log10p"] = -np.log10(gwas_df["PValue"])
         try:
+            _stagelog.mark("S18_ols_effects")
             gwas_df = add_ols_effects_to_gwas(gwas_df, geno_imputed, y, covar_mlm, sid)
         except Exception as e:
             log.warning("OLS effects failed: %s", e)
+        _stagelog.mark("S18b_mlm_table")
         gwas_df = add_significance_columns(gwas_df, **_sig_cols)
         gwas_df["Model"] = "MLM"
 
@@ -540,6 +558,7 @@ def _run_trait(parsed, pheno, args):
 
     # ── LD decay estimation (ahead of the models: MLMM takes the LD window as its
     #    cofactor window; the estimate needs only the genotypes) ──
+    _stagelog.mark("S19_ld_decay")
     import gwas.ld as ld
     from gwas.windows import ld_window_kb
     ld_flank_kb = args.ld_flank_kb
@@ -555,12 +574,22 @@ def _run_trait(parsed, pheno, args):
         for ch in np.unique(chroms):
             ch_mask = chroms == ch
             pos_ch = positions[ch_mask]
-            geno_ch = _geno_float[:, ch_mask]
-            if len(pos_ch) < 50:
-                continue
-            if len(pos_ch) > 1500:
-                idx = np.linspace(0, len(pos_ch) - 1, 1500, dtype=int)
-                pos_ch, geno_ch = pos_ch[idx], geno_ch[:, idx]
+            if _is_lazy(_geno_float):
+                # on disk: read only the columns the estimate uses (at most 1,500)
+                if len(pos_ch) < 50:
+                    continue
+                _ci = np.flatnonzero(ch_mask)
+                if len(pos_ch) > 1500:
+                    idx = np.linspace(0, len(pos_ch) - 1, 1500, dtype=int)
+                    pos_ch, _ci = pos_ch[idx], _ci[idx]
+                geno_ch = _geno_float[:, _ci]
+            else:
+                geno_ch = _geno_float[:, ch_mask]
+                if len(pos_ch) < 50:
+                    continue
+                if len(pos_ch) > 1500:
+                    idx = np.linspace(0, len(pos_ch) - 1, 1500, dtype=int)
+                    pos_ch, geno_ch = pos_ch[idx], geno_ch[:, idx]
             r2_mat = ld.pairwise_r2(geno_ch)
             dk, _, _dfld = ld.ld_decay(pos_ch, r2_mat, ld_threshold=0.2, max_dist_kb=5000)
             if np.isfinite(dk):
@@ -579,6 +608,7 @@ def _run_trait(parsed, pheno, args):
             ld_flank_kb = ld_window_kb(None)            # 300 kb
             log.warning("  Could not estimate LD decay; using 300 kb")
 
+    _stagelog.mark("S20_mlmm")
     if "mlmm" in args.model and gwas_df is not None:
         from gwas.models import run_mlmm_research_grade_fast
         log.info("Running MLMM…")
@@ -603,6 +633,7 @@ def _run_trait(parsed, pheno, args):
         log.info("  MLMM: %d significant (M_eff), %d (FDR<0.05)",
                  gwas_mlmm["Significant_Meff"].sum(), gwas_mlmm["Significant_FDR"].sum())
 
+    _stagelog.mark("S21_farmcpu")
     if "farmcpu" in args.model and gwas_df is not None:
         from gwas.models import run_farmcpu
         log.info("Running FarmCPU…")
@@ -633,6 +664,7 @@ def _run_trait(parsed, pheno, args):
     # ── Cross-model consensus ───────────────────────────
     # Mirrors the Streamlit consensus block (pages/GWAS_analysis.py).
     # Only emitted when at least two of {MLM, MLMM, FarmCPU} ran.
+    _stagelog.mark("S22_consensus")
     _consensus_models = [("MLM", gwas_df)]
     for _mname in ["MLMM", "FarmCPU"]:
         if _mname in extra_model_dfs:
@@ -683,6 +715,7 @@ def _run_trait(parsed, pheno, args):
     from gwas.haplotype import run_haplotype_block_gwas
     from annotation import canon_chr
 
+    _stagelog.mark("S23_post_setup")
     post_gwas_models = [("MLM", gwas_df)]
     for mname in ["MLMM", "FarmCPU"]:
         if mname in extra_model_dfs:
@@ -779,6 +812,7 @@ def _run_trait(parsed, pheno, args):
         _ld_seed_thresh, _ld_seed_top_n = args.ld_seed_p, args.ld_top_n
 
     for model_name, model_df in post_gwas_models:
+        _stagelog.mark(f"S24_ld_blocks:{model_name}")
         log.info("Post-GWAS: %s", model_name)
         m_hap_gwas = None
         m_hap_tables = {}   # the haplotype test's per-block sample tables
@@ -828,6 +862,7 @@ def _run_trait(parsed, pheno, args):
         #    is untouched. Emits parallel CSVs; never writes into m_ld_blocks. ──
         if _do_rescue:
             try:
+                _stagelog.mark(f"S25_rescue:{model_name}")
                 _rescue = _iso.run_isolated_snp_rescue(
                     model_df, m_ld_blocks, _sig_rule_obj, chroms, positions, sid,
                     genes=_iso_genes_df, seed_p_used=args.ld_seed_p, top_n_used=args.ld_top_n,
@@ -857,6 +892,7 @@ def _run_trait(parsed, pheno, args):
         #    every model (block or not) before the empty-block skip below. ──
         if _do_rescue:
             try:
+                _stagelog.mark(f"S26_sigtable:{model_name}")
                 from gwas.sigtable import build_significant_snp_table, project_unblocked
                 _sigtab = build_significant_snp_table(
                     model_df, m_ld_blocks, _sig_rule_obj, chroms, positions, sid,
@@ -886,6 +922,7 @@ def _run_trait(parsed, pheno, args):
         # They are drawn after this loop, one per block (chromosome, start, end) however
         # many models report it. The GUI's "Generate LD block heatmap PNGs" checkbox sets
         # no_ld_heatmaps; the CLI has no such flag (--no-plots).
+        _stagelog.mark(f"S27_heatmap_setup:{model_name}")
         if not args.no_plots and not getattr(args, "no_ld_heatmaps", False):
             try:
                 _sig_snps = set()
@@ -912,6 +949,7 @@ def _run_trait(parsed, pheno, args):
 
         # Haplotype testing
         try:
+            _stagelog.mark(f"S28_haplotype:{model_name}")
             _hap_pcs = pcs_full[:, :n_pcs_mlm] if pcs_full is not None and n_pcs_mlm > 0 else None
             m_hap_gwas, m_hap_tables = run_haplotype_block_gwas(
                 haplo_df=m_ld_blocks, chroms=chroms, positions=positions,
@@ -930,6 +968,7 @@ def _run_trait(parsed, pheno, args):
         # Each block's candidate interval: from the marker before its first SNP to the
         # marker after its last, by the isolated-SNP rule (edge flank, 5 Mb clamp). The
         # block's own Start/End stay its member span, which the LD steps use.
+        _stagelog.mark(f"S29_annotation:{model_name}")
         m_blocks_iv = m_ld_blocks
         try:
             _biv = _iso.block_candidate_intervals(
@@ -966,6 +1005,7 @@ def _run_trait(parsed, pheno, args):
         #    router -> a NEW supplementary LD_triage_{model}.csv. Additive + gated
         #    by --no-triage (existing outputs byte-identical when off). Never a
         #    filter; changes no p/F/eta2/boundary. N1 safe: consolidate drops mlg_*. ──
+        _stagelog.mark(f"S30_triage:{model_name}")
         if not args.no_triage and m_ld_blocks is not None and not m_ld_blocks.empty:
             try:
                 import numpy as _np
@@ -990,7 +1030,7 @@ def _run_trait(parsed, pheno, args):
                 _m = _eta(_m)
                 # per-row lead usability (n_lead_classes_ge, lead_maf) from raw dosage
                 _sida = _np.asarray(sid).astype(str)
-                _G = _np.asarray(geno_dosage_raw, float) if geno_dosage_raw is not None else None
+                _G = _as_columns(geno_dosage_raw, float) if geno_dosage_raw is not None else None
                 _nc, _mf = [], []
                 for _lead in _m["ldq_lead_snp"].astype(str):
                     _c1, _m1 = _np.nan, _np.nan
@@ -1014,6 +1054,7 @@ def _run_trait(parsed, pheno, args):
 
         # Sample-to-haplotype assignments of the primary model's tested blocks: one row
         # per sample per block (the same table as the Post-GWAS downloads)
+        _stagelog.mark(f"S31_assignments:{model_name}")
         if model_name == _primary_model and m_hap_gwas is not None and not m_hap_gwas.empty:
             try:
                 from gwas.haplotype import haplotype_assignments
@@ -1057,6 +1098,7 @@ def _run_trait(parsed, pheno, args):
     # is significant; when that is MLM alone it is the title the heatmap always had, so
     # an MLM-only run's heatmaps are unchanged. Another model can report the same lead
     # inside a block with other bounds; that block is its own heatmap.
+    _stagelog.mark("S32_heatmaps")
     if any(_hm["draw"] for _hm in _heatmap_blocks.values()):
         from gwas.plotting import lead_snp_position, plot_ld_block_heatmap
         _sig_sets = {m: set(d.loc[d[_hm_sig_col], "SNP"].astype(str))
@@ -1087,6 +1129,7 @@ def _run_trait(parsed, pheno, args):
                      " (" + ", ".join(f"{m} {k}" for m, k in _n_named.items()) + " significant)")
 
     # ── Subsampling GWAS ───────────────────────────────────
+    _stagelog.mark("S33_subsampling")
     boot_disc_df = None
     if args.subsampling:
         from gwas.subsampling import subsample_gwas_resampling, aggregate_subsampling_to_ld_blocks
@@ -1156,10 +1199,12 @@ def _run_trait(parsed, pheno, args):
             log.error("  Subsampling GWAS failed: %s", e)
 
     # ── Plots ────────────────────────────────────────────
+    _stagelog.mark("S34_lambda_gc")
     lambda_gc = compute_lambda_gc(gwas_df["PValue"].values)
     log.info("Lambda GC: %.3f", lambda_gc)
 
     if not args.no_plots:
+        _stagelog.mark("S35_plots")
         log.info("Generating plots…")
         df_plot = gwas_df.copy()
         df_plot, tick_pos, tick_lab = compute_cumulative_positions(df_plot)
@@ -1238,6 +1283,7 @@ def _run_trait(parsed, pheno, args):
     # SNP_view_index; gated by --no-isolated-rescue (no _report_sig_table).
     # (Block_sample_retention is deferred to the LD-triage sub-batch, where the
     # haplotype test's frac_retained is hoisted into its output frame.)
+    _stagelog.mark("S36_snp_plots")
     _snp_boxplots = []
     if (_do_rescue and _report_sig_table is not None and not _report_sig_table.empty
             and geno_dosage_raw is not None):
@@ -1259,7 +1305,7 @@ def _run_trait(parsed, pheno, args):
                 from gwas.snpplots import (HAP_NOTE_NO_BLOCK, HAP_NOTE_NO_GROUPS,
                                            phenotype_axis_label)
                 _sid_arr = np.asarray(sid).astype(str)
-                _geno_raw = np.asarray(geno_dosage_raw, dtype=float)
+                _geno_raw = _as_columns(geno_dosage_raw, float)
                 _yv = np.asarray(y, dtype=float).ravel()
                 _samples = np.asarray(geno_df.index, dtype=str)    # the rows of y
                 # the y axis names the values plotted: the GWAS's y, normalised as --norm
@@ -1298,6 +1344,7 @@ def _run_trait(parsed, pheno, args):
 
     # ── Build HTML report (in-memory) ────────────────────
     # ── Run provenance (built ALWAYS; feeds the HTML report AND run_metadata.json) ──
+    _stagelog.mark("S37_metadata")
     _gb_meta = getattr(args, "genome_build", "SL3")
     # Record what the run ACTUALLY used, not what the flags asked for. The gene
     # frame either loaded above or it did not; the manifest follows that fact, so
@@ -1393,6 +1440,7 @@ def _run_trait(parsed, pheno, args):
                 for k, v in ([item, ("MLMM cofactor window (kb)", _mlmm_window_kb)]
                              if item[0] == "LD flank (kb)" else [item])}
 
+    _stagelog.mark("S38_report")
     report_html = None
     if not args.no_report:
         from gwas.reports import generate_gwas_report
@@ -1433,6 +1481,7 @@ def _run_trait(parsed, pheno, args):
     # The caller writes it (the CLI to --output; the GUI keeps it in memory).
     if getattr(args, "output", None):
         log.info("Saving results to %s", Path(args.output))
+    _stagelog.mark("S39_zip_and_figures")
     from gwas.plotting import _build_gwas_results_zip
 
     zip_name, zip_buf = _build_gwas_results_zip(
@@ -1456,6 +1505,7 @@ def _run_trait(parsed, pheno, args):
         if hasattr(fig, "savefig"):
             plt.close(fig)
 
+    _stagelog.mark("S40_result")
     tables = {f"GWAS_{args.trait}.csv": gwas_df}
     tables.update({f"GWAS_{m}_{args.trait}.csv": d for m, d in (extra_model_dfs or {}).items()})
     tables.update(extra_csvs)

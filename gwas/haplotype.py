@@ -10,6 +10,7 @@ from gwas.utils import _ensure_2d, stable_seed
 from gwas.utils import _mean_impute_cols
 from gwas.models import _ols_fit, _nested_f_test, _one_hot_drop_first
 from gwas.ld import get_block_snp_mask
+from gwas.genostore import as_columns as _as_columns   # the table kept on disk
 
 def _inv_simpson_from_counts(counts) -> float:
     """1 / sum(p_i^2) on a value_counts Series (T-31). NaN when empty.
@@ -168,7 +169,7 @@ def run_haplotype_block_gwas(
     geno_df = geno_df.loc[keep_mask]
     pheno_df = pheno_df.reindex(geno_df.index)
 
-    geno_imputed = np.asarray(geno_imputed)[keep_mask, :]
+    geno_imputed = _as_columns(geno_imputed)[keep_mask, :]
     if pcs is not None:
         pcs = np.asarray(pcs)
         if pcs.shape[0] != geno_imputed.shape[0]:

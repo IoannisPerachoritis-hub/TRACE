@@ -6,8 +6,12 @@ import re
 import hashlib
 import logging
 from annotation import canon_chr
+from gwas.genostore import as_columns as _as_columns, is_lazy as _is_lazy   # the table kept on disk
 
 log = logging.getLogger(__name__)
+# find_ld_clusters_genomewide keeps the r2 matrices of the most recent seed windows only; a
+# window that comes back after it was dropped is recomputed, with the same result.
+_R2_CACHE_MAX = 8
 def _split_leads(x: str) -> list[str]:
     toks = re.split(r"[;,\s|]+", str(x))
     return [t for t in toks if t and t.lower() != "nan"]
@@ -794,7 +798,7 @@ def block_mean_r2(block_row, chroms, positions, sid, geno_imputed, min_pair_n: i
     per-segment ``mean_r2`` computed in ``find_ld_blocks_graph`` and discarded by the
     IoU merge, which on a merged block reflects only one constituent segment.
     """
-    G_imp = np.asarray(geno_imputed, dtype=float)
+    G_imp = _as_columns(geno_imputed, float)
     chroms = np.asarray(chroms).astype(str)
     positions = np.asarray(positions)
     sid = np.asarray(sid).astype(str)
@@ -821,7 +825,7 @@ def merge_coherence(row_a, row_b, chroms, positions, sid, geno_imputed, min_pair
     pairwise_r2 over the union. NaN when the union has <2 or >4000 informative
     members, or no finite pair.
     """
-    G_imp = np.asarray(geno_imputed, dtype=float)
+    G_imp = _as_columns(geno_imputed, float)
     chroms = np.asarray(chroms).astype(str)
     positions = np.asarray(positions)
     sid = np.asarray(sid).astype(str)
@@ -1037,7 +1041,9 @@ def find_ld_clusters_genomewide(
         # Filter single chromosome
         chr_mask = chroms.astype(str) == chr_sel
         chr_positions = positions[chr_mask]
-        chr_geno = np.asarray(geno_imputed[:, chr_mask], float)
+        _lazy_geno = _is_lazy(geno_imputed)    # on disk, only the window is read
+        if not _lazy_geno:
+            chr_geno = np.asarray(geno_imputed[:, chr_mask], float)
         chr_sids      = sid[chr_mask]
 
         # Window around lead SNP
@@ -1046,7 +1052,10 @@ def find_ld_clusters_genomewide(
             (chr_positions <= pos_sel + flank_bp)
         )
         region_pos  = chr_positions[reg_mask]
-        region_geno = chr_geno[:, reg_mask]
+        if _lazy_geno:
+            region_geno = _as_columns(geno_imputed, float)[:, np.flatnonzero(chr_mask)[reg_mask]]
+        else:
+            region_geno = chr_geno[:, reg_mask]
         region_sids = chr_sids[reg_mask]
         if region_geno.shape[1] < 2:
             continue
@@ -1122,6 +1131,10 @@ def find_ld_clusters_genomewide(
             except RuntimeError:
                 continue
             _r2_window_cache[cache_key] = r2
+            # one k x k matrix per distinct seed window (18 MB at k = 1,500): keep the most
+            # recent windows only, so the cache cannot outgrow the genotype table
+            if len(_r2_window_cache) > _R2_CACHE_MAX:
+                _r2_window_cache.pop(next(iter(_r2_window_cache)))
         # --- choose LD distance cap robustly ---
         # LD decay estimates can be underestimated on sparse SNP sets
         # so enforce a reasonable minimum distance
@@ -1565,7 +1578,7 @@ def extract_block_geno_for_paper(
     pos_np = np.asarray(positions, dtype=object).astype(int)
     sid_np = np.asarray(sid, dtype=object).astype(str)
 
-    G = np.asarray(geno_imputed, dtype=float)
+    G = _as_columns(geno_imputed, float)
 
     # SAFETY: SNP metadata must match genotype columns
     m = int(G.shape[1])
@@ -1903,7 +1916,7 @@ def compute_block_ld_quality(blocks_df, chroms, positions, sid, geno_imputed, gw
     chroms = np.asarray(chroms).astype(str)
     positions = np.asarray(positions)
     sid = np.asarray(sid).astype(str)
-    G_imp = np.asarray(geno_imputed, dtype=float)
+    G_imp = _as_columns(geno_imputed, float)
     lead_est = "pairwise_complete_raw" if geno_dosage_raw is not None else "imputed_fallback"
     geno_for_lead = geno_dosage_raw if geno_dosage_raw is not None else G_imp
 
