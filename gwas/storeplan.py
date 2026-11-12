@@ -244,29 +244,43 @@ def disk_need_bytes(size: VcfSize):
 
 # ----------------------------------------------------------------------------- the decision
 MODE_KEYS = ("Genotype table", "Genotype table choice", "Genotype table reason",
-             "Memory estimate, in-memory run (GB)", "Available memory at start (GB)",
-             "Genotype calls (estimate)")
+             "Memory estimate, in-memory run (GB)", "Genotype calls")
+# where the table was kept and why: the only keys that differ between the two modes
+WHERE_KEYS = MODE_KEYS[:3]
+
+REASON_AUTO_MEMORY = "auto: the in-memory estimate fits in the free memory"
+REASON_AUTO_DISK = "auto: the in-memory estimate did not fit in the free memory"
+REASON_AUTO_NOT_READ = "auto: the size of the VCF could not be read before the run"
 
 
 @dataclass
 class Plan:
     mode: str               # "memory" or "disk"
     choice: str             # "auto", "memory" or "disk" (what --geno-store asked for)
-    message: str            # one plain line for the log
+    message: str            # one plain line for the log (it names the free memory)
     stop: object            # None, or the message of a stop before anything is read
-    estimate_mib: float
+    estimate_mib: float     # the estimate the choice was made on (from the file, before reading)
     available_bytes: int
     size: VcfSize
+    reason: str = ""        # why, with no number in it (run_metadata.json)
+    options: dict = None    # the options of the estimate (estimate_memory_mib's keywords)
 
-    def metadata(self):
-        """The keys run_metadata.json gets (and only it: the report is the same either way)."""
+    def metadata(self, n_samples, n_snps):
+        """The keys run_metadata.json gets (and only it: the report is the same either way).
+
+        None of them holds a number that changes between two runs of the same analysis, so two
+        such runs give identical ZIPs: the free memory is in the log line only, and the estimate
+        and the call count are those of the genotypes as read (``n_samples`` x ``n_snps``), not
+        the plan's, which is an exact count in one run and a bound from the file size in another
+        depending on the free memory."""
+        n, m = int(n_samples), int(n_snps)
+        est = estimate_memory_mib(n, m, **(self.options or {}))
         return {
             "Genotype table": self.mode,
             "Genotype table choice": "auto" if self.choice == "auto" else f"--geno-store {self.choice}",
-            "Genotype table reason": self.message,
-            "Memory estimate, in-memory run (GB)": round(self.estimate_mib * MIB / GB, 2),
-            "Available memory at start (GB)": round(self.available_bytes / GB, 2),
-            "Genotype calls (estimate)": f"{_calls(self.size):,} ({self.size.how})",
+            "Genotype table reason": self.reason,
+            "Memory estimate, in-memory run (GB)": round(est * MIB / GB, 2),
+            "Genotype calls": f"{n * m:,} ({n:,} samples x {m:,} SNPs read)",
         }
 
 
@@ -297,10 +311,11 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
     except Exception:          # unreadable here: the reader then gives the usual message
         size = VcfSize(0, 0, True, "not read", 0)
     avail = available_memory_bytes() if available is None else int(available)
+    options = dict(models=tuple(models or ()), subsampling=subsampling, boot_jobs=boot_jobs,
+                   export_qc=export_qc, impute=impute)
 
     def est(sz):
-        return estimate_memory_mib(sz.n_samples, sz.n_records, models=models, subsampling=subsampling,
-                                   boot_jobs=boot_jobs, export_qc=export_qc, impute=impute)
+        return estimate_memory_mib(sz.n_samples, sz.n_records, **options)
 
     def refine():
         nonlocal size
@@ -346,6 +361,12 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
     else:
         message = ("The genotype table is kept on disk (--geno-store disk); results are the same as "
                    "in memory.")
+    if choice != "auto":
+        reason = f"--geno-store {choice}: kept {'in memory' if mode == 'memory' else 'on disk'} as asked"
+    elif size.how == "not read":
+        reason = REASON_AUTO_NOT_READ
+    else:
+        reason = REASON_AUTO_MEMORY if mode == "memory" else REASON_AUTO_DISK
 
     if mode == "disk" and stop is None:
         if impute == "ldknni":
@@ -373,7 +394,7 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
                         f"{free / GB:.1f} GB are free there. Free some space, or choose a folder on "
                         "another drive with --geno-store-dir.")
     return Plan(mode=mode, choice=choice, message=message, stop=stop, estimate_mib=e,
-                available_bytes=avail, size=size)
+                available_bytes=avail, size=size, reason=reason, options=options)
 
 
 def stale_store_folders(base, own=None):

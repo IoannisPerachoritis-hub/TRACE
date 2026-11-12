@@ -24,8 +24,6 @@ from tests import _multitrait_data as mt
 
 _GENERATED = "<strong>Generated:</strong>"
 _PLANTED = list(mt.CAUSAL)
-# run_metadata.json keys holding the free memory read at the start of each run
-_PER_RUN_KEYS = ("Available memory at start (GB)", "Genotype table reason")
 
 
 def _args(vcf, pheno, traits, out):
@@ -35,21 +33,16 @@ def _args(vcf, pheno, traits, out):
          "--model", "mlm", "mlmm", "farmcpu"])
 
 
-def _normalise(name, data):
-    """The report without its 'Generated:' line, run_metadata.json without the free memory."""
-    if name.endswith("report.html"):
-        data = b"\n".join(l for l in data.split(b"\n") if _GENERATED.encode() not in l)
-    if name.endswith("run_metadata.json"):
-        meta = json.loads(data)
-        assert all(k in meta for k in _PER_RUN_KEYS), name
-        data = json.dumps({k: v for k, v in meta.items() if k not in _PER_RUN_KEYS}).encode()
-    return data
-
-
 def _members(zip_bytes):
-    """Member name -> normalised bytes."""
+    """Member name -> bytes, with the report's 'Generated:' line dropped."""
+    out = {}
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        return {name: _normalise(name, zf.read(name)) for name in zf.namelist()}
+        for name in zf.namelist():
+            data = zf.read(name)
+            if name.endswith("report.html"):
+                data = b"\n".join(l for l in data.split(b"\n") if _GENERATED.encode() not in l)
+            out[name] = data
+    return out
 
 
 def _trait_zip(folder, trait):
@@ -119,7 +112,8 @@ def test_a_failing_trait_does_not_stop_the_others(runs):
         for t in _PLANTED:
             inner = _members(_trait_zip(runs["multi"], t))
             mine = {n.split("/", 1)[1]: zf.read(n) for n in names if n.startswith(f"{t}/")}
-            mine = {n: _normalise(n, d) for n, d in mine.items()}
+            mine = {n: (b"\n".join(l for l in d.split(b"\n") if _GENERATED.encode() not in l)
+                        if n.endswith("report.html") else d) for n, d in mine.items()}
             assert mine == inner, t
     assert not any(n.startswith(f"{mt.CONSTANT_TRAIT}/") for n in names)
     assert f"{mt.CONSTANT_TRAIT}: FAILED" in report and "near-zero variance" in report

@@ -6,10 +6,12 @@ to TRACE_SLOW_THREADS (default 1): results are byte-identical only at a fixed th
 
 1. test_memory_equals_disk: the 16 cases of the scaling audit's comparison (tests/_store_cases.py;
    the 6 on the planted panel, tomato and pepper need TRACE_B4_DATA), --geno-store memory against
-   --geno-store disk: every ZIP member identical apart from the keys that say where the table was
-   kept, every stage digest (gwas/taps.py) identical, and no table folder left behind.
-2. test_stored_baseline: the memory run's member digests against the baseline stored for this
-   machine (tests/data/slow_baseline/<fingerprint>.json, made at 1 thread). The fingerprint names
+   --geno-store disk: every ZIP member identical apart from the three run_metadata.json keys that
+   say where the table was kept and why, every stage digest (gwas/taps.py) identical, and no
+   table folder left behind.
+2. test_stored_baseline: the memory run's member digests, run_metadata.json whole, against the
+   baseline stored for this machine (tests/data/slow_baseline/<fingerprint>.json, made at 1
+   thread). The fingerprint names
    the OS, CPU, BLAS libraries, threads and numeric packages; anywhere else the test is skipped
    with a message. TRACE_SLOW_WRITE_BASELINE=1 writes this machine's baseline instead.
 3. test_piece_sizes: the digest suite: the same cases on disk read in pieces of 1, 64 and 997
@@ -101,7 +103,8 @@ def test_stored_baseline(work, name):
     if not writing and not path.exists():
         pytest.skip(f"no stored baseline for this machine ({path.name}: {raw})")
     argv = _argv(name)
-    got = sc.digests(sc.zip_members(_run(work, "mem", name, argv) / "results", _folders(work)))
+    # the same mode as the stored runs, so nothing in run_metadata.json is left out
+    got = sc.digests(sc.zip_members(_run(work, "mem", name, argv) / "results", _folders(work), drop_where=False))
     if writing:
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
             "fingerprint": raw, "threads": sc.threads(), "cases": {}}

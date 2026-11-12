@@ -34,11 +34,14 @@ and 5.9 GB are free, so TRACE keeps the genotype table on disk. Results are the 
 
 (a simulated panel of 996 samples and 1,070,795 SNPs on a 16 GB desktop).
 
-The same line, the estimate and the free memory are recorded in `run_metadata.json` in the
-results ZIP (keys `Genotype table`, `Genotype table choice`, `Genotype table reason`,
-`Memory estimate, in-memory run (GB)`, `Available memory at start (GB)` and
-`Genotype calls (estimate)`). These keys are the only difference between the ZIPs of the two
-modes; the HTML report is the same.
+`run_metadata.json` in the results ZIP records the mode (`Genotype table`), how it was chosen
+(`Genotype table choice`: `auto` or the option) and why (`Genotype table reason`, for example
+"auto: the in-memory estimate did not fit in the free memory"), with the estimate and the number
+of genotype calls of the genotypes as read (`Memory estimate, in-memory run (GB)` and
+`Genotype calls`). The free memory changes from run to run, so it is in the log line only: two
+runs of the same analysis give identical ZIPs. (The log line's estimate is made before reading,
+from the file size, and can be higher than the recorded one.) The first three keys are the only
+difference between the ZIPs of the two modes; the HTML report is the same.
 
 ### How the estimate is made
 

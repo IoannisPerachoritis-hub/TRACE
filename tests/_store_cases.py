@@ -9,9 +9,9 @@
   (a SNP count that leaves 1 to 3 columns in the last OLS chunk), regenerated exactly from their
   seeds (the audit's generator; the files are byte-identical to the audit's).
 * BOOT_JOBS_CASES: subsampling with several workers (the new example with 7, tomato with 4).
-* zip_members(): every ZIP member of a run, after removing what differs between two runs of
-  the same analysis: the keys that say where the genotype table was kept, the report's time
-  and the input folders.
+* zip_members(): every ZIP member of a run, after removing the report's time and the input
+  folders, and (for a comparison of the two modes) the three run_metadata.json keys that say
+  where the genotype table was kept and why.
 """
 import gzip
 import hashlib
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from gwas.storeplan import MODE_KEYS
+from gwas.storeplan import WHERE_KEYS
 
 REPO = Path(__file__).resolve().parents[1]
 EX1 = REPO / "tests" / "data" / "example_v1"
@@ -108,17 +108,18 @@ _TEXT = (".csv", ".json", ".html", ".txt")
 _GENERATED = re.compile(r"<strong>Generated:</strong>[^\n]*")
 
 
-def _normalise(name, data, folders):
-    """A member without what differs between two runs of the same analysis."""
+def _normalise(name, data, folders, drop_where):
+    """A member without the report's time and the input folders (and, with ``drop_where``, the
+    keys that name the mode)."""
     if not name.endswith(_TEXT):
         return data
     text = data.decode("utf-8", "replace")
     for f in sorted({str(f) for f in folders if f}, key=len, reverse=True):
         for form in (f.replace("\\", "\\\\"), f, f.replace("\\", "/")):     # JSON, plain, slashes
             text = text.replace(form, "<input>")
-    if name.endswith("run_metadata.json"):
+    if name.endswith("run_metadata.json") and drop_where:
         meta = json.loads(text)
-        for k in MODE_KEYS:
+        for k in WHERE_KEYS:
             meta.pop(k, None)
         text = json.dumps(meta, indent=2, sort_keys=True)
     if name.endswith("report.html"):
@@ -126,9 +127,10 @@ def _normalise(name, data, folders):
     return text.encode("utf-8")
 
 
-def zip_members(folder, folders=()):
+def zip_members(folder, folders=(), drop_where=True):
     """{(trait or 'combined', member): normalised bytes} of the results ZIPs in ``folder`` (the
-    file name holds the run's time, so the trait is the key)."""
+    file name holds the run's time, so the trait is the key). ``drop_where=False`` keeps the
+    keys that name the mode, for a comparison of two runs in the same mode."""
     out = {}
     zips = sorted(Path(folder).glob("*.zip"))
     assert zips, f"no results ZIP in {folder}"
@@ -136,7 +138,7 @@ def zip_members(folder, folders=()):
         key = "combined" if "MultiTrait_" in z.name else z.name.split("__")[1]
         with zipfile.ZipFile(z) as f:
             for n in f.namelist():
-                out[(key, n)] = _normalise(n, f.read(n), folders)
+                out[(key, n)] = _normalise(n, f.read(n), folders, drop_where)
     return out
 
 

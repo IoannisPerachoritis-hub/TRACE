@@ -6,6 +6,7 @@ the chunked read parses as it reads, so a stop it meets while parsing is raised 
 place the in-memory path raises it. Each run makes its own new folder for the table (inside
 --geno-store-dir, else --output) and removes only that folder, after the run and on any stop.
 """
+import json
 import re
 import sys
 from pathlib import Path
@@ -220,8 +221,9 @@ def test_auto_chooses_disk_when_free_memory_is_low(tmp_path, monkeypatch, caplog
                  "--no-plots"], monkeypatch) == ("ok", None)
     meta = _metadata(tmp_path / "auto")
     assert meta["Genotype table"] == "disk" and meta["Genotype table choice"] == "auto"
-    assert "so TRACE keeps the genotype table on disk. Results are the same either way." in meta["Genotype table reason"]
-    assert any("keeps the genotype table on disk" in r.getMessage() for r in caplog.records)
+    assert meta["Genotype table reason"] == "auto: the in-memory estimate did not fit in the free memory"
+    assert any("keeps the genotype table on disk" in r.getMessage() and "GB are free" in r.getMessage()
+               for r in caplog.records)
     assert not list((tmp_path / "auto").glob(STORE_GLOB))
 
     monkeypatch.undo()
@@ -240,9 +242,46 @@ def test_auto_keeps_a_small_run_in_memory(tmp_path, monkeypatch):
     assert _run(["--vcf", vcf, "--pheno", pheno, "--trait", "T", "--output", tmp_path / "o",
                  "--no-plots", "--no-report"], monkeypatch) == ("ok", None)
     meta = _metadata(tmp_path / "o")
-    assert meta["Genotype table"] == "memory" and "in memory" in meta["Genotype table reason"]
+    assert meta["Genotype table"] == "memory"
+    assert meta["Genotype table reason"] == "auto: the in-memory estimate fits in the free memory"
+    assert meta["Genotype calls"] == "6,000 (30 samples x 200 SNPs read)"
     report_keys = set(meta) - set(__import__("gwas.storeplan", fromlist=["MODE_KEYS"]).MODE_KEYS)
     assert "Genotype table" not in report_keys
+
+
+@pytest.mark.parametrize("mode", ["auto", "memory", "disk"])
+def test_two_runs_give_identical_zip_members(tmp_path, monkeypatch, caplog, mode):
+    """Two runs of the same analysis on the same machine give identical ZIP members, as before
+    the table could be kept on disk: only the report's 'Generated:' time line may differ. The
+    free memory and the free disk read at the start differ between the two runs here (both
+    enough): the free memory is in the log line only, not in run_metadata.json."""
+    import logging
+
+    from gwas import storeplan
+
+    vcf, pheno = _vcf(tmp_path / "v.vcf")
+    caplog.set_level(logging.INFO, logger="cli")
+    generated = re.compile(rb"<strong>Generated:</strong>[^\n]*")
+    runs = []
+    for i, (mem_gb, disk_gb) in enumerate([(9.31, 120.5), (7.06, 95.25)]):
+        monkeypatch.setattr(storeplan, "available_memory_bytes", lambda v=mem_gb: int(v * 1e9))
+        monkeypatch.setattr(storeplan, "free_disk_bytes", lambda base, v=disk_gb: int(v * 1e9))
+        caplog.clear()
+        # pysnptools' Local runner (FaST-LMM's default) replaces the root logger's handlers with
+        # its own at every scan, which drops pytest's capture handler after the first run
+        if caplog.handler not in logging.getLogger().handlers:
+            logging.getLogger().addHandler(caplog.handler)
+        assert _run(["--vcf", vcf, "--pheno", pheno, "--trait", "T", "--output", tmp_path / f"run{i}",
+                     "--geno-store", mode], monkeypatch) == ("ok", None)
+        if mode != "disk":
+            assert any(f"{mem_gb:.1f} GB are free" in r.getMessage() for r in caplog.records)
+        runs.append({k: generated.sub(b"", v) if k[1].endswith("report.html") else v
+                     for k, v in _zip_members(tmp_path / f"run{i}").items()})
+    assert runs[0].keys() == runs[1].keys()
+    assert [k for k in runs[0] if runs[0][k] != runs[1][k]] == []
+    meta = json.loads(runs[0][next(k for k in runs[0] if k[1] == "run_metadata.json")])
+    assert "Available memory at start (GB)" not in meta and meta["Genotype table"] == (
+        "disk" if mode == "disk" else "memory")
 
 
 def test_forced_memory_stops_before_reading_when_it_will_not_fit(tmp_path, monkeypatch):

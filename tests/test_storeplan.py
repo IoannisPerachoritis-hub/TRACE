@@ -183,8 +183,34 @@ def test_auto_keeps_a_small_table_in_memory(tmp_path):
     p = sp.plan(_gt_vcf(tmp_path), "auto", tmp_path, available=16 * GB, free_disk=100 * GB)
     assert p.mode == "memory" and p.stop is None and not p.size.exact      # no counting pass needed
     assert "keeps the genotype table in memory" in p.message
-    assert list(p.metadata()) == list(sp.MODE_KEYS)
-    assert p.metadata()["Genotype table"] == "memory" and p.metadata()["Genotype table choice"] == "auto"
+    assert "16.0 GB are free" in p.message                                 # the log line names it
+    meta = p.metadata(50, 400)
+    assert list(meta) == list(sp.MODE_KEYS)
+    assert meta["Genotype table"] == "memory" and meta["Genotype table choice"] == "auto"
+    assert meta["Genotype table reason"] == "auto: the in-memory estimate fits in the free memory"
+    assert meta["Genotype calls"] == "20,000 (50 samples x 400 SNPs read)"
+    assert meta["Memory estimate, in-memory run (GB)"] == round(sp.estimate_memory_mib(50, 400) * sp.MIB / GB, 2)
+
+
+def test_metadata_has_no_number_that_changes_between_runs(tmp_path):
+    """The free memory is not recorded, and the estimate and the call count come from the
+    genotypes as read: a run that had to count the records exactly (little free memory) and one
+    that went by the bound from the file size (more free memory) record the same."""
+    v = _gt_vcf(tmp_path)
+    bound = sp.vcf_size(v)
+    assert not bound.exact and bound.n_records > 400
+    e_bound = sp.estimate_memory_mib(50, bound.n_records) * sp.MIB
+    e_exact = sp.estimate_memory_mib(50, 400) * sp.MIB
+    counted = sp.plan(v, "auto", tmp_path, available=(e_bound + e_exact) / 2 / sp.AUTO_MEMORY_FRACTION,
+                      free_disk=100 * GB)
+    by_bound = sp.plan(v, "auto", tmp_path, available=4 * e_bound, free_disk=100 * GB)
+    assert counted.mode == by_bound.mode == "memory"
+    assert counted.size.exact and not by_bound.size.exact
+    assert counted.message != by_bound.message                             # the log line differs
+    assert counted.metadata(50, 400) == by_bound.metadata(50, 400)
+    for p in (counted, by_bound):
+        assert "GB are free" in p.message
+        assert not any(ch.isdigit() for ch in p.metadata(50, 400)["Genotype table reason"])
 
 
 def test_auto_chooses_disk_when_the_estimate_does_not_fit(tmp_path):
@@ -195,6 +221,7 @@ def test_auto_chooses_disk_when_the_estimate_does_not_fit(tmp_path):
     assert p.size.exact and p.size.n_records == 400                       # counted before choosing disk
     assert "so TRACE keeps the genotype table on disk. Results are the same either way." in p.message
     assert "about 20,000 genotype calls" in p.message
+    assert p.metadata(50, 400)["Genotype table reason"] == "auto: the in-memory estimate did not fit in the free memory"
     # at the margin (80% of the free memory) it stays in memory
     p2 = sp.plan(v, "auto", tmp_path, available=est / sp.AUTO_MEMORY_FRACTION + 1, free_disk=100 * GB)
     assert p2.mode == "memory"
@@ -205,6 +232,7 @@ def test_forced_memory_stops_only_when_it_will_not_fit(tmp_path):
     est = sp.estimate_memory_mib(50, 400) * sp.MIB
     ok = sp.plan(v, "memory", tmp_path, available=est + 1, free_disk=0)
     assert ok.mode == "memory" and ok.stop is None                         # no margin, no disk check
+    assert ok.metadata(50, 400)["Genotype table reason"] == "--geno-store memory: kept in memory as asked"
     bad = sp.plan(v, "memory", tmp_path, available=est - 1, free_disk=100 * GB)
     assert bad.stop and "would need about" in bad.stop and "--geno-store disk" in bad.stop
 
@@ -213,6 +241,7 @@ def test_forced_disk_and_its_stops(tmp_path):
     v = _gt_vcf(tmp_path)
     ok = sp.plan(v, "disk", tmp_path, available=1, free_disk=100 * GB)
     assert ok.mode == "disk" and ok.stop is None and "--geno-store disk" in ok.message
+    assert ok.metadata(50, 400)["Genotype table reason"] == "--geno-store disk: kept on disk as asked"
     knn = sp.plan(v, "disk", tmp_path, impute="ldknni", available=1, free_disk=100 * GB)
     assert "not available with --geno-store disk" in knn.stop
     knn_auto = sp.plan(v, "auto", tmp_path, impute="ldknni", available=1, free_disk=100 * GB)
@@ -232,6 +261,7 @@ def test_unreadable_vcf_leaves_the_message_to_the_reader(tmp_path):
     bad.write_bytes(b"\x1f\x8b not really gzip")
     p = sp.plan(bad, "auto", tmp_path, available=16 * GB, free_disk=100 * GB)
     assert p.mode == "memory" and p.stop is None
+    assert p.reason == "auto: the size of the VCF could not be read before the run"
 
 
 def test_stale_store_folders_are_named_not_deleted(tmp_path):
@@ -244,7 +274,9 @@ def test_stale_store_folders_are_named_not_deleted(tmp_path):
     assert old.exists()
 
 
-def test_compare_script_ignores_exactly_the_mode_keys():
+def test_compare_script_ignores_exactly_the_keys_that_name_the_mode():
+    """The three keys that differ between the modes; the estimate and the call count, which are
+    the same in both, are compared."""
     import importlib.util
     from pathlib import Path
 
@@ -252,4 +284,4 @@ def test_compare_script_ignores_exactly_the_mode_keys():
         "compare_result_zips", Path(__file__).resolve().parents[1] / "scripts" / "compare_result_zips.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert tuple(mod.MODE_KEYS) == sp.MODE_KEYS
+    assert tuple(mod.WHERE_KEYS) == sp.WHERE_KEYS == sp.MODE_KEYS[:3]

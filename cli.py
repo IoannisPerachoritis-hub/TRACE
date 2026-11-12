@@ -686,7 +686,6 @@ def run_pipeline(args):
     for _old_dir, _old_bytes in _sp.stale_store_folders(_store_base) if _store_base.exists() else []:
         log.warning("A genotype table folder of an earlier run that did not finish is still here: "
                     "%s (%.2f GB). Delete it to free the space.", _old_dir, _old_bytes / 1e9)
-    args._geno_store_meta = _plan.metadata()     # run_metadata.json only
 
     # ── Load data ────────────────────────────────────────
     from gwas.io import load_vcf_cached
@@ -745,6 +744,9 @@ def run_pipeline(args):
             _finish_geno_store(parsed, _store_dir, log)
         raise
     log.info("  %d samples, %d variants", len(parsed.samples), parsed.genotypes.shape[1])
+    # where the table was kept, for run_metadata.json only; from the genotypes as read, so two
+    # runs of the same analysis record the same (the free memory is in the plan's log line only)
+    args._geno_store_meta = _plan.metadata(len(parsed.samples), parsed.genotypes.shape[1])
 
     if parsed.info_field:
         log.info("  Imputation quality field detected: %s", parsed.info_field)
