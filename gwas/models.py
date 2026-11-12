@@ -448,7 +448,7 @@ def run_mlmm_research_grade_fast(
         chroms = np.asarray(chroms)[_alt_keep]
         chroms_num = np.asarray(chroms_num)[_alt_keep]
         positions = np.asarray(positions)[_alt_keep]
-        geno_std = geno_std[:, _alt_keep]
+        geno_std = geno_std.lazy_cols(_alt_keep) if _is_lazy(geno_std) else geno_std[:, _alt_keep]
 
     # ---------------------------
     # SnpData for FastLMM (cached builder)
@@ -645,6 +645,8 @@ def run_mlmm_research_grade_fast(
 def _build_mlmm_snpdata_impl(iid, sid, geno_std, pos_arr):
     """Build SnpData object for MLMM. Pure computation, no Streamlit."""
     from pysnptools.snpreader import SnpData
+    if _is_lazy(geno_std):
+        return geno_std.snp_reader(iid, sid, pos_arr)   # FaST-LMM reads its blocks from disk
     return SnpData(
         iid=iid,
         sid=sid,
@@ -669,6 +671,8 @@ def _standardize_genotypes_impl(geno_imputed: np.ndarray) -> np.ndarray:
     geno_imputed: (n_samples, n_snps) float32/float64
     Returns float32 standardized matrix with NaNs -> 0.
     """
+    if _is_lazy(geno_imputed):
+        return geno_imputed.standardized()     # the same values, block by block from disk
     G = np.asarray(geno_imputed, dtype=np.float32, order="C")
     mu = np.nanmean(G, axis=0)
     sd = np.nanstd(G, axis=0)
@@ -855,7 +859,10 @@ def _ols_scan_pvals_fast(G, y, covar_reader=None, chunk_size=2000):
 
     IMPORTANT: used only for stability/sensitivity screens.
     """
-    G = np.asarray(G, float)                    # (n, m)
+    if _is_lazy(G):
+        G = G.astype(float)                     # each chunk below is read from disk
+    else:
+        G = np.asarray(G, float)                    # (n, m)
     y = np.asarray(y, float).reshape(-1, 1)     # (n, 1)
     n, m = G.shape
 
@@ -1472,7 +1479,10 @@ def run_farmcpu(
     GRM is built at all).  The ``"mlm"`` option instead applies MLM with LOCO
     kinship: an opt-in alternative that trades power for lower FDR (D-102).
     """
-    geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
+    if _is_lazy(geno_imputed):
+        geno_imputed = geno_imputed.astype(np.float32).as_layout("C")   # stays on disk
+    else:
+        geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
     sid = np.asarray(sid, str)
     chroms = np.asarray(chroms, str)
     chroms_num = np.asarray(chroms_num, int)

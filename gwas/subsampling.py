@@ -5,6 +5,7 @@ from scipy import stats
 from scipy.stats import chi2
 from gwas.utils import PhenoData, CovarData
 from gwas.kinship import _build_grm_from_Z
+from gwas.genostore import is_lazy as _is_lazy   # the table kept on disk
 
 
 # ============================================================
@@ -68,10 +69,14 @@ def _subsample_one_rep(
             res_parts = []
             for ch in np.unique(chroms):
                 mask_ch = chroms == ch
-                snps_ch = SnpData(
-                    iid=iid_sub, sid=sid[mask_ch],
-                    val=G_sub[:, mask_ch], pos=pos_arr[mask_ch],
-                )
+                if _is_lazy(G_sub):   # FaST-LMM reads its blocks from disk
+                    snps_ch = G_sub.lazy_cols(mask_ch).as_layout("F").snp_reader(
+                        iid_sub, sid[mask_ch], pos_arr[mask_ch])
+                else:
+                    snps_ch = SnpData(
+                        iid=iid_sub, sid=sid[mask_ch],
+                        val=G_sub[:, mask_ch], pos=pos_arr[mask_ch],
+                    )
                 K_use = K_by_chr_sub.get(str(ch), K0_sub)
                 res_ch = single_snp(
                     test_snps=snps_ch, pheno=pheno_sub,
@@ -84,7 +89,10 @@ def _subsample_one_rep(
             # Global kinship (default)
             K_sub = _build_grm_from_Z(Z_sub)
             K0_sub = PSKernelData(iid=iid_sub, val=K_sub)
-            snp_data = SnpData(iid=iid_sub, sid=sid, val=G_sub, pos=pos_arr)
+            if _is_lazy(G_sub):   # FaST-LMM reads its blocks from disk
+                snp_data = G_sub.snp_reader(iid_sub, sid, pos_arr)
+            else:
+                snp_data = SnpData(iid=iid_sub, sid=sid, val=G_sub, pos=pos_arr)
             res = single_snp(
                 test_snps=snp_data,
                 pheno=pheno_sub,
@@ -249,7 +257,20 @@ def subsample_gwas_resampling(
     """
     rng = np.random.default_rng(int(seed))
 
-    geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
+    _rep_threads = None
+    if _is_lazy(geno_imputed):
+        # The table stays on disk and is read by this process only, so the replicates run
+        # one after another whatever n_jobs says. joblib gives each of its workers
+        # max(cpu_count // n_jobs, 1) BLAS threads, and a replicate's last bits depend on
+        # that thread count, so each replicate here runs under the same limit: the results
+        # are those of the parallel run.
+        geno_imputed = geno_imputed.astype(np.float32).as_layout("C")
+        if n_jobs != 1:
+            from joblib import cpu_count, effective_n_jobs
+            _rep_threads = max(cpu_count() // effective_n_jobs(n_jobs), 1)
+        n_jobs = 1
+    else:
+        geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
     y = np.asarray(y, dtype=np.float32).reshape(-1)
     sid = np.asarray(sid).astype(str)
     chroms = np.asarray(chroms).astype(str)
@@ -289,11 +310,20 @@ def subsample_gwas_resampling(
             if progress_callback is not None:
                 progress_callback(rep, int(n_reps))
 
-            rep_idx, pvals_rep, meta = _subsample_one_rep(
-                rep, all_indices[rep], geno_imputed, y, iid, Z_for_grm,
-                sid, pos_arr, n_pcs, discovery_thresh,
-                use_loco=use_loco, chroms_grm=chroms_grm, chroms=chroms,
-            )
+            if _rep_threads is not None:      # the BLAS thread count of a joblib worker
+                from threadpoolctl import threadpool_limits
+                with threadpool_limits(limits=_rep_threads):
+                    rep_idx, pvals_rep, meta = _subsample_one_rep(
+                        rep, all_indices[rep], geno_imputed, y, iid, Z_for_grm,
+                        sid, pos_arr, n_pcs, discovery_thresh,
+                        use_loco=use_loco, chroms_grm=chroms_grm, chroms=chroms,
+                    )
+            else:
+                rep_idx, pvals_rep, meta = _subsample_one_rep(
+                    rep, all_indices[rep], geno_imputed, y, iid, Z_for_grm,
+                    sid, pos_arr, n_pcs, discovery_thresh,
+                    use_loco=use_loco, chroms_grm=chroms_grm, chroms=chroms,
+                )
             raw_pvals[rep_idx, :] = pvals_rep
             if meta["status"] == "ok":
                 discovered = np.isfinite(pvals_rep) & (pvals_rep < float(discovery_thresh))

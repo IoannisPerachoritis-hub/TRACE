@@ -147,3 +147,136 @@ def test_dosage_sd_narrow_operands(tmp_path, width, rows):
         assert a.dtype == b.dtype and a.tobytes() == b.tobytes()
     finally:
         store.close()
+
+
+# ------------------------------------------------------------- MLMM, FarmCPU, subsampling
+@pytest.mark.parametrize("m", [1, 2, 3, 2001, 2002])
+@pytest.mark.parametrize("piece", ["1", "2", "7", "2000"])
+def test_streamed_standardisation_equals_todays(tmp_path, monkeypatch, m, piece):
+    """LazyColumns.standardized: the per-SNP mean and SD from C-ordered blocks (never one column
+    wide unless the table is) equal _standardize_genotypes_impl on the whole C-ordered table."""
+    from gwas.models import _standardize_genotypes_impl
+
+    monkeypatch.setenv("TRACE_STORE_PIECE", piece)
+    rng = np.random.default_rng(m)
+    n = 31
+    G = rng.integers(0, 3, size=(n, m)).astype(np.float32)
+    G[rng.random((n, m)) < 0.05] = np.nan
+    if m > 3:
+        G[:, 2] = 1.0                                   # a constant column: its SD is set to 1
+    fill = np.nan_to_num(np.nanmean(G.astype(np.float64), axis=0)).astype(np.float32)
+    imp = np.asfortranarray(np.where(np.isnan(G), fill, G).astype(np.float32))
+    store = write_store(tmp_path / "s", G)
+    try:
+        Z_disk = _standardize_genotypes_impl(LazyColumns(store, np.arange(m), fill=fill))
+        Z_today = _standardize_genotypes_impl(imp)
+        got = np.asarray(Z_disk)
+        assert got.dtype == Z_today.dtype and got.flags["C_CONTIGUOUS"] == Z_today.flags["C_CONTIGUOUS"]
+        assert got.tobytes() == Z_today.tobytes()
+        if m > 3:
+            for sel in ([0], [5, 1], list(range(m - 3, m))):
+                a, b = Z_disk[:, sel], Z_today[:, sel]
+                assert a.tobytes() == np.ascontiguousarray(b).tobytes()
+                assert a.flags["F_CONTIGUOUS"] == b.flags["F_CONTIGUOUS"]
+    finally:
+        store.close()
+
+
+def _models_case(tmp_path, m=2001, n=60, seed=1106):
+    """A panel whose post-QC SNP count leaves a one-column last chunk in the OLS scans
+    (m mod 2,000 = 1), the last SNP being the QTL (the scaling audit's k2001_last)."""
+    rng = np.random.default_rng(seed)
+    samples = [f"K{i:03d}" for i in range(n)]
+    lines = ["##fileformat=VCFv4.2", '##FORMAT=<ID=GT,Number=1,Type=String,Description="GT">',
+             "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(samples)]
+    G = np.zeros((n, m), dtype=int)
+    for j in range(m):
+        p = rng.uniform(0.2, 0.5)
+        G[:, j] = (rng.random(n) < p).astype(int) + (rng.random(n) < p).astype(int)
+    per = m // 4
+    for j in range(m):
+        ch = min(j // per, 3) + 1
+        gt = "\t".join(["0/0", "0/1", "1/1"][g] for g in G[:, j])
+        lines.append(f"chr{ch}\t{10_000 + 10_000 * (j - (ch - 1) * per)}\t.\tA\tT\t.\tPASS\t.\tGT\t{gt}")
+    (tmp_path / "m.vcf").write_text("\n".join(lines) + "\n")
+    y = 1.5 * G[:, -1] + rng.normal(0, 0.7, size=n)
+    pd.DataFrame({"T": y}, index=pd.Index(samples, name="id")).to_csv(tmp_path / "m_pheno.csv")
+    return tmp_path / "m.vcf", tmp_path / "m_pheno.csv"
+
+
+def _model_inputs(tmp_path, n_pcs):
+    from gwas.qc import _pipeline_build_kinship
+
+    vcf, pheno = _models_case(tmp_path)
+    a = _args(trait="T", maf=0.01)
+    mem = _memory(vcf, pheno, "T", a)
+    sto, st, parsed = _store(vcf, pheno, "T", a, tmp_path / "s")
+    im = _mlm_inputs(mem, _pipeline_build_kinship, n_pcs=n_pcs)
+    is_ = _mlm_inputs(sto, st.build_kinship, n_pcs=n_pcs)
+    assert sto["S08"]["sid"].size % 2000 == 1
+    return mem, sto, st, parsed, im, is_
+
+
+@pytest.mark.parametrize("n_pcs", [0, 2])
+def test_farmcpu_equal_in_memory(tmp_path, n_pcs):
+    from gwas.models import run_farmcpu
+
+    mem, sto, st, parsed, im, is_ = _model_inputs(tmp_path, n_pcs)
+    try:
+        def run(geno, i):
+            cov = CovarData(i["iid"], i["pcs"][:, :i["n_pcs"]]) if i["n_pcs"] else None
+            return run_farmcpu(geno, i["sid"], i["chroms"], i["chroms_num"], i["positions"], i["iid"],
+                               i["pheno_reader"], i["K0"], cov, final_scan="ols", verbose=False)
+        gm, qm, cm = run(mem["S09"]["imp"], im)
+        gs_, qs, cs = run(sto["S09"]["imp"], is_)
+        _frames_identical(gs_, gm)
+        _frames_identical(qs, qm)
+        assert cs == cm
+    finally:
+        parsed.store.close()
+
+
+def test_mlmm_equal_in_memory(tmp_path):
+    from gwas.models import run_mlmm_research_grade_fast
+
+    mem, sto, st, parsed, im, is_ = _model_inputs(tmp_path, 2)
+    try:
+        def run(geno, i):
+            return run_mlmm_research_grade_fast(geno, i["sid"], i["chroms"], i["chroms_num"], i["positions"],
+                                                i["iid"], i["pheno_reader"], i["K0"],
+                                                CovarData(i["iid"], i["pcs"][:, :2]), verbose=False)
+        gm, cm = run(mem["S09"]["imp"], im)
+        gs_, cs = run(sto["S09"]["imp"], is_)
+        _frames_identical(gs_, gm)
+        _frames_identical(cs, cm)
+    finally:
+        parsed.store.close()
+
+
+@pytest.mark.parametrize("n_jobs", [1, 3])
+def test_subsampling_on_disk_equals_todays_run(tmp_path, n_jobs):
+    """On disk the replicates run one after another, each under the BLAS thread count a joblib
+    worker of today's parallel run gets, so the results equal today's run with n_jobs."""
+    from gwas.qc import _pipeline_build_kinship
+    from gwas.subsampling import subsample_gwas_resampling
+
+    mem, sto, st, parsed, im, is_ = _model_inputs(tmp_path, 2)
+    try:
+        def kin(fn, out):
+            K, Z, chroms_grm, _p, _m = fn(out["S08"]["geno_df"], out["S09"]["imp"],
+                                          out["S08"]["chroms"], out["S08"]["positions"])
+            return Z, chroms_grm
+
+        def run(geno, i, Z, chroms_grm):
+            return subsample_gwas_resampling(
+                geno_imputed=geno, y=i["y"], sid=i["sid"], chroms=i["chroms"], chroms_num=i["chroms_num"],
+                positions=i["positions"], iid=i["iid"], Z_for_grm=Z, n_pcs=2, n_reps=3,
+                sample_frac=0.8, discovery_thresh=1e-4, seed=42, n_jobs=n_jobs, use_loco=True,
+                chroms_grm=chroms_grm)
+        dm, pm, mm = run(mem["S09"]["imp"], im, *kin(_pipeline_build_kinship, mem))
+        ds, ps, ms = run(sto["S09"]["imp"], is_, *kin(st.build_kinship, sto))
+        _frames_identical(ds, dm)
+        assert ps.tobytes() == pm.tobytes()
+        assert ms == mm
+    finally:
+        parsed.store.close()

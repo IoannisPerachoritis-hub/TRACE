@@ -148,6 +148,7 @@ class GenotypeStore:
         self.N, self.M = int(n_samples), int(n_variants)
         self.path = self.dir / "calls.i8"
         self._fh = open(self.path, "rb", buffering=0)
+        self._std_cache = {}
 
     def close(self):
         if self._fh is not None:
@@ -223,6 +224,7 @@ class LazyColumns:
             the raw table, whose missing calls are NaN
     dtype   the number format blocks come back in
     layout  "F" or "C": the layout today's array has where this object stands in
+    std     None, or the per-column (mean, SD) float32 of the standardised table (MLMM, FarmCPU)
     """
 
     ndim = 2
@@ -234,6 +236,35 @@ class LazyColumns:
         self.fill = fill
         self.dtype = np.dtype(dtype)
         self.layout = layout
+        self.std = None
+
+    def standardized(self, block=2000):
+        """gwas.models._standardize_genotypes_impl without the whole table. The per-SNP mean and
+        SD come from C-ordered float32 blocks of all rows: the layout and number format that
+        function reduces over, so each column's reduction runs in the same order. A block is
+        never one column wide unless the table is, because a one-column block is also
+        F-contiguous and numpy would reduce it in another order. Then every block read is
+        (G - mean) / SD with NaN and infinities set to 0, in float32."""
+        base = self._derive(dtype=np.dtype(np.float32), std=None)
+        m = base.shape[1]
+        # one pass per (rows, columns, fill): MLMM and FarmCPU standardise the same table
+        key = (id(self.cols), id(self.fill), id(self.rows))
+        hit = self.store._std_cache.get(key)
+        if hit is not None and hit[0] is self.cols and hit[1] is self.fill and hit[2] is self.rows:
+            mu, sd = hit[3], hit[4]
+        else:
+            mu = np.empty(m, dtype=np.float32)
+            sd = np.empty(m, dtype=np.float32)
+            step = piece(block)
+            for k in range(0, m, int(step)):
+                j = min(m, k + int(step))
+                a = k - 1 if (j - k == 1 and k > 0) else k
+                G = base.block(np.arange(a, j), layout="C")
+                mu[a:j] = np.nanmean(G, axis=0)
+                sd[a:j] = np.nanstd(G, axis=0)
+            sd[~np.isfinite(sd) | (sd == 0)] = 1.0
+            self.store._std_cache[key] = (self.cols, self.fill, self.rows, mu, sd)
+        return base._derive(std=(mu, sd), layout="C")
 
     # -- ndarray-like surface
     @property
@@ -267,7 +298,8 @@ class LazyColumns:
         """A lazy column subset (``sel``: index array, slice or boolean mask over this object's
         columns)."""
         sel = self._col_index(sel)
-        return self._derive(cols=self.cols[sel], fill=None if self.fill is None else self.fill[sel])
+        return self._derive(cols=self.cols[sel], fill=None if self.fill is None else self.fill[sel],
+                            std=None if self.std is None else (self.std[0][sel], self.std[1][sel]))
 
     def lazy_rows(self, sel):
         """A lazy row subset; like numpy's ``A[rows]``, its blocks are C-ordered (a slice keeps
@@ -314,6 +346,10 @@ class LazyColumns:
         elif miss.any():
             out[miss] = np.broadcast_to(self.fill[sel], out.shape)[miss]
         del g8, miss
+        if self.std is not None:
+            # (G - mean) / SD in float32, NaN and infinities -> 0 (_standardize_genotypes_impl)
+            out = (out - self.std[0][sel]) / self.std[1][sel]
+            out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
         if self.dtype != np.float32:
             out = out.astype(self.dtype)                    # keeps the F layout
         if (layout or self.layout) == "C":
@@ -406,7 +442,10 @@ def _make_reader(lazy, iid, sid, pos):
                   num_threads):
             dtype = np.dtype(dtype)
             if order == "A":
-                order = "F"
+                # as SnpData (pysnptools.util.sub_matrix): the order of the array it holds, F if
+                # that array is F-contiguous (an F table, or a single row or column), else C
+                n_, m_ = lazy.shape
+                order = "F" if (lazy.layout == "F" or n_ == 1 or m_ == 1) else "C"
             m = len(self._col)
             if col_index_or_none is None:
                 ci = np.arange(m)

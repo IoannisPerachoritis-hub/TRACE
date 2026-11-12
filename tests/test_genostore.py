@@ -273,3 +273,33 @@ def test_read_log_and_forbid(store, monkeypatch):
     with pytest.raises(MemoryError):
         L[:, :11]
     np.asarray(L)                                           # a whole read by design is logged, not limited
+
+
+@pytest.mark.parametrize("width", [1, 2, 7])
+@pytest.mark.parametrize("layout", ["F", "C"])
+def test_reader_order_any_follows_the_table_layout(store, layout, width):
+    """read(order='A'): SnpData answers in the order of the array it holds (F if that array is
+    F-contiguous, else C); the reader over a table on disk answers as SnpData over today's array
+    of the same layout."""
+    st, G = store
+    fill = _fill(G)
+    ref = _imputed(G, fill)[:, :width]
+    ref = np.asfortranarray(ref) if layout == "F" else np.ascontiguousarray(ref)
+    sd, iid, sid, pos = _snpdata(ref)
+    rd = LazyColumns(st, np.arange(width), fill=fill, layout=layout).snp_reader(iid, sid, pos)
+    for sel in (np.s_[:, :], np.s_[RIDX, :]):
+        for dtype in (np.float32, np.float64):
+            _same(rd[sel].read(order="A", dtype=dtype).val, sd[sel].read(order="A", dtype=dtype).val)
+
+
+def test_standardized_table_blocks_and_subsets(store):
+    """The standardised table keeps its (mean, SD) through column subsets."""
+    from gwas.models import _standardize_genotypes_impl
+
+    st, G = store
+    fill = _fill(G)
+    Z = _standardize_genotypes_impl(_imputed(G, fill))
+    S = LazyColumns(st, np.arange(M), fill=fill).standardized()
+    assert S.layout == "C" and S.std is not None
+    _same(S[:, IDX], Z[:, IDX])
+    _same(np.asarray(S.lazy_cols(MASK)), np.ascontiguousarray(Z[:, MASK]))
