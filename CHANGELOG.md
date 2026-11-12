@@ -18,6 +18,11 @@ All notable changes to TRACE are documented in this file.
   disk: `--impute ldknni`, and `--export-qc` above 100 million calls; the QC report is skipped
   with a warning at 16.8 million markers or more. See docs/large_datasets.md.
   `scripts/compare_result_zips.py` compares the results of two runs file by file.
+- **The thread and core counts are recorded.** `run_metadata.json` and the report's provenance
+  table list the linear-algebra library and its version, the number of threads it uses, the CPU
+  cores and `--boot-jobs` with the threads each subsampling worker gets. The last digits of
+  p-values depend on the thread count (by about 1 part in 10 million between 1 and 12 threads), so
+  results are byte-identical between runs at the same thread count; no default changes.
 
 ### Fixed
 - **M_eff could come out one too high because of rounding.** The Li & Ji M_eff is a whole number

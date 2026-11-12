@@ -26,6 +26,7 @@ import pandas as pd
 from gwas.genostore import as_columns as _as_columns, is_lazy as _is_lazy   # the table kept on disk
 from gwas import stagelog as _stagelog   # per-stage marks (TRACE_STAGE_LOG; off by default)
 from gwas import taps as _taps           # digests of intermediate objects (TRACE_TAPS; off by default)
+from gwas.provenance import thread_provenance as _thread_provenance
 
 log = logging.getLogger("cli")
 
@@ -1444,6 +1445,9 @@ def _run_trait(parsed, pheno, args):
         "PC diagnostics": (
             f"trace/m={_pc_diag['meta']['trace_over_m']}; see PC_diagnostics_spectrum.csv"
             if _pc_diag is not None else "n/a"),
+        # the machine facts that decide the last bits of the numbers (gwas/provenance.py):
+        # BLAS library and its threads, the cores, --boot-jobs
+        **_thread_provenance(args),
     }
 
     # GUI-only provenance (absent in the CLI, whose metadata stays as it was): the run

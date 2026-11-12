@@ -104,8 +104,11 @@ parallel run (each replicate uses the thread count a parallel worker would have)
 
 The results are byte-identical between the two modes at the same number of threads of the
 linear-algebra library (OpenBLAS or MKL). Between thread counts, the last digits of some p-values
-change (by about 1 part in 10 million; no significance call changed in our tests). To reproduce a
-run exactly, set the same thread count, for example `OPENBLAS_NUM_THREADS=4`.
+change (by about 1 part in 10 million; no significance call changed in our tests), and with
+`--boot-jobs` above 1 the subsampling results also depend on the number of CPU cores (each
+worker gets cores / workers threads). Every run records the library and its version, the thread
+count, the cores and `--boot-jobs` in `run_metadata.json` and in the report's provenance table.
+To reproduce a run exactly, set the same thread count, for example `OPENBLAS_NUM_THREADS=4`.
 
 ## Docker
 

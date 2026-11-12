@@ -55,7 +55,7 @@ drops the significant-SNP, unblocked-SNP and isolated-SNP tables and the SNP vie
 | `figures/QC_report_distributions.png` | the QC report's distributions | unless `--no-plots` |
 | `figures/Subsampling_discovery_freq_<trait>.png` | the subsampling discovery frequencies | `--subsampling`, unless `--no-plots` |
 | `report.html` | the self-contained HTML report | unless `--no-report` |
-| `run_metadata.json` | every setting of the run, for reproducibility | always |
+| `run_metadata.json` | every setting of the run, for reproducibility, with the linear-algebra library, its thread count and the CPU cores (the report's provenance table lists them too) and, from the CLI, where the genotype table was kept and why (docs/large_datasets.md) | always |
 | `<trait>/` | in a combined ZIP, one folder per trait holding that trait's files | several traits |
 | `failed_traits.txt` | in a combined ZIP, each trait's status and the error of any that failed | a trait failed |
 
