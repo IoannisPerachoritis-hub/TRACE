@@ -38,9 +38,13 @@ pytest tests/test_models.py -v
 
 # Run with coverage
 pytest tests/ --cov=gwas --cov-report=term-missing
+
+# Leave out the slow tests (full CLI runs with the genotype table in memory and on disk)
+pytest tests/ -v -m "not slow"
 ```
 
-All tests should pass before submitting a pull request.
+All tests should pass before submitting a pull request. CI runs the slow tests in a job of
+their own, with one BLAS thread (`pytest tests/ -m slow` with `OPENBLAS_NUM_THREADS=1`).
 
 ## Code Style
 

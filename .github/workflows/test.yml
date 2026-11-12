@@ -36,7 +36,8 @@ jobs:
         run: pip install ruff && ruff check .
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        # The slow tests (full CLI runs in both genotype-table modes) run in their own job below.
+        run: pytest tests/ -v --tb=short -m "not slow"
 
       - name: Packaged-data guard (build, install, resolve)
         # The gene models must still be reachable from an INSTALL, not just from
@@ -63,4 +64,35 @@ jobs:
         # novelty-module coverage (haplotype, ld, plotting) is a v1.1
         # target. The report is printed on every run so reviewers can
         # read the per-module breakdown.
-        run: pytest tests/ --cov=gwas --cov=utils --cov-report=term-missing --cov-fail-under=50
+        run: pytest tests/ -m "not slow" --cov=gwas --cov=utils --cov-report=term-missing --cov-fail-under=50
+
+  slow:
+    # The genotype table kept in memory and on disk give byte-identical results
+    # (tests/test_slow_store_equivalence.py): the scaling audit's cases whose inputs are in the
+    # repository, in both modes, read in pieces of 1, 64 and 997 SNPs, the FarmCPU last-chunk
+    # cases and parallel subsampling. Results are byte-identical only at a fixed thread count,
+    # so every run is pinned to one BLAS thread. Once, on one Python version.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      TRACE_SLOW_THREADS: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+          pip install pytest
+
+      - name: Memory and disk give the same results
+        run: pytest tests/ -m slow -v --tb=short -rs
