@@ -9,6 +9,7 @@ except ImportError:
     st = None
 from scipy import stats
 from gwas.utils import PhenoData, CovarData
+from gwas.genostore import is_lazy as _is_lazy   # the genotype table kept on disk
 
 _log = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ def dosage_sd(geno, block=4096):
     """Each SNP's (column's) dosage SD over the samples (rows), as FaST-LMM's single_snp
     standardises a test SNP: pysnptools' Unit standardiser, nanstd with ddof 0 in float64
     over the samples tested. 0 for a constant SNP."""
-    g = np.asarray(geno)
+    g = geno if _is_lazy(geno) else np.asarray(geno)   # a table on disk gives each block
     out = np.empty(g.shape[1], dtype=np.float64)
     for j in range(0, g.shape[1], block):
         out[j:j + block] = np.nanstd(np.asarray(g[:, j:j + block], dtype=np.float64), axis=0)
@@ -70,7 +71,11 @@ def _run_gwas_impl(
     user_covar_names=None,
 ):
     """Pure computation for LOCO GWAS. No Streamlit dependency."""
-    geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
+    _lazy = _is_lazy(geno_imputed)
+    if _lazy:
+        geno_imputed = geno_imputed.astype(np.float32)          # stays on disk
+    else:
+        geno_imputed = np.asarray(geno_imputed, dtype=np.float32, order="C")
     y = np.asarray(y, dtype=np.float32)
 
     sid = np.asarray(sid).astype(str)
@@ -163,7 +168,12 @@ def _run_gwas_impl(
         pos_ch = positions[mask_ch]
         ch_num = chrom_to_num.get(str(ch), int(chroms_num[mask_ch][0]))
 
-        geno_ch = geno_imputed[:, mask_ch]
+        if _lazy:
+            # this chromosome's columns stay on disk; A[:, mask] is F-ordered in numpy, so
+            # the blocks are F-ordered as geno_ch is
+            geno_ch = geno_imputed.lazy_cols(mask_ch).as_layout("F")
+        else:
+            geno_ch = geno_imputed[:, mask_ch]
 
         pos_arr_ch = np.c_[
             np.full(len(pos_ch), float(ch_num)),
@@ -171,12 +181,16 @@ def _run_gwas_impl(
             pos_ch.astype(float),
         ]
 
-        geno_reader = SnpData(
-            iid=iid_str,
-            sid=sid_ch,
-            val=geno_ch,
-            pos=pos_arr_ch,
-        )
+        if _lazy:
+            # FaST-LMM reads its own blocks of test SNPs through the reader
+            geno_reader = geno_ch.snp_reader(iid_str, sid_ch, pos_arr_ch)
+        else:
+            geno_reader = SnpData(
+                iid=iid_str,
+                sid=sid_ch,
+                val=geno_ch,
+                pos=pos_arr_ch,
+            )
 
         K_use = _K_by_chr.get(str(ch), None)
 
@@ -745,7 +759,10 @@ def add_ols_effects_to_gwas(gwas_df, geno_imputed, y, covar_reader, sid, chunk_s
 
     Chunked to avoid allocating an n×m residual matrix.
     """
-    G = np.asarray(geno_imputed, float)            # (n, m)
+    if _is_lazy(geno_imputed):
+        G = geno_imputed.astype(float)             # each chunk below is read from disk
+    else:
+        G = np.asarray(geno_imputed, float)            # (n, m)
     n, m = G.shape
     y = np.asarray(y, float).reshape(-1, 1)        # (n, 1)
 
