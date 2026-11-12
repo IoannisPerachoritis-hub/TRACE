@@ -232,7 +232,57 @@ def _build_parser():
     parser.add_argument("--interactive", action="store_true",
                          help="Interactive wizard: prompts for all options step by step")
 
+    # Large datasets: where the genotype table is kept
+    big_grp = parser.add_argument_group("Large datasets")
+    big_grp.add_argument("--geno-store", default="memory", choices=["memory", "disk"],
+                         help="Where the genotype table is kept. 'memory' (default): in memory. "
+                              "'disk': the VCF is read in pieces into a file of one byte per "
+                              "genotype call, and every step reads the table from that file in "
+                              "pieces. Results are the same either way; 'disk' needs far less "
+                              "memory for large datasets.")
+    big_grp.add_argument("--geno-store-dir", default=None,
+                         help="Folder in which a run with the table on disk makes its own new "
+                              "subfolder for the table file, removed when the run ends "
+                              "(default: the --output folder).")
+
     return parser
+
+
+def _new_geno_store_dir(args, output_dir):
+    """A new, empty folder for this run's genotype table: inside --geno-store-dir (created if
+    missing), else inside the output folder. The exclusive create of a uniquely named folder
+    proves that the folder can be written and keeps runs that share one folder apart."""
+    import uuid
+
+    base = Path(args.geno_store_dir) if getattr(args, "geno_store_dir", None) else output_dir
+    store_dir = base / f"_trace_geno_store_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        store_dir.mkdir(exist_ok=False)
+    except OSError as exc:
+        sys.exit(f"Error: cannot create a folder for the genotype table in {base} "
+                 f"({exc.strerror or exc}). Choose a folder you can write to with --geno-store-dir.")
+    return store_dir
+
+
+def _finish_geno_store(parsed, store_dir, log):
+    """Close and delete this run's genotype table (after the run or an early stop). With
+    TRACE_STORE_READLOG=<file> (a diagnostic) the store's read log is written there first."""
+    import json
+    import shutil
+
+    from gwas import genostore
+
+    _out = os.environ.get("TRACE_STORE_READLOG", "")
+    if _out and parsed is not None:
+        _rl = genostore.read_log()
+        _rl["ingest"] = dict(getattr(parsed, "ingest", {}))
+        _rl["shape"] = [int(parsed.store.N), int(parsed.store.M)]
+        Path(_out).write_text(json.dumps(_rl, indent=1, default=str))
+    if parsed is not None:
+        parsed.store.close()
+    shutil.rmtree(store_dir, ignore_errors=True)
+    log.info("  genotype table on disk removed: %s", store_dir)
 
 
 # ── Interactive wizard ──────────────────────────────────
@@ -525,16 +575,19 @@ def _run_traits(parsed, pheno, traits, args, output_dir, pheno_path, log):
 
     import matplotlib.pyplot as plt
 
+    from gwas import stagelog as _stagelog   # per-stage marks (TRACE_STAGE_LOG; off by default)
     from gwas.pipeline import failed_traits_report, run_traits
     from gwas.plotting import _combine_gwas_zips
 
     done, failed = {}, {}
 
     def _announce(i, trait):
+        _stagelog.mark(f"S04_trait_start:{trait}")
         log.info("-- Trait %d/%d: %s --", i, len(traits), trait)
 
     for trait, res, err in run_traits(parsed, pheno, traits, args, on_start=_announce):
         if res is not None:
+            _stagelog.mark("S41_zip_write")
             zip_path = output_dir / res.zip_name
             try:
                 zip_path.write_bytes(res.zip_bytes)
@@ -579,6 +632,8 @@ def run_pipeline(args):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     log = logging.getLogger("cli")
+    from gwas import stagelog as _stagelog   # per-stage marks (TRACE_STAGE_LOG; off by default)
+    _stagelog.mark("S00_startup")
 
     # ── Validate inputs ──────────────────────────────────
     # --norm is a slug (none/zscore/log/yeojohnson/int) passed straight to
@@ -616,45 +671,86 @@ def run_pipeline(args):
     # ── Load data ────────────────────────────────────────
     from gwas.io import load_vcf_cached
 
+    _stagelog.mark("S01_vcf_read")
     log.info("Loading VCF: %s", vcf_path)
-    vcf_bytes = vcf_path.read_bytes()
+    _on_disk = getattr(args, "geno_store", "memory") == "disk"
+    parsed = None
+    _store_dir = None
+    _deferred_stop = None
+    if _on_disk:
+        # The VCF is read in pieces into a file of one byte per call (gwas/genostore.py).
+        import shutil as _sh
 
-    # load_vcf_cached uses @st.cache_data decorator but works as regular function
-    # when Streamlit is not running (decorator becomes a no-op passthrough)
-    callset = load_vcf_cached(vcf_bytes)
+        from gwas.genostore import DeferredParseError, ingest_vcf
+        if getattr(args, "impute", "mean") == "ldknni":
+            sys.exit("Error: --impute ldknni ranks every SNP against all others and needs the whole "
+                     "genotype table in memory; it is not available with --geno-store disk.")
+        _store_dir = _new_geno_store_dir(args, output_dir)
+        try:
+            parsed = ingest_vcf(vcf_path, _store_dir, log=log)
+        except DeferredParseError as _e:
+            # a stop the in-memory path raises when it parses, after the phenotype checks below
+            _sh.rmtree(_store_dir, ignore_errors=True)
+            parsed, _deferred_stop = None, _e.original
+        except BaseException:
+            _sh.rmtree(_store_dir, ignore_errors=True)       # no partial table left behind
+            raise
+    else:
+        vcf_bytes = vcf_path.read_bytes()
 
-    log.info("Loading phenotype: %s", pheno_path)
-    sep = "\t" if pheno_path.suffix in (".tsv", ".txt") else ","
-    # encoding="utf-8-sig" strips BOM if present; default cp1252 on Windows
-    # would fail on UTF-8 files with non-ASCII trait names.
-    pheno = pd.read_csv(pheno_path, sep=sep, index_col=0, encoding="utf-8-sig")
+        # load_vcf_cached uses @st.cache_data decorator but works as regular function
+        # when Streamlit is not running (decorator becomes a no-op passthrough)
+        callset = load_vcf_cached(vcf_bytes)
 
-    for _t in traits:
-        if _t not in pheno.columns:
-            sys.exit(f"Error: Trait '{_t}' not found in phenotype columns: {list(pheno.columns)}")
+    try:   # a stop before the trait runs must not leave the table on disk behind
+        _stagelog.mark("S02_pheno_read")
+        log.info("Loading phenotype: %s", pheno_path)
+        sep = "\t" if pheno_path.suffix in (".tsv", ".txt") else ","
+        # encoding="utf-8-sig" strips BOM if present; default cp1252 on Windows
+        # would fail on UTF-8 files with non-ASCII trait names.
+        pheno = pd.read_csv(pheno_path, sep=sep, index_col=0, encoding="utf-8-sig")
 
-    # ── Pipeline stages ──────────────────────────────────
-    log.info("Parsing VCF (biallelic filter)…")
-    from gwas.pipeline import ParsedGenotypes, TraitPipelineError, run_trait_pipeline
-    parsed = ParsedGenotypes.from_callset(callset)
-    del callset, vcf_bytes
+        for _t in traits:
+            if _t not in pheno.columns:
+                sys.exit(f"Error: Trait '{_t}' not found in phenotype columns: {list(pheno.columns)}")
+
+        # ── Pipeline stages ──────────────────────────────────
+        _stagelog.mark("S03_parse")
+        log.info("Parsing VCF (biallelic filter)…")
+        from gwas.pipeline import ParsedGenotypes, TraitPipelineError, run_trait_pipeline
+        if not _on_disk:
+            parsed = ParsedGenotypes.from_callset(callset)
+            del callset, vcf_bytes
+        elif _deferred_stop is not None:
+            raise _deferred_stop
+    except BaseException:
+        if _on_disk and parsed is not None:
+            _finish_geno_store(parsed, _store_dir, log)
+        raise
     log.info("  %d samples, %d variants", len(parsed.samples), parsed.genotypes.shape[1])
 
     if parsed.info_field:
         log.info("  Imputation quality field detected: %s", parsed.info_field)
 
-    if len(traits) == 1:
-        try:
-            res = run_trait_pipeline(parsed, pheno, traits[0], args)
-        except TraitPipelineError as exc:
-            sys.exit(exc.exit_arg)
-        zip_path = output_dir / res.zip_name
-        zip_path.write_bytes(res.zip_bytes)
-        log.info("ZIP archive saved: %s", zip_path)
-        log.info("GWAS complete! All results in: %s", zip_path)
-        return res.context
+    try:
+        if len(traits) == 1:
+            try:
+                _stagelog.mark(f"S04_trait_start:{traits[0]}")
+                res = run_trait_pipeline(parsed, pheno, traits[0], args)
+            except TraitPipelineError as exc:
+                sys.exit(exc.exit_arg)
+            _stagelog.mark("S41_zip_write")
+            zip_path = output_dir / res.zip_name
+            zip_path.write_bytes(res.zip_bytes)
+            log.info("ZIP archive saved: %s", zip_path)
+            log.info("GWAS complete! All results in: %s", zip_path)
+            _stagelog.mark("S42_done")
+            return res.context
 
-    return _run_traits(parsed, pheno, traits, args, output_dir, pheno_path, log)
+        return _run_traits(parsed, pheno, traits, args, output_dir, pheno_path, log)
+    finally:
+        if _on_disk:
+            _finish_geno_store(parsed, _store_dir, log)
 
 
 def main():

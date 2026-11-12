@@ -25,6 +25,7 @@ import pandas as pd
 
 from gwas.genostore import as_columns as _as_columns, is_lazy as _is_lazy   # the table kept on disk
 from gwas import stagelog as _stagelog   # per-stage marks (TRACE_STAGE_LOG; off by default)
+from gwas import taps as _taps           # digests of intermediate objects (TRACE_TAPS; off by default)
 
 log = logging.getLogger("cli")
 
@@ -275,6 +276,8 @@ def _run_trait(parsed, pheno, args):
         parsed.genotypes, parsed.samples, parsed.chroms, parsed.positions)
     vid, ref, alt = parsed.vid, parsed.ref, parsed.alt
     info_scores, info_field = parsed.info_scores, parsed.info_field
+    if _taps.on() and getattr(args, "output", None):
+        _taps.start(Path(args.output).parent / f"taps_{args.trait}.json")
 
     _stagelog.mark("S05_ids")
     log.info("Harmonizing sample IDs…")
@@ -282,6 +285,8 @@ def _run_trait(parsed, pheno, args):
         _pipeline_harmonize_ids(genotypes, samples, chroms, positions,
                                 vid, ref, alt, pheno, info_scores)
     log.info("  %d overlapping samples, %d SNPs", geno_df.shape[0], _n_snps(geno_df, sid))
+    _taps.tap("S05_ids", sid=sid, samples=geno_df.index, chroms=chroms, positions=positions,
+              info_scores=info_scores, allele_map=allele_map)
 
     _stagelog.mark("S06_pheno_qc")
     log.info("Phenotype QC…")
@@ -289,6 +294,7 @@ def _run_trait(parsed, pheno, args):
         geno_df, pheno, args.trait, args.norm, args.ind_miss,
     )
     log.info("  %d samples after phenotype QC", geno_df.shape[0])
+    _taps.tap("S06_pheno_qc", samples=geno_df.index, y=y, pheno=pheno)
 
     # ── Optional user covariates: load + align to the phenotype-QC'd sample set,
     #    dropping samples that lack a covariate value BEFORE PCA/kinship so every
@@ -320,6 +326,7 @@ def _run_trait(parsed, pheno, args):
         log.info("  --covar: %d covariate(s) [%s] on %d samples",
                  covar_df_sel.shape[1], ", ".join(_cov_names), geno_df.shape[0])
 
+    _taps.tap("S07_covariates", samples=geno_df.index, y=y)
     _stagelog.mark("S08_snp_qc")
     log.info("SNP QC (MAF=%.3f, miss=%.2f, MAC=%d, INFO=%.2f)…",
              args.maf, args.miss, args.mac, args.info_thresh)
@@ -331,6 +338,8 @@ def _run_trait(parsed, pheno, args):
                          info_scores, args.info_thresh, canonical=canonical,
                          max_het=args.max_het, het_excess_p=args.het_excess_p)
     log.info("  QC: %s", qc_snp)
+    _taps.tap("S08_snp_qc", sid=sid, chroms=chroms, chroms_num=chroms_num, positions=positions,
+              n_raw=n_raw, qc_snp=dict(qc_snp), info_scores=info_scores, samples=geno_df.index)
 
     _stagelog.mark("S09_matrices")
     log.info("Building genotype matrices (impute=%s)…", args.impute)
@@ -338,12 +347,17 @@ def _run_trait(parsed, pheno, args):
         _pipeline_build_geno_matrices(geno_df, method=args.impute,
                                       impute_k=args.impute_k, impute_l=args.impute_l)
     qc_snp["Imputation method"] = args.impute
+    if _taps.on():
+        _taps.tap("S09_matrices", raw=_taps.table(geno_dosage_raw), imputed=_taps.table(geno_imputed),
+                  imputation_rate=snp_imputation_rate, iid=iid)
 
     _stagelog.mark("S10_kinship")
     log.info("Building kinship matrix…")
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
         _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions)
     log.info("  Kinship model: %s", kinship_model)
+    _taps.tap("S10_kinship", K=K, Z_for_pca=Z_for_pca, chroms_grm=chroms_grm,
+              positions_grm=positions_grm, kinship_model=kinship_model)
 
     # ── PCA ──────────────────────────────────────────────
     _stagelog.mark("S11_pca")
@@ -351,6 +365,7 @@ def _run_trait(parsed, pheno, args):
     pcs_full, pca_eigenvalues = _compute_pcs_full_impl(Z_for_pca, max_pcs=20)
     _max_avail = pcs_full.shape[1] if pcs_full is not None else 0
     n_pcs = min(args.n_pcs, _max_avail) if pcs_full is not None else 0
+    _taps.tap("S11_pca", pcs_full=pcs_full, pca_eigenvalues=pca_eigenvalues)
 
     from gwas.plotting import (
         compute_cumulative_positions, plot_manhattan_static, plot_qq, compute_lambda_gc,
@@ -360,6 +375,9 @@ def _run_trait(parsed, pheno, args):
     _stagelog.mark("S12_loco")
     from gwas.kinship import _build_loco_kernels_impl
     K0, K_by_chr, _ = _build_loco_kernels_impl(iid, Z_for_pca, chroms_grm, K)
+    if _taps.on():
+        _taps.tap("S12_loco", K0=np.asarray(K0.val),
+                  **{f"K_chr_{_c}": np.asarray(_k.val) for _c, _k in sorted(K_by_chr.items())})
 
     if getattr(args, "no_loco", False):
         K_by_chr = {ch: K0 for ch in K_by_chr}
@@ -421,7 +439,9 @@ def _run_trait(parsed, pheno, args):
             raise TraitPipelineError(
                 "--export-qc writes the whole genotype table as text and is not available "
                 "at this size with the genotype table on disk.")
-        _exp_imputed, _exp_raw = geno_imputed.materialize(), geno_dosage_raw.materialize()
+        _all = np.arange(geno_imputed.shape[1])           # a whole read by design (logged)
+        _exp_imputed = geno_imputed.block(_all, _whole=True)
+        _exp_raw = geno_dosage_raw.block(_all, _whole=True)
     if getattr(args, "export_qc", False):
         log.info("Preparing QC'd genotype export for benchmarking…")
         geno_export = pd.DataFrame(
@@ -501,6 +521,7 @@ def _run_trait(parsed, pheno, args):
         meff_thresh = 0.05 / _meff_val
         log.warning("M_eff computation failed; using naive Bonferroni")
 
+    _taps.tap("S16_meff", meff=int(_meff_val), meff_thresh=float(meff_thresh))
     bonf_thresh_naive = 0.05 / _n_snps(geno_df, sid)
 
     # Primary threshold based on user choice

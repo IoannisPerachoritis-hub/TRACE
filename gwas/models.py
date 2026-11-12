@@ -10,6 +10,7 @@ except ImportError:
 from scipy import stats
 from gwas.utils import PhenoData, CovarData
 from gwas.genostore import is_lazy as _is_lazy   # the genotype table kept on disk
+from gwas import taps as _taps                   # digests of intermediate objects (TRACE_TAPS; off by default)
 
 _log = logging.getLogger(__name__)
 
@@ -672,13 +673,18 @@ def _standardize_genotypes_impl(geno_imputed: np.ndarray) -> np.ndarray:
     Returns float32 standardized matrix with NaNs -> 0.
     """
     if _is_lazy(geno_imputed):
-        return geno_imputed.standardized()     # the same values, block by block from disk
+        _lz = geno_imputed.standardized()      # the same values, block by block from disk
+        if _taps.on():
+            _taps.tap("standardize", mu=_lz.std[0], sd=_lz.std[1], Z=_taps.table(_lz))
+        return _lz
     G = np.asarray(geno_imputed, dtype=np.float32, order="C")
     mu = np.nanmean(G, axis=0)
     sd = np.nanstd(G, axis=0)
     sd[~np.isfinite(sd) | (sd == 0)] = 1.0
     Z = (G - mu) / sd
     Z = np.nan_to_num(Z, nan=0.0, posinf=0.0, neginf=0.0)
+    if _taps.on():
+        _taps.tap("standardize", mu=mu, sd=sd, Z=_taps.table(Z.astype(np.float32, copy=False)))
     return Z.astype(np.float32, copy=False)
 
 

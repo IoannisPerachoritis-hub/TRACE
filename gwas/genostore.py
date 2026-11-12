@@ -549,7 +549,9 @@ def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_reco
     t0 = time.perf_counter()
     vcf_path = Path(vcf_path)
     store_dir = Path(store_dir)
-    store_dir.mkdir(parents=True, exist_ok=False)          # always a new folder
+    if store_dir.exists() and any(store_dir.iterdir()):   # a new folder, or one just made empty
+        raise FileExistsError(f"the folder for the genotype table is not empty: {store_dir}")
+    store_dir.mkdir(parents=True, exist_ok=True)
     with open(vcf_path, "rb") as fh:
         gz = fh.read(2) == b"\x1f\x8b"
     tmp_plain = None
@@ -601,7 +603,10 @@ def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_reco
                 chunk[info_keys[0]] = np.arange(n_rec, dtype=np.float64)
                 for k in info_keys[1:]:
                     chunk.pop(k, None)
-                G, smp, ch, ps, v_id, ref, alt, kept, _fld = _pipeline_parse_vcf_biallelic(chunk)
+                try:
+                    G, smp, ch, ps, v_id, ref, alt, kept, _fld = _pipeline_parse_vcf_biallelic(chunk)
+                except Exception as exc:          # in memory this stop comes after the phenotype checks
+                    raise DeferredParseError(exc) from exc
                 kept = np.asarray(kept).astype(np.int64) if kept is not None else np.arange(G.shape[1])
                 if samples is None:
                     samples = smp

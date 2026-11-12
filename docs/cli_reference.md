@@ -36,6 +36,8 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT [TRAIT ...]]
                   [--max-snp-plots MAX_SNP_PLOTS] [--collapse-r2 COLLAPSE_R2]
                   [--no-report] [--no-plots] [--export-qc]
                   [--n-chromosomes N_CHROMOSOMES] [-v] [--interactive]
+                  [--geno-store {memory,disk}]
+                  [--geno-store-dir GENO_STORE_DIR]
 
 TRACE: Trait Resolution and Candidate Evaluation (CLI)
 
@@ -209,6 +211,19 @@ LD & post-GWAS:
                         PLOTS ONLY: collapse near-redundant significant SNPs
                         (r2 >= this to a representative) before plotting; the
                         table is unaffected (default: 0.9).
+
+Large datasets:
+  --geno-store {memory,disk}
+                        Where the genotype table is kept. 'memory' (default):
+                        in memory. 'disk': the VCF is read in pieces into a
+                        file of one byte per genotype call, and every step
+                        reads the table from that file in pieces. Results are
+                        the same either way; 'disk' needs far less memory for
+                        large datasets.
+  --geno-store-dir GENO_STORE_DIR
+                        Folder in which a run with the table on disk makes its
+                        own new subfolder for the table file, removed when the
+                        run ends (default: the --output folder).
 
 Examples:
   python cli.py --vcf data.vcf.gz --pheno pheno.csv --trait Yield --output results/
