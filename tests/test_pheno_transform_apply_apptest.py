@@ -12,7 +12,8 @@ itself (cli.run_pipeline, and gwas.pipeline.run_trait_pipeline for the phenotype
 vector y): One-Click's ZIP for a trait equals the CLI's ZIP with the same options and
 that trait's --norm, member for member, apart from the run's provenance (the input
 file names and the "Pipeline" label in run_metadata.json and in the report's metadata
-block) and the report's "Generated" time. The detailed view's y equals the CLI's y.
+block, and the CLI's keys for where the genotype table was kept, in its run_metadata.json
+only) and the report's "Generated" time. The detailed view's y equals the CLI's y.
 gwas.pipeline.run_traits is wrapped only to record what One-Click passes; it runs the
 real analysis where a test needs the ZIPs.
 
@@ -49,6 +50,7 @@ import cli  # noqa: E402
 import gwas.pipeline as pl  # noqa: E402
 import gwas.reports as reports  # noqa: E402
 from gwas.io import load_vcf_cached  # noqa: E402
+from gwas.storeplan import MODE_KEYS  # noqa: E402
 from pages._pheno_qc.stats import (  # noqa: E402
     TRANSFORM_INT,
     TRANSFORM_LOG10,
@@ -269,8 +271,12 @@ def _assert_matches_cli(gui_zip, cli_zip):
         if name == "run_metadata.json":
             g, c = json.loads(data), json.loads(ref[name])
             assert g["Pipeline"] == "One-Click Full Analysis" and "Pipeline" not in c
-            assert ({k: v for k, v in g.items() if k not in _PROVENANCE}
-                    == {k: v for k, v in c.items() if k not in _PROVENANCE})
+            # where the CLI kept the genotype table: in the CLI's metadata only (the GUI's
+            # pages get the option in batch 13)
+            assert not set(MODE_KEYS) & set(g) and set(MODE_KEYS) <= set(c)
+            skip = set(_PROVENANCE) | set(MODE_KEYS)
+            assert ({k: v for k, v in g.items() if k not in skip}
+                    == {k: v for k, v in c.items() if k not in skip})
         elif name.endswith("report.html"):
             def _bare(html):
                 return _META_BLOCK.sub(b"", _GENERATED.sub(b"", html))
