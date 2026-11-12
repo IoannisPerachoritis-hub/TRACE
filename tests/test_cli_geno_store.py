@@ -6,6 +6,7 @@ the chunked read parses as it reads, so a stop it meets while parsing is raised 
 place the in-memory path raises it. Each run makes its own new folder for the table (inside
 --geno-store-dir, else --output) and removes only that folder, after the run and on any stop.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -114,8 +115,10 @@ def test_a_run_on_disk_equals_memory_and_leaves_nothing(tmp_path, monkeypatch):
     norm = _compare_script()._normalise
     differ = [k for k in mem if norm(k[1], mem[k]) != norm(k[1], disk[k])]
     assert differ == [], differ
-    assert sorted(p.name for p in (tmp_path / "out_disk").iterdir()) == sorted(
-        p.name for p in (tmp_path / "out_memory").iterdir())
+    # the same files, whose names differ only in the minute of the run (YYYYMMDD_HHMM)
+    def names(folder):
+        return sorted(re.sub(r"__\d{8}_\d{4}", "__<time>", p.name) for p in folder.iterdir())
+    assert names(tmp_path / "out_disk") == names(tmp_path / "out_memory")
 
 
 def test_store_folder_inside_a_folder_with_files(tmp_path, monkeypatch):
