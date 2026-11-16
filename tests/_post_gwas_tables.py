@@ -8,8 +8,8 @@ disk    gwas.genostore.ingest_vcf into a new folder, then gwas.storepipe.TraitSt
         phenotype QC, SNP QC, matrices). The SessionTable holds the view and raw LazyColumns,
         the trait's rows and the fill.
 
-Both give the same identity (gwas.guitable.table_identity with the page's settings): it names
-the table, not where it is kept.
+Both give the same identity (identity(): gwas.guitable.table_identity with the page's settings,
+not the page's own identity string): it names the table, not where it is kept.
 """
 import contextlib
 from dataclasses import dataclass, field
@@ -42,7 +42,12 @@ def read_pheno(path):
 
 
 def identity(vcf, pheno, trait, settings):
-    """The page's table identity for these settings (pages/GWAS_analysis.py, geno_table)."""
+    """A table identity for these settings, for the tests (gwas.guitable.table_identity): the
+    VCF's file identity, the phenotype table (gwas.utils.hash_df), the trait and the QC and
+    imputation settings. It is not the GWAS page's identity of the same table
+    (pages/GWAS_analysis.py, _table_id, from gwas.guigwas.trait_identity), which also names the
+    chromosome option (canonical) and the retained samples. The memory and disk tables of a
+    test share it, which is all the tests need."""
     from gwas.guitable import file_identity, table_identity
     from gwas.utils import hash_df
 
