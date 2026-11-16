@@ -22,7 +22,7 @@ from gwas.utils import (
     stable_seed, bump_data_version,
 )
 from gwas.io import load_vcf_cached, _clean_chr_series
-from gwas.qc import gwas_pipeline, allele_freq_from_called_dosage
+from gwas.pipeline import is_phenotype_qc_stop
 from gwas import guitable as _gt
 from gwas import guigwas as _gg
 from gwas import storeplan as _storeplan
@@ -1013,22 +1013,18 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     "the space.")
     if _geno_plan.stop:
         _rehydrate_or_stop(_gt.page_stop(_geno_plan, geno_work_dir))
-    if _geno_plan.mode == "disk":
-        _rehydrate_or_stop(
-            "The genotype table of this dataset is kept on disk (see the line above). The "
-            "page's analyses read it in pieces once the next change of this batch is in; "
-            "until then, keep it in memory under Large datasets, or run the CLI with "
-            "--geno-store auto.", level="info")
 
-    # --- Store heavy inputs in session_state under those keys ---
-    st.session_state[f"PHENO_DF::{pheno_hash}"] = pheno.copy()
     # the covariate table: the preprocessing drops its incomplete samples, as the CLI
-    _covar_hash = None
-    if covar_df is not None:
-        _covar_hash = hash_df(covar_df)
-        st.session_state[f"COVAR_DF::{_covar_hash}"] = covar_df
+    _covar_hash = hash_df(covar_df) if covar_df is not None else None
 
-    # --- Call cached preprocessing using hashes only ---
+    # --- The genotype table: the server's, in the plan's mode (gwas.guitable's registry) ---
+    # In memory the parsed genotypes (read-only, shared by the sessions); on disk a table file
+    # in the work folder, read in pieces. The same results either way.
+    with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
+                    else "Reading the VCF…"):
+        _parsed = _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+
+    # --- The preprocessing of one trait, kept in the session (one current entry) ---
     # The setup (and the detailed view below) uses the first selected trait that
     # passes phenotype QC. A trait that does not (e.g. a constant phenotype) no
     # longer stops the page: One-Click still runs every selected trait and reports
@@ -1036,35 +1032,27 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     results = None
     _setup_failed = {}
     for _setup_trait in selected_traits:
+        _prep_key = _gt.table_identity(
+            vcf_hash, mode=_geno_plan.mode, pheno=pheno_hash, trait=_setup_trait,
+            norm=_norm_for(_setup_trait), maf=maf_thresh, miss=miss_thresh,
+            ind_miss=ind_miss_thresh, mac=mac_thresh, info=info_thresh, drop_alt=int(drop_alt),
+            impute=impute_method, impute_k=impute_k, impute_l=impute_l, covar=_covar_hash,
+            canonical=None)
         try:
-            results = gwas_pipeline(
-                vcf_hash=vcf_hash,
-                pheno_hash=pheno_hash,
-                trait_col=_setup_trait,
-                maf_thresh=maf_thresh,
-                miss_thresh=miss_thresh,
-                norm_option=_norm_for(_setup_trait),
-                drop_alt=drop_alt,
-                ind_miss_thresh=ind_miss_thresh,
-                mac_thresh=mac_thresh,
-                info_thresh=info_thresh,
-                impute_method=impute_method,
-                impute_k=impute_k,
-                impute_l=impute_l,
-                covar_hash=_covar_hash,
-                _vcf_path=vcf_path,
-            )
+            results = _gg.preprocess(
+                st.session_state, _prep_key, _parsed, pheno.copy(), _setup_trait,
+                maf_thresh, miss_thresh, _norm_for(_setup_trait), drop_alt, ind_miss_thresh,
+                mac_thresh, info_thresh=info_thresh, impute_method=impute_method,
+                impute_k=impute_k, impute_l=impute_l, covar_df=covar_df, show=st.warning)
         except _CovariateDropError as _cov_err:
             # no sample keeps its covariate values: the same for every trait
             _rehydrate_or_stop(str(_cov_err))
         except ValueError as _setup_err:
-            # Skip only a phenotype-QC refusal, which is about this trait. Any other
-            # error (e.g. unrecognised chromosome names) would fail the same way for
-            # every trait, so raise it as before.
-            _tb = _setup_err.__traceback__
-            while _tb.tb_next is not None:
-                _tb = _tb.tb_next
-            if (_tb.tb_frame.f_code.co_name != "_pipeline_phenotype_qc"
+            # Skip only a phenotype-QC refusal, which is about this trait (raised in
+            # gwas.qc._pipeline_phenotype_qc, or in TraitStore.phenotype_qc with the table on
+            # disk). Any other error (e.g. unrecognised chromosome names) would fail the same
+            # way for every trait, so raise it as before.
+            if (not is_phenotype_qc_stop(_setup_err)
                     # the per-sample missingness cut-off removes the same samples
                     # whichever trait is chosen
                     or "All samples removed by missingness filter" in str(_setup_err)):
@@ -1274,7 +1262,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         # Headline: the QC outcome at a glance, so a user learns it without opening
         # anything. "0 excluded" is load-bearing -- the report-only diagnostics
         # (heterozygosity, relatedness) flag samples but never remove them.
-        _n_final = int(results["geno_df"].shape[1])
+        _n_final = _gg.n_snps(results)
         _n_alt = int(_qc.get("ALT chromosomes", 0))
         _n_flag_het = int((_qc_report or {}).get("sample_het", {}).get("n_flagged", 0))
         st.markdown(
@@ -1296,7 +1284,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 st.caption(f"{_n_alt:,} markers on unplaced/scaffold sequences excluded "
                            "(no valid genomic position).")
             _geno_imp = results["geno_imputed"]
-            _freq = _geno_imp.mean(axis=0) / 2.0
+            _freq = _gg.column_means(_geno_imp) / 2.0     # read in pieces on disk
             _maf_vals = np.minimum(_freq, 1.0 - _freq)
             _fig_maf = plot_maf_histogram(_maf_vals, maf_threshold=maf_thresh)
             show_plot(_fig_maf, "small", data=histogram_bins(_fig_maf), data_name="MAF_histogram")
@@ -1468,9 +1456,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     st.session_state["geno_table"] = _gt.SessionTable(
         identity=_table_id,
         file_identity=vcf_hash,
-        mode=_geno_plan.mode,
+        mode=results["mode"],
+        parsed=_parsed,
         view=st.session_state["geno_imputed"],
         raw=st.session_state.get("geno_dosage_raw"),
+        rows=results["rows"],
+        fill=results["fill"],
         sid=st.session_state["sid"],
         chroms=st.session_state["chroms"],
         positions=st.session_state["positions"],
@@ -2298,7 +2289,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         sig_rule=sig_rule,
         lambda_gc=lambda_gc if "lambda_gc" in locals() else np.nan,
         n_samples=int(geno_df.shape[0]),
-        n_snps=int(geno_df.shape[1]),
+        n_snps=_gg.n_snps(results),
         qc_snp=results.get("qc_snp", {}) if isinstance(results, dict) else {},
         pheno_zero_handling=st.session_state.get("pheno_zero_handling", {}),
         # this trait's applied transformation only ({} when it uses raw values)
@@ -2430,7 +2421,10 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 progress_placeholder = st.empty()
                 progress_bar = st.progress(0)
 
-                _use_parallel = int(boot_n_jobs) > 1
+                # in parallel only with the table in memory and when the workers' memory fits;
+                # else one iteration after another, with the same results (gwas.guigwas)
+                _boot_plan = _gg.subsampling_plan(geno_imputed, int(boot_n_jobs))
+                _use_parallel = _boot_plan[0] > 1
 
                 def _boot_progress(rep, total):
                     progress_bar.progress((rep + 1) / total)
@@ -2445,7 +2439,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     )
 
                 with st.spinner("Running subsampling GWAS resampling…"):
-                    boot_disc_df, boot_raw_pvals, boot_meta = subsample_gwas_resampling(
+                    boot_disc_df, boot_raw_pvals, boot_meta, boot_note = _gg.subsampling(
                         geno_imputed=geno_imputed,
                         y=y,
                         sid=sid,
@@ -2460,10 +2454,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         sample_frac=float(boot_sample_frac),
                         discovery_thresh=float(boot_disc_thresh),
                         seed=int(boot_seed),
-                        progress_callback=_boot_progress if not _use_parallel else None,
+                        progress_callback=_boot_progress,
                         n_jobs=int(boot_n_jobs),
                         use_loco=boot_use_loco,
                         chroms_grm=st.session_state.get("chroms_grm") if boot_use_loco else None,
+                        plan=_boot_plan,
                     )
 
                 progress_placeholder.success(
@@ -2475,12 +2470,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     "disc_df": boot_disc_df,
                     "raw_pvals": boot_raw_pvals,
                     "meta": boot_meta,
+                    "note": boot_note,
                 }
 
             else:
                 boot_disc_df = st.session_state[boot_cache_key]["disc_df"]
                 boot_raw_pvals = st.session_state[boot_cache_key]["raw_pvals"]
                 boot_meta = st.session_state[boot_cache_key]["meta"]
+            if st.session_state[boot_cache_key].get("note"):
+                st.info(st.session_state[boot_cache_key]["note"])
 
             # ---- Display results ----
 
@@ -3382,14 +3380,14 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         "MAC threshold": mac_thresh,
         "Missingness threshold": miss_thresh,
         "Samples used": int(geno_df.shape[0]),
-        "SNPs used": int(geno_df.shape[1]),
+        "SNPs used": _gg.n_snps(results),
         "PCs used": int(n_pcs),
         "LOCO enabled": use_loco,
         "λGC (final model)": round(lambda_gc, 3) if "lambda_gc" in locals() else None,
         "Kinship mean ± SD": f"{np.nanmean(K):.4f} ± {np.nanstd(K):.4f}",
         "QC steps": {
             "Initial SNPs": int(results["n_snps_raw"]),
-            "After QC SNPs": int(geno_df.shape[1]),
+            "After QC SNPs": _gg.n_snps(results),
             "Final samples": int(geno_df.shape[0]),
         },
     }
@@ -3429,7 +3427,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         farmcpu_df=cofactor_logs.get("FarmCPU") if "cofactor_logs" in locals() else None,
         lambda_gc=lambda_gc if "lambda_gc" in locals() else None,
         n_samples=int(geno_df.shape[0]),
-        n_snps=int(geno_df.shape[1]),
+        n_snps=_gg.n_snps(results),
         info_field=results.get("info_field"),
         sig_label=active_label,
         n_significant_override=_n_sig_for_report,

@@ -1,8 +1,10 @@
-"""Persistent imputation cache (P1) + raw-export contract (P3).
+"""The imputation of the GWAS page's preprocessing (P1) + raw-export contract (P3).
 
-The cache key is the RETAINED SAMPLE SET, not the trait -- imputation depends on
-which samples survived phenotype QC, so two traits with the same retained sample
-set share the cache and two with different sets must not.
+Until batch 13 the imputation was an st.cache_data entry (persist="disk") keyed on the RETAINED SAMPLE
+SET, not the trait. It is no longer cached: no table is kept in Streamlit's caches, and the page keeps
+one current preprocessing per session, keyed by every setting (gwas.guigwas.preprocess). These tests
+keep checking what the cache had to guarantee: the same matrix as a direct build, bit for bit, and
+never another sample set's matrix.
 """
 import numpy as np
 import pandas as pd
@@ -43,7 +45,6 @@ def test_sample_set_hash_same_and_differ():
 
 # ── cache correctness ───────────────────────────────────────────────────────
 def test_cache_output_equals_direct_build():
-    _impute_cached.clear()
     df = _df(24, 14, seed=1)
     cached = _call(df)
     direct = _pipeline_build_geno_matrices(df, method="mean")
@@ -51,7 +52,6 @@ def test_cache_output_equals_direct_build():
 
 
 def test_cached_mean_bit_identical_to_simpleimputer():
-    _impute_cached.clear()
     df = _df(24, 14, seed=4, missing=0.10)
     _raw, _rate, cached_imp, _iid = _call(df, "mean")
     direct = SimpleImputer(strategy="mean").fit_transform(df).astype("float32")
@@ -60,7 +60,6 @@ def test_cached_mean_bit_identical_to_simpleimputer():
 
 # ── the failure mode that matters: no cross-contamination ───────────────────
 def test_different_sample_set_is_not_served_the_wrong_matrix():
-    _impute_cached.clear()
     df166 = _df(166, 40, seed=2)
     df157 = df166.iloc[:157]                            # a genuinely different sample set
     assert _sshash(df166) != _sshash(df157)

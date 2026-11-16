@@ -338,8 +338,11 @@ def run_mlmm_core_cached(
 ):
     """The GWAS page's MLMM (run_mlmm_research_grade_fast), cached by ``table_key`` (the trait
     table's identity), the PC count of its covariates and its settings; the tables and readers are
-    underscore arguments, never hashed by Streamlit. The table goes over as a C-ordered float32
-    copy, as at ff56e5c."""
+    underscore arguments, never hashed by Streamlit.
+
+    The table: in memory a C-ordered float32 copy, as at ff56e5c; on disk the LazyColumns
+    themselves, as the CLI passes them, so run_mlmm_research_grade_fast's own lazy branch
+    standardises C-ordered float32 blocks, the operand the copy gives in memory."""
     if _pheno_reader is None:
         raise RuntimeError("MLMM needs the phenotype reader.")
     if _K0 is None:
@@ -348,7 +351,8 @@ def run_mlmm_core_cached(
         raise RuntimeError("MLMM needs the genotype table.")
 
     return run_mlmm_research_grade_fast(
-        geno_imputed=np.asarray(_geno_imputed, dtype=np.float32, order="C"),
+        geno_imputed=(_geno_imputed if _is_lazy(_geno_imputed)
+                      else np.asarray(_geno_imputed, dtype=np.float32, order="C")),
         sid=np.asarray(_sid).astype(str),
         chroms=np.asarray(_chroms).astype(str),
         chroms_num=np.asarray(_chroms_num).astype(int),
@@ -1916,13 +1920,17 @@ def run_farmcpu_cached(
     """The GWAS page's FarmCPU (run_farmcpu), cached by ``table_key`` (the trait table's identity),
     the PC count of its covariates and its settings; the tables and readers are underscore
     arguments, never hashed by Streamlit (at ff56e5c a different table under the same key strings
-    was served the first table's p-values). The table goes over as a C-ordered float32 copy, as at
-    ff56e5c."""
+    was served the first table's p-values).
+
+    The table: in memory a C-ordered float32 copy, as at ff56e5c; on disk the LazyColumns, as the
+    CLI passes them: run_farmcpu turns them into a C-layout view whose OLS chunks are strided
+    slices of that copy's layout, the last one included (gwas.genostore.LazyColumns.block)."""
     if _geno_imputed is None or _K0 is None or _pheno_reader is None:
         raise RuntimeError("FarmCPU needs the genotype table, the kinship matrix and the "
                            "phenotype reader.")
     return run_farmcpu(
-        geno_imputed=np.asarray(_geno_imputed, dtype=np.float32, order="C"),
+        geno_imputed=(_geno_imputed if _is_lazy(_geno_imputed)
+                      else np.asarray(_geno_imputed, dtype=np.float32, order="C")),
         sid=np.asarray(_sid).astype(str),
         chroms=np.asarray(_chroms).astype(str),
         chroms_num=np.asarray(_chroms_num).astype(int),

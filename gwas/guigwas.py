@@ -14,9 +14,21 @@ whose names start with an underscore, which Streamlit leaves out of the key)
     meff                M_eff (Li and Ji) by the CLI's function, gwas.plotting._compute_meff_li_ji_impl,
                         with its whole-number rule; kept in the session per identity
 
+The table, in memory or on disk (the same results either way)
+    table               the server's table of the VCF (gwas.guitable's registry): the parsed
+                        genotypes in memory, or the table file on disk
+    preprocess          the page's preprocessing of one trait (gwas.qc._gwas_pipeline_stages: on
+                        disk through gwas.storepipe.TraitStore, at the CLI's places), kept in the
+                        session: one current preprocessing per session, replaced when a setting
+                        changes; its warnings are shown again on every rerun
+    column_means        the imputed table's per-SNP means (the QC report's MAF histogram)
+    subsampling         the page's subsampling; in memory with several workers, the workers'
+                        memory is checked first
 """
 import numpy as np
 import pandas as pd
+
+from gwas.genostore import is_lazy
 
 try:
     import streamlit as st
@@ -108,3 +120,142 @@ def meff(state, table_key, geno_imputed):
     state[MEFF_KEY] = (table_key, out)
     return out
 
+
+# ------------------------------------------------------------------------------ the table
+def table(file_identity, mode, vcf_path, work_dir):
+    """The server's table of ``vcf_path`` in ``mode`` (gwas.guitable.get_registry): the parsed
+    genotypes (gwas.pipeline.ParsedGenotypes, read-only) in memory, or the table file
+    (gwas.genostore.StoreParsed) in a folder of the work folder on disk. Shared by the sessions
+    and never closed by a page: the registry owns it. A VCF the reader refuses raises the
+    in-memory reader's error, in both modes."""
+    from gwas import guitable
+    from gwas.genostore import DeferredParseError
+
+    try:
+        return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir)
+    except DeferredParseError as exc:          # on disk: the in-memory parse's own stop
+        raise exc.original from None
+
+
+# ---------------------------------------------------------------------- the preprocessing
+PREP_KEY = "_trace_gwas_prep"
+
+
+def preprocess(state, key, parsed, pheno, trait_col, maf_thresh, miss_thresh, norm_option,
+               drop_alt, ind_miss_thresh, mac_thresh, info_thresh=0.0, canonical=None,
+               impute_method="mean", impute_k=5, impute_l=20, covar_df=None, show=None):
+    """The page's preprocessing of ``trait_col`` on the server's table ``parsed``
+    (gwas.qc._gwas_pipeline_stages), kept in the session ``state`` under PREP_KEY: one entry,
+    the current one, reused while ``key`` (the inputs' identity and the mode) and the table
+    object are the same, replaced when either changes. No table is put in a Streamlit cache.
+
+    The warnings the preprocessing gives (_log_or_warn) are passed to ``show`` when they are
+    made and again on every reuse, as Streamlit's cache replayed them at ff56e5c. A trait that
+    fails (for example a phenotype-QC stop) raises, after its warnings, and is not kept."""
+    from gwas import qc
+
+    hit = state.get(PREP_KEY)
+    if hit is not None and hit[0] == key and hit[1]["parsed"] is parsed:
+        for msg in hit[1]["warnings"]:
+            if show is not None:
+                show(msg)
+        return hit[1]
+    messages = []
+    try:
+        with qc.collect_warnings(messages):
+            out = qc._gwas_pipeline_stages(
+                parsed, pheno, trait_col, maf_thresh, miss_thresh, norm_option, drop_alt,
+                ind_miss_thresh, mac_thresh, info_thresh=info_thresh, canonical=canonical,
+                impute_method=impute_method, impute_k=impute_k, impute_l=impute_l,
+                covar_df=covar_df)
+    finally:
+        if show is not None:
+            for msg in messages:
+                show(msg)
+    out["warnings"] = list(messages)
+    state[PREP_KEY] = (key, out)
+    return out
+
+
+def n_snps(results):
+    """The number of SNPs after QC: the genotype frame's columns in memory; on disk the frame
+    holds the sample rows only, so the SNPs are counted from their IDs (the same number)."""
+    return int(len(results["sid"]))
+
+
+def column_means(geno_imputed, piece=4096):
+    """``geno_imputed.mean(axis=0)`` of the page's float32 table (the QC report's MAF
+    histogram). On disk the table is read in F-ordered float32 blocks of columns: each column
+    is contiguous as in the whole F-ordered table, so numpy sums it in the same order."""
+    if not is_lazy(geno_imputed):
+        return geno_imputed.mean(axis=0)
+    from gwas.genostore import piece as _piece
+
+    m = geno_imputed.shape[1]
+    out = np.empty(m, dtype=np.float32)
+    step = _piece(piece)
+    for a in range(0, m, step):
+        b = min(m, a + step)
+        out[a:b] = geno_imputed.block(np.arange(a, b), layout="F").mean(axis=0)
+    return out
+
+
+# ----------------------------------------------------------------------------- subsampling
+def subsampling_workers_fit(n_samples, n_snps_, n_jobs, available=None):
+    """(fits, need_bytes, free_bytes): whether ``n_jobs`` subsampling workers fit in the free
+    memory. Each worker after the first is a process with its own share of the table:
+    gwas.storeplan.estimate_memory_mib with ``boot_jobs`` minus the same with one worker (300 MiB
+    and 12 bytes per genotype call each, batch 12's measurements). They fit when that is at most
+    storeplan.AUTO_MEMORY_FRACTION of the free memory, the rule --geno-store auto applies."""
+    from gwas import storeplan as sp
+
+    est = {j: sp.estimate_memory_mib(n_samples, n_snps_, subsampling=True, boot_jobs=j)
+           for j in (int(n_jobs), 1)}
+    need = max(0.0, est[int(n_jobs)] - est[1]) * sp.MIB
+    free = sp.available_memory_bytes() if available is None else int(available)
+    return need <= sp.AUTO_MEMORY_FRACTION * free, int(need), int(free)
+
+
+def subsampling_plan(geno_imputed, n_jobs, available=None):
+    """How the page's subsampling runs: (workers, note). ``workers`` above 1: in that many processes
+    (the table in memory, and the workers fit). 1: one replicate after another in this process, under
+    the thread limits a joblib worker of ``n_jobs`` starts with when ``n_jobs`` is above 1 (with the
+    table on disk always, inside subsample_gwas_resampling; in memory when the workers do not fit),
+    which gives the parallel run's numbers. ``note`` is None or the sentence the page shows."""
+    if int(n_jobs) <= 1 or is_lazy(geno_imputed):
+        return 1, None
+    n, m = geno_imputed.shape
+    fits, need, free = subsampling_workers_fit(n, m, int(n_jobs), available=available)
+    if fits:
+        return int(n_jobs), None
+    return 1, (f"The subsampling iterations run one after another instead of on {int(n_jobs)} cores: "
+               f"the {int(n_jobs)} workers would need about {need / 1e9:.1f} GB more memory, and "
+               f"{free / 1e9:.1f} GB are free. The results are the same.")
+
+
+def subsampling(geno_imputed, y, sid, chroms, chroms_num, positions, iid, Z_for_grm, pcs_full,
+                n_pcs, n_reps, sample_frac, discovery_thresh, seed, n_jobs, use_loco=False,
+                chroms_grm=None, progress_callback=None, available=None, plan=None):
+    """The page's subsampling (gwas.subsampling.subsample_gwas_resampling), run as
+    subsampling_plan says (or ``plan``, its result); returns (discovery_df, raw_pvals, rep_metadata,
+    note). The progress callback is used when the replicates run in this process."""
+    from gwas.subsampling import subsample_gwas_resampling
+
+    workers, note = plan if plan is not None else subsampling_plan(geno_imputed, n_jobs, available)
+    args = dict(geno_imputed=geno_imputed, y=y, sid=sid, chroms=chroms, chroms_num=chroms_num,
+                positions=positions, iid=iid, Z_for_grm=Z_for_grm, pcs_full=pcs_full, n_pcs=n_pcs,
+                n_reps=int(n_reps), sample_frac=float(sample_frac),
+                discovery_thresh=float(discovery_thresh), seed=int(seed), use_loco=use_loco,
+                chroms_grm=chroms_grm)
+    if workers > 1:
+        out = subsample_gwas_resampling(**args, n_jobs=int(n_jobs), progress_callback=None)
+    elif int(n_jobs) <= 1 or is_lazy(geno_imputed):
+        out = subsample_gwas_resampling(**args, n_jobs=int(n_jobs), progress_callback=progress_callback)
+    else:
+        from threadpoolctl import threadpool_limits
+
+        from gwas.provenance import worker_threadpool_limits
+
+        with threadpool_limits(limits=worker_threadpool_limits(int(n_jobs))):
+            out = subsample_gwas_resampling(**args, n_jobs=1, progress_callback=progress_callback)
+    return (*out, note)

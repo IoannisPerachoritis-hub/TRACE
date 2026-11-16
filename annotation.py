@@ -649,12 +649,18 @@ def compute_ld_decay_by_chromosome(
     Returns:
         decay_df : binned r2 vs distance per chromosome
         summary_df : per-chr decay distances (decay_kb_r2_{0.1,0.2}) + censored_r2_0.2
+
+    ``geno_imputed`` may be a table kept on disk (gwas.genostore.LazyColumns): then each
+    chromosome reads only the columns it uses (at most ``max_snps_per_chr``), as one float64
+    F-ordered block, the dtype and layout the in-memory selections give pairwise_r2.
     """
+    from gwas.genostore import is_lazy
     from gwas.ld import pairwise_r2
 
     chroms = np.asarray([canon_chr(c) for c in chroms], dtype=object)
     positions = np.asarray(positions, int)
-    geno = np.asarray(geno_imputed, float)
+    lazy = is_lazy(geno_imputed)
+    geno = geno_imputed.astype(float) if lazy else np.asarray(geno_imputed, float)
 
     all_bins = []
     summaries = []
@@ -666,16 +672,27 @@ def compute_ld_decay_by_chromosome(
             continue
 
         chr_pos = positions[idx]
-        chr_geno = geno[:, idx]
+        if lazy:
+            # on disk: the columns the in-memory selections below end with, read once
+            order = np.argsort(chr_pos)
+            chr_pos = chr_pos[order]
+            cols = idx[order]
+            if len(chr_pos) > max_snps_per_chr:
+                sub_idx = np.linspace(0, len(chr_pos) - 1, max_snps_per_chr, dtype=int)
+                chr_pos = chr_pos[sub_idx]
+                cols = cols[sub_idx]
+            chr_geno = geno.block(cols, layout="F")
+        else:
+            chr_geno = geno[:, idx]
 
-        order = np.argsort(chr_pos)
-        chr_pos = chr_pos[order]
-        chr_geno = chr_geno[:, order]
+            order = np.argsort(chr_pos)
+            chr_pos = chr_pos[order]
+            chr_geno = chr_geno[:, order]
 
-        if len(chr_pos) > max_snps_per_chr:
-            sub_idx = np.linspace(0, len(chr_pos) - 1, max_snps_per_chr, dtype=int)
-            chr_pos = chr_pos[sub_idx]
-            chr_geno = chr_geno[:, sub_idx]
+            if len(chr_pos) > max_snps_per_chr:
+                sub_idx = np.linspace(0, len(chr_pos) - 1, max_snps_per_chr, dtype=int)
+                chr_pos = chr_pos[sub_idx]
+                chr_geno = chr_geno[:, sub_idx]
 
         try:
             r2 = pairwise_r2(chr_geno, min_pair_n=min_pair_n)
