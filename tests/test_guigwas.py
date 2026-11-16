@@ -286,3 +286,46 @@ def test_workers_fit_rule():
     assert not guigwas.subsampling_workers_fit(1000, 100_000, 4, available=need)[0]
     assert guigwas.subsampling_workers_fit(1000, 100_000, 1, available=1)[0]    # one worker: nothing extra
 
+
+@pytest.mark.parametrize("choice", ["auto", "memory", "disk"])
+def test_one_click_records_where_the_table_is_kept_as_the_cli_does(tmp_path, choice):
+    """One-Click's table is the registry's, in the mode of its own plan, and run_metadata.json gets the
+    CLI's five keys for it (gwas.storeplan.Plan.metadata): the same values as a CLI run with
+    --geno-store <choice> on the same file and options, and the same results in both modes."""
+    import io
+    import json
+    import zipfile
+
+    import cli
+    from gwas import pipeline as pl
+    from gwas.storeplan import MODE_KEYS
+
+    vcf, ph = EX1
+    opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
+                                  run_label="One-Click Full Analysis")
+    reg = guitable.TableRegistry()
+    try:
+        import gwas.guitable as gt_mod
+        real = gt_mod.get_registry
+        gt_mod.get_registry = lambda: reg                       # this test's own registry
+        try:
+            parsed, meta, plan = guigwas.one_click_table(guitable.file_identity(vcf), str(vcf), choice,
+                                                         tmp_path / "work", opts)
+        finally:
+            gt_mod.get_registry = real
+        assert plan.mode == ("disk" if choice == "disk" else "memory")
+        assert getattr(parsed, "is_store", False) == (plan.mode == "disk")
+        assert set(meta) == set(MODE_KEYS)
+        opts._geno_store_meta = meta
+        [(trait, res, err)] = list(pl.run_traits(parsed, pd.read_csv(ph, index_col=0), ["Trait1"], opts))
+        assert err is None
+        gui_meta = json.loads(zipfile.ZipFile(io.BytesIO(res.zip_bytes)).read("run_metadata.json"))
+        out = tmp_path / "cli"
+        cli.run_pipeline(cli._build_parser().parse_args(
+            ["--vcf", str(vcf), "--pheno", str(ph), "--trait", "Trait1", "--no-plots", "--no-report",
+             "--geno-store", choice, "--output", str(out)]))
+        (z,) = sorted(out.glob("*.zip"))
+        cli_meta = json.loads(zipfile.ZipFile(z).read("run_metadata.json"))
+        assert {k: gui_meta[k] for k in MODE_KEYS} == {k: cli_meta[k] for k in MODE_KEYS}
+    finally:
+        reg.close_all()

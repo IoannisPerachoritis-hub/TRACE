@@ -259,3 +259,36 @@ def subsampling(geno_imputed, y, sid, chroms, chroms_num, positions, iid, Z_for_
         with threadpool_limits(limits=worker_threadpool_limits(int(n_jobs))):
             out = subsample_gwas_resampling(**args, n_jobs=1, progress_callback=progress_callback)
     return (*out, note)
+
+
+# ------------------------------------------------------------------------------- One-Click
+class PlanStop(Exception):
+    """gwas.storeplan stopped a run before reading (str(): the stop in the page's words)."""
+
+
+def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate=None):
+    """One-Click's table and its run_metadata.json keys: (parsed, meta, plan).
+
+    ``plan`` is gwas.storeplan.plan for One-Click's own options (its models, subsampling and its
+    workers, imputation), as cli.py plans a run; ``parsed`` the server's table in that plan's mode
+    (table(): the page's own table when the modes agree, as they do unless One-Click's options need
+    more memory than the detailed view's); ``meta`` the plan's metadata for the genotypes as read
+    (gwas.storeplan.Plan.metadata: the mode the table has, the CLI's estimate for these options and
+    the call count), which run_trait_pipeline adds to run_metadata.json as cli.py's run does.
+    ``estimate`` replaces the CLI's estimate for the choice only (the GUI's own rule); the metadata
+    always records the CLI's. Raises PlanStop for a stop. The table is the registry's: One-Click
+    never closes it."""
+    from gwas import guitable, storeplan
+
+    plan = storeplan.plan(vcf_path, choice=choice, store_base=work_dir,
+                          models=tuple(getattr(options, "model", None) or ("mlm",)),
+                          subsampling=bool(getattr(options, "subsampling", False)),
+                          boot_jobs=getattr(options, "boot_jobs", 1),
+                          export_qc=bool(getattr(options, "export_qc", False)),
+                          impute=getattr(options, "impute", "mean"), estimate=estimate)
+    if plan.stop:
+        raise PlanStop(guitable.page_stop(plan, work_dir))
+    parsed = table(file_identity, plan.mode, vcf_path, work_dir)
+    meta = plan.metadata(len(parsed.samples), parsed.genotypes.shape[1])
+    return parsed, meta, plan
+

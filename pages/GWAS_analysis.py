@@ -21,7 +21,7 @@ from gwas.utils import (
     put_array_in_session,
     stable_seed, bump_data_version,
 )
-from gwas.io import load_vcf_cached, _clean_chr_series
+from gwas.io import _clean_chr_series
 from gwas.pipeline import is_phenotype_qc_stop
 from gwas import guitable as _gt
 from gwas import guigwas as _gg
@@ -1726,15 +1726,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # samples: sample alignment, QC, imputation, kinship, PCs, models, LD
             # blocks, haplotype tests, figures, report and ZIP are all built from that
             # trait's data, and nothing is resolved from session keys (the reason
-            # 822610f had to refuse multi-trait runs). Only the parsed VCF and the gene
+            # 822610f had to refuse multi-trait runs). Only the genotype table and the gene
             # models are shared. A trait that fails is reported and the others run.
             import tempfile as _tempfile
             import time as _time_mod
 
-            from gwas.io import load_vcf_cached
-            from gwas.pipeline import (
-                ParsedGenotypes, cli_default_options, failed_traits_report, run_traits,
-            )
+            from gwas.pipeline import cli_default_options, failed_traits_report, run_traits
 
             def _fmt_secs(_s):
                 _s = max(0.0, float(_s))
@@ -1834,8 +1831,20 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 covar_frame=covar_df,  # samples without a value are dropped, as in the CLI
             )
 
-            with open(vcf_path, "rb") as _vcf_fh:      # read from its file, not the session
-                _parsed = ParsedGenotypes.from_callset(load_vcf_cached(_vcf_fh.read()))
+            # The genotype table: the server's (gwas.guitable's registry), in the mode One-Click's
+            # own plan chooses for its options (the detailed view's table when the modes agree),
+            # never parsed again and never closed here; on disk run_traits reads it in pieces, as
+            # the CLI's run does. Where it is kept, and the CLI's estimate for these options, go
+            # into run_metadata.json as in a CLI run (gwas.storeplan.Plan.metadata).
+            try:
+                _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
+                    vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts)
+            except _gg.PlanStop as _oc_stop:
+                _gm_tmp.cleanup()
+                st.error(str(_oc_stop))
+                st.stop()
+            if _oc_plan.mode != _geno_plan.mode:
+                st.caption("One-Click: " + _gt.page_message(_oc_plan))
             _n_total = len(selected_traits)
             _done, _failed, _elapsed = {}, {}, []
             _clock = {"t0": _time_mod.time(), "trait": ""}
@@ -1869,7 +1878,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         _elapsed.append(_time_mod.time() - _clock["t0"])
                     del _res
                 _gm_tmp.cleanup()
-                del _parsed
+                del _parsed      # the registry keeps the table (it is shared, never closed here)
                 if _failed:
                     _status.update(label=(f"Full analysis finished: {len(_failed)} of "
                                           f"{_n_total} traits failed"), state="error")
