@@ -1475,9 +1475,10 @@ def _render_block_visualization(
         store_df[trait_col], errors="coerce"
     ).astype(float)
 
-    st.session_state.setdefault("hap_tables_vis", {})
-    st.session_state["hap_tables_vis"][block_key] = store_df[
-        ["Sample", "Haplotype", "Allele_sequence", "Trait_adj"]].copy()
+    # the shown blocks' groups, for the most recent blocks only
+    guipost.keep_recent(st.session_state.setdefault("hap_tables_vis", {}), block_key,
+                        store_df[["Sample", "Haplotype", "Allele_sequence", "Trait_adj"]].copy(),
+                        guipost.RESULT_CACHE_MAX)
 
     hap_counts = mlg_df["MLG_label"].value_counts()
 

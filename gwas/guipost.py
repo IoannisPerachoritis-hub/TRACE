@@ -179,7 +179,7 @@ def sample_index(geno_df=None, geno_index=None, iid=None):
         return pd.Index(np.asarray(geno_index))
     if iid is not None:
         return pd.Index(np.asarray(iid)[:, 0])
-    raise ValueError("the trait's sample IDs are not in the session: run the GWAS page first")
+    raise ValueError("The trait's sample IDs are not in the session. Run the GWAS page first.")
 
 
 def post_table(session_table, keep_mask, geno_encoding="dosage012", samples=None):

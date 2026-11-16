@@ -364,6 +364,18 @@ def test_frame_key_reads_every_row():
     assert gp.frame_key(df) != gp.frame_key(df.rename(columns={"PValue": "P"}))
 
 
+def test_sample_index_sources():
+    """The genotype frame's index (the GWAS page's frame, or the store frame on disk), else
+    GWAS_CTX's geno_index, else the table's iid; none of them: a plain error for the page."""
+    idx = pd.Index(["a", "b"], dtype=object)
+    store_frame = pd.DataFrame({"__trace_store_row__": [0, 1]}, index=idx)
+    assert gp.sample_index(store_frame) is store_frame.index
+    assert list(gp.sample_index(None, np.array(["a", "b"], dtype=object))) == ["a", "b"]
+    assert list(gp.sample_index(None, None, np.array([["a", "a"], ["b", "b"]]))) == ["a", "b"]
+    with pytest.raises(ValueError, match="Run the GWAS page first"):
+        gp.sample_index(None, None, None)
+
+
 def test_bounded_caches():
     from collections import OrderedDict
 

@@ -234,10 +234,15 @@ def ld_analysis_page():
     # functions it is passed to read nothing else. On disk the GWAS page keeps the store
     # frame (the index and a row column) or None, so the IDs then come from GWAS_CTX or
     # the table.
-    geno_df = pd.DataFrame(index=_gp.sample_index(
-        st.session_state.get("geno_df"),
-        (st.session_state.get("GWAS_CTX") or {}).get("geno_index"),
-        geno_table.iid))
+    try:
+        _samples = _gp.sample_index(
+            st.session_state.get("geno_df"),
+            (st.session_state.get("GWAS_CTX") or {}).get("geno_index"),
+            geno_table.iid)
+    except ValueError as e:
+        st.error(str(e))
+        st.stop()
+    geno_df = pd.DataFrame(index=_samples)
     pcs = st.session_state.get("pcs", None)
     geno_encoding = st.session_state.get("geno_encoding", None)
 
