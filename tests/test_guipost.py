@@ -145,6 +145,35 @@ def test_array_columns_never_copy_the_table_whole(monkeypatch):
     _same(R[:, np.arange(3)], np.asarray(A, float)[:, np.arange(3)])
 
 
+def _caller_one(R):
+    return R[:, np.arange(3)]
+
+
+def _caller_two(R):
+    return R[:, np.arange(5)]
+
+
+def test_the_read_log_names_the_callers_in_memory_as_on_disk(tmp_path):
+    """The read log files each block under the site that asked for it. In memory it filed every
+    read under ArrayColumns.block (gwas/guipost.py), so its by-site view could not tell the
+    callers apart; now it names the same sites as on disk. Diagnostics only."""
+    from gwas.genostore import LazyColumns, write_store
+
+    G = _array("F", np.float32)
+    store = write_store(tmp_path / "s", G)
+    sites = {}
+    try:
+        for mode, R in (("memory", gp.ArrayColumns(G)), ("disk", LazyColumns(store, np.arange(M)))):
+            reset_read_log()
+            _caller_one(R)
+            _caller_two(R)
+            sites[mode] = set(read_log()["by_site"])
+    finally:
+        store.close()
+    assert {s.split(":")[2] for s in sites["memory"]} == {"_caller_one", "_caller_two"}, sites
+    assert sites["memory"] == sites["disk"]
+
+
 # ------------------------------------------------------------- memory and disk PostTables
 @pytest.fixture(scope="module")
 def example_v1(tmp_path_factory):

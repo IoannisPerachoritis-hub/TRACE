@@ -54,10 +54,22 @@ def _max_block_cells():
     return int(os.environ.get("TRACE_STORE_MAX_BLOCK_CELLS", "0") or 0)    # 0 = no limit
 
 
+_SKIP_CODES = set()        # functions of readers defined elsewhere (skip_in_call_site)
+
+
+def skip_in_call_site(*functions):
+    """Name the caller of these functions in the read log, not the functions themselves: for
+    the methods of a LazyColumns subclass defined in another module (gwas.guipost.ArrayColumns
+    reads an in-memory table), whose reads are logged like this module's own."""
+    _SKIP_CODES.update(f.__code__ for f in functions)
+
+
 def _call_site():
-    """file:line:function of the first frame outside this module (who asked for the block)."""
+    """file:line:function of the first frame outside this module and the readers registered
+    with skip_in_call_site (who asked for the block)."""
     f = sys._getframe(1)
-    while f is not None and os.path.normcase(os.path.abspath(f.f_code.co_filename)) == _HERE:
+    while f is not None and (os.path.normcase(os.path.abspath(f.f_code.co_filename)) == _HERE
+                             or f.f_code in _SKIP_CODES):
         f = f.f_back
     if f is None:
         return "?"

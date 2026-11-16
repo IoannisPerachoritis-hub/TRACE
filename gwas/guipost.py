@@ -54,7 +54,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from gwas.genostore import LazyColumns, _note_block, is_lazy
+from gwas.genostore import LazyColumns, _note_block, is_lazy, skip_in_call_site
 
 # ------------------------------------------------------------------- reading the table
 def _layout_of(a):
@@ -130,6 +130,10 @@ class ArrayColumns(LazyColumns):
             out[...] = w
         _note_block(out.shape, whole=_whole, table_cols=self.shape[1])
         return out
+
+
+# the read log names who asked for a block, as for a table on disk, not ArrayColumns itself
+skip_in_call_site(*(f for f in vars(ArrayColumns).values() if inspect.isfunction(f)))
 
 
 def reader(table, dtype=None, kind=None):
