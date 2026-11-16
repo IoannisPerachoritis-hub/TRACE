@@ -978,10 +978,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     pheno_hash = _pheno_raw_fp
 
     # --- Where the genotype table is kept: checked before anything is read ---
-    # (the VCF's size is read once per file identity, not on every rerun)
+    # (the VCF's size is read once per file identity, not on every rerun). The choice is made on
+    # the GUI's own estimate (gwas.guitable.gui_estimate_mib: an open session keeps more than a
+    # CLI run), which the message below shows; run_metadata.json keeps the CLI's.
     _geno_plan = _storeplan.plan(vcf_path, choice=geno_store_choice, store_base=geno_work_dir,
                                  models=("mlm", "mlmm", "farmcpu"), impute=impute_method,
-                                 size_of=_gt.vcf_size_of(vcf_hash))
+                                 estimate=_gt.gui_estimate_mib, size_of=_gt.vcf_size_of(vcf_hash))
     st.caption(_gt.page_message(_geno_plan))
     if geno_work_dir.exists():
         # table folders and saved uploads that an earlier run or server left (never this server's)
@@ -1832,11 +1834,13 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # The genotype table: the server's (gwas.guitable's registry), in the mode One-Click's
             # own plan chooses for its options (the detailed view's table when the modes agree),
             # never parsed again and never closed here; on disk run_traits reads it in pieces, as
-            # the CLI's run does. Where it is kept, and the CLI's estimate for these options, go
-            # into run_metadata.json as in a CLI run (gwas.storeplan.Plan.metadata).
+            # the CLI's run does. The mode is chosen on the GUI's estimate for these options
+            # (gwas.guitable.gui_estimate_mib); where it is kept, and the CLI's estimate, go into
+            # run_metadata.json as in a CLI run (gwas.storeplan.Plan.metadata).
             try:
                 _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
-                    vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts)
+                    vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts,
+                    estimate=_gt.gui_estimate_mib)
             except _gg.PlanStop as _oc_stop:
                 _gm_tmp.cleanup()
                 st.error(str(_oc_stop))

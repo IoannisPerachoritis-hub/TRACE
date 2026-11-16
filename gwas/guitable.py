@@ -273,6 +273,35 @@ def release_upload(uploaded):
     return True
 
 
+# ------------------------------------------------------------------ the GUI's memory estimate
+# An open GUI session keeps more than a CLI run (exclusive measurements of 16 Nov, batch 13: the
+# process tree's peak working set, every cache full, with SVG exports; tests/test_guitable.py
+# pins them). Added to the CLI's estimate (gwas.storeplan.estimate_memory_mib):
+GUI_FIXED_MIB = 600.0                  # Streamlit, the page's figures, downloads and session objects
+GUI_BYTES_PER_CALL = 8.0               # the session's tables beyond the CLI's
+GUI_BYTES_PER_SAMPLE_PAIR = 512.0      # the cached kinship (LOCO kernels) and PCs of up to 8 settings
+SVG_CHROME_MIB = 750.0                 # the headless Chrome kaleido starts for each SVG download ...
+SVG_BYTES_PER_SNP = 2.4 * 1024         # ... and the figure it draws, at most SVG_MAX_SNPS points
+SVG_MAX_SNPS = 500_000                 # the interactive Manhattan's limit (gwas.plotting)
+
+
+def gui_estimate_mib(n_samples, n_snps, models=("mlm",), subsampling=False, boot_jobs=1,
+                     export_qc=False, impute="mean"):
+    """The peak memory (MiB) of an in-memory run in the GUI: the CLI's estimate for the same
+    options, plus 600 MiB, 8 bytes per genotype call, 512 bytes per pair of samples, and 750 MiB
+    plus 2.4 KiB per SNP (at most 500,000) for an SVG download's Chrome. The page's check and
+    One-Click's plan choose by it (gwas.storeplan.plan(estimate=...)); run_metadata.json keeps the
+    CLI's estimate. Chrome is always counted: cautious on a server without it (HTML only)."""
+    from gwas import storeplan
+
+    n, m = float(n_samples), float(n_snps)
+    cli = storeplan.estimate_memory_mib(n_samples, n_snps, models=models, subsampling=subsampling,
+                                        boot_jobs=boot_jobs, export_qc=export_qc, impute=impute)
+    extra = (GUI_BYTES_PER_CALL * n * m + GUI_BYTES_PER_SAMPLE_PAIR * n * n
+             + SVG_BYTES_PER_SNP * min(m, float(SVG_MAX_SNPS)))
+    return cli + GUI_FIXED_MIB + SVG_CHROME_MIB + extra / storeplan.MIB
+
+
 # ------------------------------------------------------------- storeplan in the page's words
 def page_message(plan):
     """storeplan's log line in the page's words (no command-line flags)."""

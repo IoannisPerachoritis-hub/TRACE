@@ -150,6 +150,19 @@ an in-memory run needs, the free memory) and stops with a plain message when the
 work. The environment variable `TRACE_GENO_STORE` (`auto`, `memory` or `disk`) sets the default,
 so a server or a Docker image can force it.
 
+**The GUI's memory estimate.** An open GUI session holds more than a CLI run: Streamlit itself,
+the page's figures and downloads, the session's own tables, the kinship and PCs of the last
+settings, and, for each SVG download, a headless Chrome that kaleido starts. So the page's check
+and One-Click's add to the CLI's estimate 600 MiB, 8 bytes per genotype call, 512 bytes per pair
+of samples, and 750 MiB plus 2.4 KiB per SNP (up to 500,000 SNPs) for Chrome. The basis is the
+GUI's measured peak (the whole process tree, with every cache full, three models, subsampling
+and SVG exports), which lies at least 14% below this estimate: 1,493 MiB against 2,554 MiB for
+the first example, 2,633 against 3,078 for tomato (166 samples x 44,317 SNPs), and 4,445 against
+6,043 for 1,000 samples x 50,000 SNPs. Automatic chooses by this estimate and the page shows it;
+`run_metadata.json` records the CLI's, so the metadata is the same whichever program ran.
+Chrome is always counted, which is cautious on a server without Chrome (the page then offers
+HTML downloads only).
+
 **Work folder.** Saved uploads and tables kept on disk go into the work folder: the environment
 variable `TRACE_GENO_STORE_DIR`, else a folder `trace_gui` in the system's temporary folder. The
 same section can change it, and the check includes its free space. Each table file gets its own

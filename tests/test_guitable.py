@@ -379,3 +379,52 @@ def test_the_page_plan_counts_a_files_records_once(tmp_path, monkeypatch):
     for _ in range(3):                                                 # a bound, then an exact count
         sp.plan(plain_vcf, available=1, size_of=gt.vcf_size_of(gt.file_identity(plain_vcf)), **args)
     assert len(counted) == 1
+
+
+# --------------------------------------------------------------- the GUI's memory estimate
+# The exclusive measurements of 16 Nov (batch 13, track A evidence gui_peak_X_*.json; the lead's table):
+# the GUI's in-memory peak as the job runner's process-tree working set, 8 settings, every cache full,
+# MLM + MLMM + FarmCPU, subsampling with one worker, SVG exports through kaleido's Chrome.
+# (name, samples, SNPs read, CLI estimate MiB, measured peak MiB, GUI estimate MiB)
+GUI_PEAKS = [
+    ("example_v1", 50, 510, 1201.5, 1493, 2554),
+    ("example_v2", 100, 600, 1204.1, 1503, 2561),
+    ("tomato", 166, 44_317, 1554.2, 2633, 3078),
+    ("1000 x 20,000", 1000, 20_000, 2275.7, 2788, 4314),
+    ("1000 x 50,000", 1000, 50_000, 3706.3, 4445, 6043),
+]
+
+
+@pytest.mark.parametrize("name,n,m,cli,peak,gui", GUI_PEAKS)
+def test_the_gui_estimate_lies_above_every_measured_gui_peak(name, n, m, cli, peak, gui):
+    opts = dict(models=("mlm", "mlmm", "farmcpu"), subsampling=True, boot_jobs=1)
+    assert round(sp.estimate_memory_mib(n, m, **opts), 1) == cli, name
+    est = gt.gui_estimate_mib(n, m, **opts)
+    assert abs(est - gui) < 1, name                       # the table rounds to whole MiB
+    assert peak <= est / 1.14, name                       # batch 12's margin
+    # the rule's parts: the CLI's estimate, 600 MiB, 8 B per call, 512 B per sample pair, 750 MiB
+    # and 2.4 KiB per SNP up to 500,000 (SVG export)
+    assert est == pytest.approx(cli + 600 + (8 * n * m + 512 * n * n + 2.4 * 1024 * min(m, 500_000)) / 2**20
+                                + 750, abs=0.06)
+
+
+def test_the_page_chooses_by_the_gui_estimate_and_records_the_clis(tmp_path):
+    """Automatic keeps the table in memory when the GUI's estimate fits: with free memory between the
+    two estimates' thresholds the page's plan goes to disk where the CLI's would not, and the plan's
+    metadata (run_metadata.json) still records the CLI's estimate."""
+    v = _gt_vcf(tmp_path)
+    opts = dict(models=("mlm", "mlmm", "farmcpu"))
+    size = sp.vcf_size(v, exact=True)
+    cli = sp.estimate_memory_mib(size.n_samples, size.n_records, **opts) * sp.MIB
+    gui = gt.gui_estimate_mib(size.n_samples, size.n_records, **opts) * sp.MIB
+    assert gui > cli
+    between = (cli + gui) / 2 / sp.AUTO_MEMORY_FRACTION
+    p_cli = sp.plan(v, "auto", tmp_path, available=between, free_disk=100 * GB, **opts)
+    p_gui = sp.plan(v, "auto", tmp_path, available=between, free_disk=100 * GB, estimate=gt.gui_estimate_mib,
+                    **opts)
+    assert p_cli.mode == "memory" and p_gui.mode == "disk"
+    assert p_gui.estimate_mib * sp.MIB == pytest.approx(gui)          # the page's message shows it
+    assert p_gui.metadata(50, 400) == {**p_gui.metadata(50, 400),
+                                       "Memory estimate, in-memory run (GB)": round(cli / sp.GB, 2)}
+    page = (REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8")
+    assert page.count("estimate=_gt.gui_estimate_mib") == 2           # the page's plan and One-Click's
