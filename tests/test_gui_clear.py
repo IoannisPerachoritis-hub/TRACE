@@ -27,11 +27,29 @@ class _Upload(io.BytesIO):
 
 
 def _cache_entries():
-    """Every entry of every st.cache_data and st.cache_resource cache of this process."""
+    """Every entry of every st.cache_data and st.cache_resource cache of this process (Streamlit's
+    cache stats: use only when the st.cache_resource caches are empty, see _n_cache_entries)."""
     from streamlit.runtime.caching import cache_data_api, cache_resource_api
 
     return (cache_data_api.get_data_cache_stats_provider().get_stats()
             + cache_resource_api.get_resource_cache_stats_provider().get_stats())
+
+
+def _n_cache_entries():
+    """How many entries the st.cache_data and st.cache_resource caches of this process hold.
+
+    The st.cache_resource entries are counted, not sized: Streamlit's stats size every live value
+    with pympler, which raises on a NumPy array that does not own its data (the read-only PCs, for
+    one) when that is the first array it sizes in the process, and which array comes first depends
+    on the order in which earlier tests first called the cached functions. st.cache_data entries
+    are pickled bytes, so their stats are safe."""
+    from streamlit.runtime.caching import cache_data_api, cache_resource_api
+
+    caches = cache_resource_api._resource_caches
+    with caches._caches_lock:
+        function_caches = list(caches._function_caches.values())
+    return (len(cache_data_api.get_data_cache_stats_provider().get_stats())
+            + sum(len(cache._mem_cache) for cache in function_caches))
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +86,7 @@ def test_clear_frees_tables_uploads_cached_results_memo_files_and_session_keys(t
     G = rng.integers(0, 3, size=(30, 60)).astype(np.float32)
     guigwas.ld_decay("clear-test", G, np.repeat(np.array(["1", "2"]), 30), np.tile(np.arange(30) * 1000, 2))
     kinship.compute_pcs_full_cached("clear-test", G, max_pcs=2)
-    assert len(_cache_entries()) >= 3
+    assert _n_cache_entries() >= 3
     # the session: the GWAS page's keys, the Post-GWAS page's, and widget settings that stay
     page_keys = {"_persist_vcf_path": "x", "geno_imputed": 1, "geno_table": 1, guigwas.PREP_KEY: 1,
                  guigwas.MEFF_KEY: 1, "gwas_zip_pheno__T__MLM__n1": {}, "BOOT_GWAS::T::id": {},
@@ -81,7 +99,7 @@ def test_clear_frees_tables_uploads_cached_results_memo_files_and_session_keys(t
 
     out = guitable.clear_all(state, keys=guigwas.SESSION_KEYS, prefixes=guigwas.SESSION_PREFIXES)
 
-    assert _cache_entries() == []                                     # no cached result is left
+    assert _n_cache_entries() == 0 and _cache_entries() == []         # no cached result is left
     assert not any(f.exists() for f in folders)                       # the table files and folders
     with pytest.raises(ValueError, match="closed"):                   # ... closed first
         disk.store.gather([0])
