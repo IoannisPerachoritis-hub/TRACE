@@ -66,16 +66,16 @@ class TraitTables:
 
 @contextlib.contextmanager
 def _uncached():
-    """gwas.qc's Streamlit caches replaced by the functions they wrap, for the call."""
+    """gwas.qc's Streamlit cache of the VCF parse replaced by the function it wraps, for the
+    call (the imputation is not cached any more)."""
     from gwas import qc
 
-    saved = (qc.load_vcf_cached, qc._impute_cached)
-    qc.load_vcf_cached = getattr(saved[0], "__wrapped__", saved[0])
-    qc._impute_cached = getattr(saved[1], "__wrapped__", saved[1])
+    saved = qc.load_vcf_cached
+    qc.load_vcf_cached = getattr(saved, "__wrapped__", saved)
     try:
         yield qc
     finally:
-        qc.load_vcf_cached, qc._impute_cached = saved
+        qc.load_vcf_cached = saved
 
 
 def memory_tables(vcf, pheno, trait, **settings):
