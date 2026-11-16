@@ -89,18 +89,18 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
 def _render_haplotype_pca(
     block_assignments, geno_sample_ids,
     block_chr, block_start, block_end,
-    geno_view=None, table="",
+    geno_view=None, table="", pcs_full=None,
 ):
     """PC1 vs PC2 inset, one point per accession, coloured by its haplotype in the block:
     the label of the block's sample-to-haplotype assignments (the CSV's Haplotype).
     Samples the haplotype test left out are hollow, "not tested"; samples without a
-    haplotype keep the grey look, "no haplotype". Without the GWAS page's PCs it computes
-    two from ``geno_view`` (the GWAS page's imputed table; the session's geno_imputed when
-    not given), which needs the whole table: not done when the table is on disk. ``table``
-    names the table in the figure cache's key."""
+    haplotype keep the grey look, "no haplotype". ``pcs_full`` is the GWAS page's PCs of the
+    table (the page's context: gwas.guipost.run_pcs). Without them it computes two from
+    ``geno_view`` (the GWAS page's imputed table; the session's geno_imputed when not given),
+    which needs the whole table: not done when the table is on disk. ``table`` names the
+    table in the figure cache's key."""
     from gwas.genostore import is_lazy
 
-    pcs_full = st.session_state.get("pcs_full")
     eigenvalues = st.session_state.get("pca_eigenvalues")
 
     if pcs_full is None or pcs_full.shape[1] < 2:
@@ -757,16 +757,15 @@ def _render_haplotype_gwas(
     """Sub-section: the haplotype analysis (its parameters are in the Settings panel),
     execution, and visualization."""
     # ------------------------------------------------------------------
-    # Drift guard: do the genotypes on this page belong to the run on screen?
+    # Drift guard: do the genotypes and PCs on this page belong to the run on screen?
     # ------------------------------------------------------------------
     # `geno_row_ids` is written ONLY by a completed GWAS run (GWAS_analysis.py, the
     # `st.session_state["geno_row_ids"] = np.asarray(geno_df.index, dtype=str).tolist()`
-    # in the export block), while `geno_df` / `geno_imputed` are refreshed on EVERY
-    # rerun that reaches the `for key in [` results loop -- and `geno_row_ids` is not
-    # in that list. A disagreement therefore means the GWAS page rebuilt the genotype
-    # objects for a different trait without completing a run, so the blocks on screen
-    # and the genotypes no longer come from the same analysis. The previous run's
-    # matrix is gone (overwritten by that loop), so this cannot be repaired here.
+    # in the export block), while the table this page reads (geno_table, whose own
+    # samples are ctx.geno_df's index) is rebuilt on EVERY rerun of the GWAS page. A
+    # disagreement therefore means the GWAS page rebuilt the table for another sample set
+    # without completing a run, so the blocks on screen and the genotypes no longer come
+    # from the same analysis, which cannot be repaired here.
     # np.array_equal, NOT a size test: same-length/different-ids is the silently-wrong
     # case -- extract_block_geno_for_paper() checks the mask SIZE only, so such a mask
     # passes its guard and mis-pairs rows positionally.
@@ -789,6 +788,21 @@ def _render_haplotype_gwas(
         # st.stop() (NOT raise): StopException subclasses BaseException and is caught by
         # render()'s `except StopException`, so the tab ends cleanly instead of showing
         # a traceback.
+        st.stop()
+    # The PCs (the haplotype test, eta^2, the PCA panel) are the GWAS page's of this table:
+    # the page takes them from GWAS_CTX, written with the table (gwas.guipost.run_pcs), not
+    # from the session's "pcs" / "pcs_full", which a GWAS page run stopped before the table
+    # leaves beside it. PCs of other samples would pair rows wrongly, or fail the test with
+    # a traceback: the tab stops plainly instead, as above.
+    if not guipost.pcs_of_samples(st.session_state, _ids_now, ctx.pcs,
+                                  getattr(ctx, "pcs_full", None)):
+        _run_trait = (st.session_state.get("gwas_run_summary") or {}).get("trait") or ctx.ld_trait
+        st.error(
+            "The principal components on this page are not those of the genotype table's "
+            f"{_ids_now.size} samples, so haplotype statistics computed now would not match "
+            f"the analysis.\n\nRe-run the GWAS on `{_run_trait}`, then reopen Post-GWAS "
+            "Analysis."
+        )
         st.stop()
 
     trait_col = ctx.trait_col
@@ -1573,6 +1587,7 @@ def _render_block_visualization(
         block_end=block_end,
         geno_view=getattr(ctx, "geno_view", None),
         table=guipost.table_key(ctx),
+        pcs_full=getattr(ctx, "pcs_full", None),
     )
 
     # Store for expression panel selection
