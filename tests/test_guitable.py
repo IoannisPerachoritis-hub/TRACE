@@ -226,6 +226,96 @@ def test_get_registry_is_one_per_process():
     assert gt.get_registry() is gt.get_registry()
 
 
+@pytest.mark.parametrize("mode", ["disk", "memory"])
+def test_a_vcf_that_cannot_be_opened_closes_nothing(tmp_path, mode):
+    """The new table is built first and the oldest entry evicted only once it is open: a file
+    the reader refuses (no #CHROM line; storeplan.plan lets it through) leaves both tables open."""
+    bad = tmp_path / "bad.vcf"
+    bad.write_text("##fileformat=VCFv4.2\n1\t100\t.\tA\tT\t.\tPASS\t.\tGT\t0/0\n")
+    reg = gt.TableRegistry()
+    work = tmp_path / "work"
+    try:
+        a = reg.get("id-a", "disk", EX1, work)
+        b = reg.get("id-b", "disk", EX1, work)
+        with pytest.raises(Exception):
+            reg.get("id-bad", mode, bad, work)
+        assert reg.keys() == [("id-a", "disk"), ("id-b", "disk")]
+        assert not a.store.closed and not b.store.closed
+        a.store.gather([0])
+        assert len(reg.folders()) == 2 and all(f.exists() for f in reg.folders())
+    finally:
+        reg.close_all()
+
+
+def test_a_build_holds_neither_the_registry_nor_another_key(tmp_path, monkeypatch):
+    """While one session builds a table, another session's look-up of a table already there and
+    the folder listing return at once, and the folder being built is listed as this server's."""
+    import threading
+    import time
+
+    from gwas import genostore
+
+    reg = gt.TableRegistry()
+    work = tmp_path / "work"
+    ready = reg.get("id-held", "memory", EX1)
+    started, release = threading.Event(), threading.Event()
+    real_ingest = genostore.ingest_vcf
+
+    def slow_ingest(*a, **k):
+        started.set()
+        release.wait(30)
+        return real_ingest(*a, **k)
+
+    monkeypatch.setattr(genostore, "ingest_vcf", slow_ingest)
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("built", reg.get("id-new", "disk", EX1, work)))
+    t.start()
+    try:
+        assert started.wait(30)
+        t0 = time.perf_counter()
+        assert reg.get("id-held", "memory", EX1) is ready              # a look-up: no wait
+        building = reg.folders()                                       # the listing: no wait
+        assert time.perf_counter() - t0 < 1.0
+        assert len(building) == 1 and building[0].parent == work and building[0].exists()
+    finally:
+        release.set()
+        t.join(60)
+    assert reg.keys() == [("id-held", "memory"), ("id-new", "disk")]
+    assert reg.folders() == building
+    reg.close_all()
+
+
+def test_one_build_per_table_when_sessions_ask_together(tmp_path, monkeypatch):
+    import threading
+
+    from gwas import genostore
+
+    reg = gt.TableRegistry()
+    calls = []
+    real_ingest = genostore.ingest_vcf
+    gate = threading.Event()
+
+    def counted_ingest(*a, **k):
+        calls.append(1)
+        gate.wait(30)
+        return real_ingest(*a, **k)
+
+    monkeypatch.setattr(genostore, "ingest_vcf", counted_ingest)
+    got = []
+    ts = [threading.Thread(target=lambda: got.append(reg.get("id-x", "disk", EX1, tmp_path / "w")))
+          for _ in range(3)]
+    for t in ts:
+        t.start()
+    gate.set()
+    for t in ts:
+        t.join(60)
+    try:
+        assert len(calls) == 1 and len(got) == 3 and got[0] is got[1] is got[2]
+        assert len(reg.folders()) == 1
+    finally:
+        reg.close_all()
+
+
 # ----------------------------------------------------------- shared kinship arrays
 def test_shared_kinship_and_pcs_are_read_only():
     from gwas import kinship

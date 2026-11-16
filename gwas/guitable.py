@@ -150,6 +150,13 @@ def file_identity(path):
     return identity
 
 
+def forget_file_identities():
+    """Empty the file identities this server remembers (Clear): a file rewritten in place with
+    the same size and modification time is then hashed again when next used."""
+    with _ID_LOCK:
+        _ID_CACHE.clear()
+
+
 # ---------------------------------------------------------------------------- saved uploads
 _SAVED_UPLOADS = set()                     # folders of uploads this server saved
 _SAVED_LOCK = threading.Lock()
@@ -255,17 +262,31 @@ class TableRegistry:
     disk    a table file built by gwas.genostore.ingest_vcf in its own new folder in the work
             folder (``_trace_geno_store_gui_<pid>_<random>``)
 
-    The least recently used entry is evicted when a new one is needed: a disk entry's table is
-    closed and its folder deleted. ``close_all`` (Clear, and the server's normal stop) drops
-    everything. Nothing here is ever pickled."""
+    A new table is built first; only once it is open is the least recently used entry evicted
+    (a disk entry's table is closed and its folder deleted), so a VCF that cannot be read
+    closes nothing. A table is built outside the registry's lock, one build per key at a time:
+    other sessions' look-ups, other builds and the folder listing do not wait for it.
+    ``close_all`` (Clear, and the server's normal stop) drops everything.
+
+    The limit counts the registry's own entries. An evicted in-memory table is not closed (it
+    cannot be): it stays in memory while a session still holds it, until that session's next
+    run takes the registry's table. Nothing here is ever pickled."""
 
     MAX_ENTRIES = 2
 
     def __init__(self, max_entries=MAX_ENTRIES):
         self.max_entries = int(max_entries)
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()       # the entries; never held while a table is built
         self._entries = OrderedDict()
+        self._builds = {}                    # key -> the lock its build holds
+        self._building_dirs = set()          # folders of disk tables being built
         atexit.register(self.close_all)
+
+    def _hit(self, key):
+        entry = self._entries.get(key)
+        if entry is not None:
+            self._entries.move_to_end(key)
+        return entry
 
     def get(self, identity, mode, vcf_path, work_dir=None, log=None):
         """The table of ``vcf_path`` in ``mode`` ("memory" or "disk"), built if needed."""
@@ -273,19 +294,33 @@ class TableRegistry:
             raise ValueError(f"unknown table mode {mode!r}")
         key = (str(identity), mode)
         with self._lock:
-            entry = self._entries.get(key)
+            entry = self._hit(key)
             if entry is not None:
-                self._entries.move_to_end(key)
                 return entry["parsed"]
-            while len(self._entries) >= self.max_entries:
-                _, old = self._entries.popitem(last=False)
-                self._release(old)
-            entry = self._open(mode, vcf_path, work_dir, log)
-            self._entries[key] = entry
-            return entry["parsed"]
+            build = self._builds.setdefault(key, threading.Lock())
+        evicted = []
+        with build:                                   # one build per key
+            try:
+                with self._lock:
+                    entry = self._hit(key)            # built meanwhile by another session
+                    if entry is not None:
+                        return entry["parsed"]
+                entry = self._open(mode, vcf_path, work_dir, log)      # a failure evicts nothing
+                with self._lock:
+                    self._entries[key] = entry
+                    self._entries.move_to_end(key)
+                    self._building_dirs.discard(entry.get("dir"))
+                    while len(self._entries) > self.max_entries:
+                        evicted.append(self._entries.popitem(last=False)[1])
+            finally:
+                with self._lock:
+                    if self._builds.get(key) is build:
+                        del self._builds[key]
+        for old in evicted:
+            self._release(old)
+        return entry["parsed"]
 
-    @staticmethod
-    def _open(mode, vcf_path, work_dir, log):
+    def _open(self, mode, vcf_path, work_dir, log):
         if mode == "memory":
             from gwas.io import load_vcf_cached
             from gwas.pipeline import ParsedGenotypes
@@ -297,10 +332,14 @@ class TableRegistry:
 
         store_dir = genostore.new_store_dir(work_dir if work_dir is not None else default_work_dir(),
                                             prefix=GUI_STORE_PREFIX)
+        with self._lock:
+            self._building_dirs.add(store_dir)        # this server's folder while it is built
         try:
             parsed = genostore.ingest_vcf(vcf_path, store_dir, log=log)
         except BaseException:
             genostore.remove_store(store_dir)
+            with self._lock:
+                self._building_dirs.discard(store_dir)
             raise
         return {"parsed": parsed, "dir": store_dir}
 
@@ -316,15 +355,18 @@ class TableRegistry:
             return list(self._entries)
 
     def folders(self):
+        """The folders of this registry's disk tables, those being built included."""
         with self._lock:
-            return [e["dir"] for e in self._entries.values() if e.get("dir") is not None]
+            return ([e["dir"] for e in self._entries.values() if e.get("dir") is not None]
+                    + sorted(self._building_dirs))
 
     def drop(self, identity=None, mode=None):
         """Drop (and close) the entries of ``identity`` and/or ``mode``; all of them by default."""
         with self._lock:
-            for key in [k for k in self._entries
-                        if (identity is None or k[0] == str(identity)) and (mode is None or k[1] == mode)]:
-                self._release(self._entries.pop(key))
+            gone = [self._entries.pop(k) for k in list(self._entries)
+                    if (identity is None or k[0] == str(identity)) and (mode is None or k[1] == mode)]
+        for entry in gone:
+            self._release(entry)
 
     def close_all(self):
         self.drop()
@@ -409,12 +451,15 @@ def remove_trace_memo_files(folder=None):
 def clear_cached_results():
     """Empty every st.cache_data and st.cache_resource cache of this server (all of them are
     TRACE's), each function's cache on its own: st.cache_data.clear() would, on a running server,
-    delete Streamlit's whole cache folder, other apps' files too."""
+    delete Streamlit's whole cache folder, other apps' files too. The server's table registry
+    (get_registry) is kept: clear_all empties it, and every session goes on using the one
+    registry, so a table built while Clear runs is kept in it and no old registry is left."""
     from streamlit.runtime.caching import cache_data_api, cache_resource_api
 
+    keep = {getattr(get_registry, "_function_key", None)} - {None}
     for caches in (cache_data_api._data_caches, cache_resource_api._resource_caches):
         with caches._caches_lock:
-            function_caches = list(caches._function_caches.values())
+            function_caches = [c for k, c in caches._function_caches.items() if k not in keep]
         for cache in function_caches:
             cache.clear()
 
@@ -433,16 +478,20 @@ def session_keys_to_clear(keys=(), prefixes=()):
 def clear_all(state=None, keys=(), prefixes=(), memo_folder=None):
     """The GWAS page's "Clear session data", in this order:
     1. this server's tables (the registry: in memory, and the table files with their folders on
-       disk) are closed and deleted, and the uploads it saved are deleted;
-    2. every cached result (st.cache_data and st.cache_resource) is emptied;
+       disk) are closed and deleted, and the uploads it saved are deleted; the registry itself
+       stays, empty (a table another session builds meanwhile is kept in it);
+    2. every cached result (st.cache_data and st.cache_resource) is emptied, and the file
+       identities this server remembers (a file is hashed again when next used);
     3. TRACE's .memo files are removed from Streamlit's cache folder;
     4. the session's keys (``keys``, ``prefixes`` and the Post-GWAS page's) are dropped from
        ``state``.
     Returns a summary dict (for the page's message and the tests)."""
-    folders = [str(f) for f in get_registry().folders()] + [str(f) for f in saved_upload_folders()]
-    get_registry().close_all()
+    registry = get_registry()
+    folders = [str(f) for f in registry.folders()] + [str(f) for f in saved_upload_folders()]
+    registry.close_all()
     remove_saved_uploads()
     clear_cached_results()
+    forget_file_identities()
     n_memo, memo_bytes = remove_trace_memo_files(memo_folder)
     dropped = []
     if state is not None:
