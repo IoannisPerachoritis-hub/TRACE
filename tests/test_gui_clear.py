@@ -119,7 +119,7 @@ def test_no_trace_cache_persists_to_disk_any_more():
 
     from gwas import qc
 
-    assert not hasattr(qc, "gwas_pipeline") and not hasattr(qc._impute_cached, "clear")
+    assert not hasattr(qc, "gwas_pipeline") and not hasattr(qc, "_impute_cached")
     sources = [*REPO.glob("gwas/*.py"), *REPO.glob("pages/**/*.py"), *REPO.glob("utils/*.py"),
                REPO / "annotation.py", REPO / "app.py"]
     call = re.compile(r"cache_data\([^)]*persist", re.S)

@@ -1,21 +1,15 @@
-"""The imputation of the GWAS page's preprocessing (P1) + raw-export contract (P3).
+"""The raw-export contract (P3) of the GWAS page's genotype matrices.
 
-Until batch 13 the imputation was an st.cache_data entry (persist="disk") keyed on the RETAINED SAMPLE
-SET, not the trait. It is no longer cached: no table is kept in Streamlit's caches, and the page keeps
-one current preprocessing per session, keyed by every setting (gwas.guigwas.preprocess). These tests
-keep checking what the cache had to guarantee: the same matrix as a direct build, bit for bit, and
-never another sample set's matrix.
+Until batch 13 this file also tested the imputation's st.cache_data entry (persist="disk").
+That cache is gone: the page keeps one current preprocessing per session, keyed by every
+setting (gwas.guigwas.preprocess), and the mean imputation's equality with SimpleImputer is
+checked in tests/test_impute.py. What is left here is the raw export: its missing calls stay
+NaN, and the imputed table has none.
 """
 import numpy as np
 import pandas as pd
-from sklearn.impute import SimpleImputer
 
-from gwas.utils import hash_bytes
-from gwas.qc import _impute_cached, _pipeline_build_geno_matrices
-
-
-def _sshash(df):
-    return hash_bytes(repr(tuple(sorted(df.index.astype(str)))).encode())
+from gwas.qc import _pipeline_build_geno_matrices
 
 
 def _df(n, m, seed=0, missing=0.05):
@@ -25,53 +19,6 @@ def _df(n, m, seed=0, missing=0.05):
     return pd.DataFrame(G, index=[f"S{i}" for i in range(n)])
 
 
-def _call(df, method="mean"):
-    return _impute_cached(df, "vcfhash", _sshash(df), 0.05, 0.10, 5, 0.20, 0.0,
-                          False, "none", None, method, 5, 20)
-
-
-def _eq(a, b):
-    a, b = np.asarray(a), np.asarray(b)
-    return np.array_equal(a, b, equal_nan=True) if a.dtype.kind == "f" else np.array_equal(a, b)
-
-
-# ── sample-set hash ─────────────────────────────────────────────────────────
-def test_sample_set_hash_same_and_differ():
-    df = _df(20, 10)
-    assert _sshash(df) == _sshash(df.copy())
-    assert _sshash(df) == _sshash(df.iloc[::-1])       # order-independent (sorted)
-    assert _sshash(df) != _sshash(df.iloc[:-1])        # one dropped sample -> differs
-
-
-# ── cache correctness ───────────────────────────────────────────────────────
-def test_cache_output_equals_direct_build():
-    df = _df(24, 14, seed=1)
-    cached = _call(df)
-    direct = _pipeline_build_geno_matrices(df, method="mean")
-    assert all(_eq(a, b) for a, b in zip(cached, direct))
-
-
-def test_cached_mean_bit_identical_to_simpleimputer():
-    df = _df(24, 14, seed=4, missing=0.10)
-    _raw, _rate, cached_imp, _iid = _call(df, "mean")
-    direct = SimpleImputer(strategy="mean").fit_transform(df).astype("float32")
-    assert np.array_equal(cached_imp, direct) and cached_imp.dtype == np.float32
-
-
-# ── the failure mode that matters: no cross-contamination ───────────────────
-def test_different_sample_set_is_not_served_the_wrong_matrix():
-    df166 = _df(166, 40, seed=2)
-    df157 = df166.iloc[:157]                            # a genuinely different sample set
-    assert _sshash(df166) != _sshash(df157)
-    r166 = _call(df166)
-    r157 = _call(df157)
-    assert r166[2].shape[0] == 166
-    assert r157[2].shape[0] == 157                      # NOT the cached 166-row matrix
-    # and the reverse order (157 already cached) still returns 166 for the 166 key
-    assert _call(df166)[2].shape[0] == 166
-
-
-# ── raw export (P3) ─────────────────────────────────────────────────────────
 def test_raw_export_preserves_nan_count():
     df = _df(20, 15, seed=3, missing=0.10)
     raw, rate, imputed, iid = _pipeline_build_geno_matrices(df, method="mean")

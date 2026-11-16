@@ -791,20 +791,11 @@ def _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions):
 
 
 # ============================================================
-# The GWAS page's preprocessing (gwas.guigwas.preprocess calls it)
+# The GWAS page's preprocessing (gwas.guigwas.preprocess calls it). The imputation is not
+# cached: the page keeps one current preprocessing per session, keyed by every setting, so no
+# table sits in Streamlit's caches (until batch 13 it was an st.cache_data entry with
+# persist="disk", whose .memo files Clear session data now removes).
 # ============================================================
-
-def _impute_cached(_geno_df, vcf_hash, sample_set_hash, maf_thresh, miss_thresh,
-                   mac_thresh, ind_miss_thresh, info_thresh, drop_alt, norm_option,
-                   canonical, impute_method, impute_k, impute_l):
-    """The imputation, no longer cached: until batch 13 this was an st.cache_data entry
-    (persist="disk") holding the raw and imputed tables, whose .memo files were never deleted.
-    The GWAS page now keeps one current preprocessing per session (gwas.guigwas.preprocess),
-    keyed by every setting, so no table sits in Streamlit's caches. The arguments other than
-    ``_geno_df`` are kept for the callers that name them; they do not change the result."""
-    return _pipeline_build_geno_matrices(_geno_df, method=impute_method,
-                                         impute_k=impute_k, impute_l=impute_l)
-
 
 def _gwas_pipeline_impl(
     vcf_bytes,
