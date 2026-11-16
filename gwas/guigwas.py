@@ -25,6 +25,8 @@ The table, in memory or on disk (the same results either way)
     subsampling         the page's subsampling; in memory with several workers, the workers'
                         memory is checked first
 """
+import contextlib
+
 import numpy as np
 import pandas as pd
 
@@ -175,6 +177,92 @@ def preprocess(state, key, parsed, pheno, trait_col, maf_thresh, miss_thresh, no
     out["warnings"] = list(messages)
     state[PREP_KEY] = (key, out)
     return out
+
+
+# --------------------------------------------------------- a table file closed meanwhile
+# The registry closes a table file when another dataset needs its place, and Clear session data
+# (in any session) closes them all: a session that still holds one then reads it again.
+REREAD_MESSAGE = ("This session's genotype table was closed (Clear session data in another "
+                  "session, or the server making room for another dataset), so TRACE read the "
+                  "VCF again.")
+CLOSED_MESSAGE = ("This session's genotype table was closed while this run read it (Clear "
+                  "session data in another session, or the server making room for another "
+                  "dataset). Run again: TRACE then reads the VCF again.")
+
+
+def table_closed(table):
+    """True when ``table`` (the registry's table, a SessionTable or a table view) is a table file
+    that was closed: every read of it then raises. A table in memory is never closed."""
+    for holder in (table, getattr(table, "parsed", None), getattr(table, "view", None)):
+        store = getattr(holder, "store", None)
+        if store is not None and bool(getattr(store, "closed", False)):
+            return True
+    return False
+
+
+def drop_closed_table(state, file_identity, mode):
+    """Before the page uses the session's preprocessing: when the table file it was built on was
+    closed, drop it, so the page's next table() is a fresh one from the registry and the
+    preprocessing runs again on it. Returns True when the session's own table of this VCF and mode
+    (the SessionTable the page left) was closed: the page then says so once."""
+    hit = state.get(PREP_KEY)
+    if hit is not None and table_closed(hit[1].get("parsed")):
+        state.pop(PREP_KEY, None)
+    held = state.get("geno_table")
+    return bool(table_closed(held) and str(getattr(held, "file_identity", "")) == str(file_identity)
+                and str(getattr(held, "mode", "")) == str(mode))
+
+
+@contextlib.contextmanager
+def on_closed_table(handler):
+    """Run a block that reads the table; when it raises, ``handler()`` runs first (the page's
+    plain stop when the table file was closed meanwhile), then the error goes on."""
+    try:
+        yield
+    except Exception:
+        handler()
+        raise
+
+
+def preprocess_rereading(state, key, parsed, reread, *args, **kwargs):
+    """preprocess, except that when its table file was closed meanwhile it runs once more on a
+    fresh table from ``reread()``. Returns (results, the table used, whether it was read again)."""
+    try:
+        return preprocess(state, key, parsed, *args, **kwargs), parsed, False
+    except Exception:
+        if not table_closed(parsed):
+            raise
+    parsed = reread()
+    return preprocess(state, key, parsed, *args, **kwargs), parsed, True
+
+
+def run_traits_rereading(parsed, pheno, traits, options, reread, on_start=None, progress=None):
+    """gwas.pipeline.run_traits (One-Click), except that a trait that fails because its table file
+    was closed meanwhile runs again, with the traits after it, on a fresh table from ``reread()``
+    (once per call). Yields (trait, result, error, read_again): read_again is True for the first
+    trait after the table was read again."""
+    from gwas.pipeline import run_traits
+
+    pending, done, reread_left, fresh = list(traits), 0, 1, False
+    while pending:
+        restart = False
+
+        def start(i, trait, _offset=done):
+            if on_start is not None:
+                on_start(_offset + i, trait)
+
+        for trait, result, error in run_traits(parsed, pheno, list(pending), options, on_start=start,
+                                               progress=progress):
+            if result is None and reread_left and table_closed(parsed):
+                reread_left -= 1
+                parsed, fresh, restart = reread(), True, True
+                break
+            pending.pop(0)
+            done += 1
+            yield trait, result, error, fresh
+            fresh = False
+        if not restart:
+            break
 
 
 def n_snps(results):

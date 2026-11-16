@@ -181,8 +181,13 @@ meanwhile may then use fewer threads, and their last digits differ, as between t
 
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
 that open the same VCF with the same choice share one table, and the server keeps at most two.
-When a third is needed, the one used least recently is closed. A page that still needed it asks
-you to run the GWAS page again.
+When a third is needed, the one used least recently is closed, once the new one is open (a file
+that cannot be read closes nothing). A session that still held a closed table (closed this way,
+or by Clear session data in another session) reads the VCF again: the GWAS page on its next run,
+One-Click for the trait it was running and the ones after it, each with a note on the page. A
+Run GWAS that was reading the table at that moment stops with a message, and the next run reads
+it again. The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not
+closed: it stays in memory while a session still holds it, until that session's next run.
 
 **Clear session data** frees this server's genotype tables (in memory, and the table files with
 their folders on disk), the uploads it saved, every cached result, and the cache files that

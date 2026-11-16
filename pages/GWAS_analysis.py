@@ -292,6 +292,16 @@ def _render_last_run_results(stale=False):
             break
 
 
+def _stop_if_table_closed(table):
+    """A read failed because this run's table file was closed meanwhile (Clear session data in
+    another session, or the server making room for another dataset): say so plainly and stop,
+    instead of a traceback or a model's failure; the next run reads the VCF again
+    (gwas.guigwas.drop_closed_table). Returns when the table is open (another error)."""
+    if _gg.table_closed(table):
+        st.info(_gg.CLOSED_MESSAGE)
+        st.stop()
+
+
 def _rehydrate_or_stop(msg=None, level="error"):
     """Show the persisted last-run results (if any) instead of blanking, then stop."""
     if _has_persisted_gwas():
@@ -993,10 +1003,18 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
 
     # --- The genotype table: the server's, in the plan's mode (gwas.guitable's registry) ---
     # In memory the parsed genotypes (read-only, shared by the sessions); on disk a table file
-    # in the work folder, read in pieces. The same results either way.
+    # in the work folder, read in pieces. The same results either way. When the session's table
+    # file was closed since its last run (Clear session data in another session, or the server
+    # making room for another dataset), what was built on it is dropped and the registry gives
+    # a fresh table (gwas.guigwas.drop_closed_table); the page says so once.
+    _table_reread = _gg.drop_closed_table(st.session_state, vcf_hash, _geno_plan.mode)
+
+    def _read_table():
+        return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+
     with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
                     else "Reading the VCF…"):
-        _parsed = _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+        _parsed = _read_table()
 
     # --- The preprocessing of one trait, kept in the session (one current entry) ---
     # The setup (and the detailed view below) uses the first selected trait that
@@ -1013,11 +1031,13 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             impute=impute_method, impute_k=impute_k, impute_l=impute_l, covar=_covar_hash,
             canonical=None)
         try:
-            results = _gg.preprocess(
-                st.session_state, _prep_key, _parsed, pheno.copy(), _setup_trait,
+            # a table file closed while it is read is read again once (a fresh table)
+            results, _parsed, _again = _gg.preprocess_rereading(
+                st.session_state, _prep_key, _parsed, _read_table, pheno.copy(), _setup_trait,
                 maf_thresh, miss_thresh, _norm_for(_setup_trait), drop_alt, ind_miss_thresh,
                 mac_thresh, info_thresh=info_thresh, impute_method=impute_method,
                 impute_k=impute_k, impute_l=impute_l, covar_df=covar_df, show=st.warning)
+            _table_reread = _table_reread or _again
         except _CovariateDropError as _cov_err:
             # no sample keeps its covariate values: the same for every trait
             _rehydrate_or_stop(str(_cov_err))
@@ -1040,6 +1060,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         _rehydrate_or_stop(
             "No selected trait can be analysed: "
             + "; ".join(f"{t}: {e}" for t, e in _setup_failed.items()))
+    if _table_reread:
+        st.caption(_gg.REREAD_MESSAGE)
     # the detailed view's trait: its normalisation keys the caches and the records below
     norm_option = _norm_for(trait_col)
     # One identity for this trait's table (gwas.guigwas.trait_identity): the VCF's identity and
@@ -1258,7 +1280,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 st.caption(f"{_n_alt:,} markers on unplaced/scaffold sequences excluded "
                            "(no valid genomic position).")
             _geno_imp = results["geno_imputed"]
-            _freq = _gg.column_means(_geno_imp) / 2.0     # read in pieces on disk
+            try:
+                _freq = _gg.column_means(_geno_imp) / 2.0     # read in pieces on disk
+            except Exception:
+                _stop_if_table_closed(_parsed)
+                raise
             _maf_vals = np.minimum(_freq, 1.0 - _freq)
             _fig_maf = plot_maf_histogram(_maf_vals, maf_threshold=maf_thresh)
             show_plot(_fig_maf, "small", data=histogram_bins(_fig_maf), data_name="MAF_histogram")
@@ -1705,7 +1731,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             import tempfile as _tempfile
             import time as _time_mod
 
-            from gwas.pipeline import cli_default_options, failed_traits_report, run_traits
+            from gwas.pipeline import cli_default_options, failed_traits_report
 
             def _fmt_secs(_s):
                 _s = max(0.0, float(_s))
@@ -1839,9 +1865,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 def _on_progress(_msg):
                     _status.update(label=f"{_clock['trait']}: {str(_msg).strip()[:100]}")
 
-                for _t, _res, _err in run_traits(_parsed, pheno, selected_traits, _opts,
-                                                  on_start=_on_trait_start,
-                                                  progress=_on_progress):
+                # a trait that fails because the table file was closed meanwhile (Clear session
+                # data in another session, or the server making room for another dataset) runs
+                # again, with the traits after it, on a fresh table (gwas.guigwas)
+                for _t, _res, _err, _again in _gg.run_traits_rereading(
+                        _parsed, pheno, selected_traits, _opts,
+                        lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir),
+                        on_start=_on_trait_start, progress=_on_progress):
+                    if _again:
+                        st.caption(_gg.REREAD_MESSAGE)
                     if _res is None:
                         _failed[_t] = _err
                         st.error(f"Trait `{_t}` failed: {_last_line(_err)}")
@@ -2020,6 +2052,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         )
         st.stop()
     except ValueError as e:
+        _stop_if_table_closed(_parsed)
         logging.exception("MLM GWAS failed (value error)")
         _emsg = str(e).lower()
         if "overlap" in _emsg or "sample" in _emsg:
@@ -2032,6 +2065,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             st.error(f"MLM GWAS failed: {e}")
         st.stop()
     except Exception as e:
+        _stop_if_table_closed(_parsed)
         logging.exception("MLM GWAS failed")
         st.error(f"MLM GWAS failed: {e}")
         st.stop()
@@ -2065,6 +2099,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             sid=sid,
         )
     except Exception as _ols_err:
+        _stop_if_table_closed(_parsed)
         logging.exception("OLS marginal effects computation failed")
         st.warning(f"OLS marginal effects unavailable: {_ols_err}")
 
@@ -2100,6 +2135,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 meff_thresh = 0.05 / meff_val
                 _meff_computed = True
             except Exception as e:
+                _stop_if_table_closed(_parsed)
                 logging.exception("M_eff computation failed")
                 st.warning(f"M_eff computation failed ({e}); falling back to Bonferroni.")
                 meff_val = len(gwas_df)
@@ -2421,7 +2457,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         f"on {int(boot_n_jobs)} cores…"
                     )
 
-                with st.spinner("Running subsampling GWAS resampling…"):
+                with st.spinner("Running subsampling GWAS resampling…"), \
+                        _gg.on_closed_table(lambda: _stop_if_table_closed(_parsed)):
                     boot_disc_df, boot_raw_pvals, boot_meta, boot_note = _gg.subsampling(
                         geno_imputed=geno_imputed,
                         y=y,
@@ -2828,6 +2865,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         else:
             ld_decay_kb = None
     except Exception:
+        _stop_if_table_closed(_parsed)
         logging.exception("Manual path LD decay computation failed")
         ld_decay_kb = None
     if ld_decay_kb is None:
@@ -2879,22 +2917,26 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         with _tab_map["MLMM"]:
             _mlmm_ph = st.empty()
             _mlmm_ph.info("Computing MLMM (iterative cofactors)...")
-        gwas_mlmm, cof_tbl = run_mlmm_core_cached(
-            _table_id,
-            int(n_pcs_mlmm),
-            p_enter=mlmm_p_enter,
-            max_cof=mlmm_max_cof,
-            window_kb=flank_kb,
-            _geno_imputed=geno_imputed,
-            _sid=sid,
-            _chroms=chroms,
-            _chroms_num=chroms_num,
-            _positions=positions,
-            _iid=iid,
-            _K0=K0,
-            _pheno_reader=pheno_reader,
-            _covar_reader=covar_reader_mlmm,
-        )
+        try:
+            gwas_mlmm, cof_tbl = run_mlmm_core_cached(
+                _table_id,
+                int(n_pcs_mlmm),
+                p_enter=mlmm_p_enter,
+                max_cof=mlmm_max_cof,
+                window_kb=flank_kb,
+                _geno_imputed=geno_imputed,
+                _sid=sid,
+                _chroms=chroms,
+                _chroms_num=chroms_num,
+                _positions=positions,
+                _iid=iid,
+                _K0=K0,
+                _pheno_reader=pheno_reader,
+                _covar_reader=covar_reader_mlmm,
+            )
+        except Exception:
+            _stop_if_table_closed(_parsed)
+            raise
         # Enrich MLMM results to match MLM CSV format
         gwas_mlmm["PValue"] = np.clip(gwas_mlmm["PValue"].astype(float), 1e-300, 1.0)
         gwas_mlmm["-log10p"] = -np.log10(gwas_mlmm["PValue"])
@@ -2903,7 +2945,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         try:
             gwas_mlmm = add_ols_effects_to_gwas(gwas_mlmm, geno_imputed, y, covar_reader_mlmm, sid)
         except Exception:
-            pass
+            _stop_if_table_closed(_parsed)
         gwas_mlmm = add_significance_columns(gwas_mlmm, **_sig_cols)  # MLM's thresholds
         if "snp_imputation_rate" in results:
             _imp = pd.DataFrame({"SNP": sid.astype(str), "ImputationRate": results["snp_imputation_rate"]})
@@ -2987,22 +3029,26 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         with _tab_map["FarmCPU"]:
             _fc_ph = st.empty()
             _fc_ph.info("Computing FarmCPU (multi-locus)...")
-        gwas_farmcpu, pqtn_tbl, conv_info = run_farmcpu_cached(
-            _table_id,
-            int(n_pcs_farmcpu),
-            max_iterations=farmcpu_max_iter,
-            final_scan=farmcpu_final_scan,
-            use_loco=use_loco,
-            _geno_imputed=geno_imputed,
-            _sid=sid,
-            _chroms=chroms,
-            _chroms_num=chroms_num,
-            _positions=positions,
-            _iid=iid,
-            _K0=K0,
-            _pheno_reader=pheno_reader,
-            _covar_reader=covar_reader_farmcpu,
-        )
+        try:
+            gwas_farmcpu, pqtn_tbl, conv_info = run_farmcpu_cached(
+                _table_id,
+                int(n_pcs_farmcpu),
+                max_iterations=farmcpu_max_iter,
+                final_scan=farmcpu_final_scan,
+                use_loco=use_loco,
+                _geno_imputed=geno_imputed,
+                _sid=sid,
+                _chroms=chroms,
+                _chroms_num=chroms_num,
+                _positions=positions,
+                _iid=iid,
+                _K0=K0,
+                _pheno_reader=pheno_reader,
+                _covar_reader=covar_reader_farmcpu,
+            )
+        except Exception:
+            _stop_if_table_closed(_parsed)
+            raise
         # Enrich FarmCPU results to match MLM CSV format
         gwas_farmcpu["PValue"] = np.clip(gwas_farmcpu["PValue"].astype(float), 1e-300, 1.0)
         gwas_farmcpu["-log10p"] = -np.log10(gwas_farmcpu["PValue"])
@@ -3011,7 +3057,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         try:
             gwas_farmcpu = add_ols_effects_to_gwas(gwas_farmcpu, geno_imputed, y, covar_reader_farmcpu, sid)
         except Exception:
-            pass
+            _stop_if_table_closed(_parsed)
         gwas_farmcpu = add_significance_columns(gwas_farmcpu, **_sig_cols)  # MLM's thresholds
         if "snp_imputation_rate" in results:
             _imp_fc = pd.DataFrame({"SNP": sid.astype(str), "ImputationRate": results["snp_imputation_rate"]})
