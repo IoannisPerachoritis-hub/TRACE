@@ -211,8 +211,11 @@ reads the VCF again: the GWAS page on its next run, One-Click for the trait it w
 the ones after it, each with a note on the page. A Run GWAS that was reading the table at that
 moment stops with a message, and the next run reads it again. Clear session data in another
 session also deletes the uploads the server saved, so a VCF that was uploaded cannot be read
-again: the page then says "The uploaded VCF was removed by Clear session data: upload it again",
-on its next run or when it would read the VCF again. A VCF given by its location is read again.
+again: the page then says that the uploaded VCF is no longer in the work folder and asks you to
+upload it again, on its next run or when it would read the VCF again. The same happens when the
+system cleans its temporary folder, where the work folder is by default; on a server that runs
+for days, set `TRACE_GENO_STORE_DIR` to a folder the system does not clean. A VCF given by its
+location is read again.
 The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not closed: it
 stays in memory while a session still holds it, until that session's next run.
 

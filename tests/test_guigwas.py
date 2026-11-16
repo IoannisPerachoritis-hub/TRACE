@@ -465,7 +465,9 @@ def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_p
         assert guigwas.table_closed(held) and not Path(path).exists()
         nxt = guitable.vcf_input(state, "", None, work)                         # this session's next run
         assert nxt.warning == guitable.UPLOAD_REMOVED_MESSAGE == (
-            "The uploaded VCF was removed by Clear session data: upload it again.")
+            "The uploaded VCF is no longer in the work folder. Clear session data (in any session) deletes "
+            "saved uploads, and the system may clean its temporary folder, where the work folder is by "
+            "default. Upload the VCF again.")
         assert not nxt.error and not guitable.inputs_kept(state)                # nothing is read
         with pytest.raises(guigwas.VcfGone) as gone:          # the setup's hash, the file deleted since
             guigwas.vcf_identity(path)                         # the page checked that it is there

@@ -728,16 +728,19 @@ def vcf_path_ready(state):
     return bool(path) and os.path.isfile(path)
 
 
-# Clear session data deletes the server's saved uploads, in every session (clear_all): a session
-# whose VCF was an upload must then give it again.
-UPLOAD_REMOVED_MESSAGE = "The uploaded VCF was removed by Clear session data: upload it again."
+# Clear session data deletes the server's saved uploads, in every session (clear_all), and the
+# system may clean its temporary folder, where the work folder is by default (default_work_dir): a
+# session whose VCF was an upload must then give it again.
+UPLOAD_REMOVED_MESSAGE = ("The uploaded VCF is no longer in the work folder. Clear session data (in "
+                          "any session) deletes saved uploads, and the system may clean its temporary "
+                          "folder, where the work folder is by default. Upload the VCF again.")
 
 
 def vcf_gone_message(path):
     """The page's message for a VCF that is no longer at ``path``, or "" while it is there (or no
     path is given): for an upload TRACE saved (a _trace_upload_gui_* folder), which Clear session
-    data deletes, UPLOAD_REMOVED_MESSAGE; for a file given by its location, the location box's
-    own message."""
+    data deletes and the system's cleaning of its temporary folder can remove,
+    UPLOAD_REMOVED_MESSAGE; for a file given by its location, the location box's own message."""
     if not path or os.path.isfile(path):
         return ""
     if Path(path).parent.name.startswith(UPLOAD_PREFIX + "_"):

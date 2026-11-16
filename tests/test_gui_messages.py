@@ -3,8 +3,11 @@
 - When the page stops but shows the last completed run instead (its _rehydrate_or_stop, taken from
   the page's source), every caller's message is followed by "Showing your last completed run below
   instead." as a sentence of its own: no ".;" in any of them.
+- A saved upload that is gone is named with both causes: Clear session data, and the system's
+  cleaning of its temporary folder, where the work folder is by default.
 """
 import ast
+import io
 from pathlib import Path
 
 import pandas as pd
@@ -150,3 +153,29 @@ def test_the_last_run_note_is_a_sentence_of_its_own_after_every_stop(tmp_path, m
     assert no_trait == "No selected trait can be analysed: " + " ".join(f"{t}: {e}" for t, e in failed.items())
     assert guigwas.as_sentence("Done!") == "Done!" and guigwas.as_sentence('It said "stop."') == 'It said "stop."'
     assert guigwas.as_sentence("(see below)") == "(see below)." and guigwas.as_sentence("") == ""
+
+
+def test_a_saved_upload_that_is_gone_is_named_with_both_causes(tmp_path):
+    """The round 2 re-check's new problem 4: a saved upload that is gone was always put down to Clear
+    session data. The work folder is by default in the system's temporary folder, which the system
+    may clean on a server that runs long, so the message names both causes plainly, whichever removed
+    the file. A VCF gone from its typed location keeps the location box's message."""
+    work = tmp_path / "w"
+    upload = io.BytesIO(EX1.read_bytes())
+    upload.name, upload.size, upload.file_id = EX1.name, EX1.stat().st_size, "u-1"
+    state = {"_persist_pheno": "pheno"}
+    try:
+        guitable.vcf_input(state, "", upload, work)
+        path = Path(state["_persist_vcf_path"])
+        path.unlink()                     # the system's cleaning of its temporary folder, not Clear
+        msg = guitable.vcf_input(state, "", None, work).warning
+        assert msg == guitable.vcf_gone_message(str(path)) == guitable.UPLOAD_REMOVED_MESSAGE
+        assert "Clear session data" in msg and "the system may clean its temporary folder" in msg
+        assert "where the work folder is by default" in msg and msg.endswith("Upload the VCF again.")
+        with pytest.raises(guigwas.VcfGone) as gone:
+            guigwas.vcf_identity(str(path))
+        assert str(gone.value) == msg
+    finally:
+        guitable.remove_saved_uploads()
+    moved = tmp_path / "moved" / "panel.vcf.gz"
+    assert guitable.vcf_gone_message(str(moved)) == f"No file at {moved}."
