@@ -1,0 +1,535 @@
+"""The Post-GWAS page's genotype table, read in windows and blocks when they are needed.
+
+The page and its tabs never hold a whole copy of the trait's table. They read it through a
+PostTable, built from the session's gwas.guitable.SessionTable:
+
+    ld          the mean-imputed table as the LD code reads it: today's
+                ``np.asarray(geno_imputed, float)``. On disk it is the view's LazyColumns in
+                float64; in memory an ArrayColumns over the GWAS page's own array. Either gives
+                every window as the float64 array the page's whole copy gave, with the same
+                values and layout, and neither reads the table whole.
+    ld_aligned  its phenotype-aligned rows: today's ``geno_ld[keep_mask, :]`` (C order).
+    hard        hard calls, read a column or a block at a time: today's ``np.rint(geno_ld)``
+                for dosage012 genotypes, else a copy of the dosages.
+    raw         the raw dosage table (missing calls NaN), read the same way.
+    view        the GWAS page's table as it is (the haplotype PCA panel's fallback reads it
+                in memory).
+    samples     a frame holding only the sample index: the shared functions read nothing
+                but the index of the genotype frame they are given.
+
+ArrayColumns    an in-memory array read the way gwas.genostore.LazyColumns reads the table on
+                disk: each read returns the block today's whole-array expression gave (number
+                format, layout, and a strided view where today's slice of a C-ordered array
+                was strided). In memory the page therefore takes the same code path as on
+                disk, without the float64 copies.
+HardCalls       hard calls of a table, one column or block at a time.
+
+Keys and caches: every Post-GWAS cache names the table's identity (SessionTable.identity) and
+the window, and keeps a fixed number of entries (r2_key, detection_key, remember,
+keep_recent, remember_family).
+
+POST_GWAS_SESSION_KEYS / POST_GWAS_SESSION_PREFIXES list every session key the page and its
+tabs write (widget keys excluded), for Clear (gwas.guitable).
+"""
+import hashlib
+from collections import OrderedDict
+from dataclasses import dataclass
+
+import numpy as np
+import pandas as pd
+
+from gwas.genostore import LazyColumns, _note_block, is_lazy
+
+# ------------------------------------------------------------------- reading the table
+def _layout_of(a):
+    """The layout numpy keeps for ``a`` under np.asarray(a, dtype): F for an F-ordered array,
+    else C (a one-row or one-column array is both)."""
+    return "F" if (a.flags.f_contiguous and not a.flags.c_contiguous) else "C"
+
+
+class _ArrayShape:
+    """The two numbers gwas.genostore.LazyColumns asks its store for (N samples, M SNPs)."""
+
+    def __init__(self, n, m):
+        self.N, self.M = int(n), int(m)
+
+
+class ArrayColumns(LazyColumns):
+    """An in-memory samples x SNPs array, read like a gwas.genostore.LazyColumns.
+
+    ``arr`` is kept as it is (never copied whole). ``dtype`` is the number format blocks come
+    back in (the array's own by default; float64 stands in for ``np.asarray(arr, float)``), and
+    ``layout`` the layout that whole-array expression would have (the array's own). Row and
+    column selections stay lazy (lazy_rows, lazy_cols, ``[rows, :]``), and every read returns a
+    new array with numpy's layout for the same expression on the whole array: ``[:, index]``
+    F-ordered, a column slice of a C-ordered table strided, a single column 1-D. So the code
+    that receives a block does today's arithmetic on today's operand (scaling audit, section
+    8.6), and a whole-table read happens only if someone asks for it (np.asarray), logged and
+    refusable as on disk (TRACE_STORE_FORBID_MATERIALIZE)."""
+
+    def __init__(self, arr, dtype=None, layout=None):
+        a = arr if isinstance(arr, np.ndarray) else np.asarray(arr)
+        if a.ndim != 2:
+            raise ValueError("ArrayColumns takes a samples x SNPs array")
+        self.arr = a
+        self.store = _ArrayShape(a.shape[0], a.shape[1])
+        self.cols = np.arange(a.shape[1], dtype=np.int64)
+        self.rows = None
+        self.fill = None
+        self.dtype = np.dtype(a.dtype if dtype is None else dtype)
+        self.layout = layout or _layout_of(a)
+        self.std = None
+
+    def __repr__(self):
+        return f"ArrayColumns(shape={self.shape}, dtype={self.dtype}, layout={self.layout})"
+
+    def _derive(self, **kw):
+        # as LazyColumns._derive, keeping this class (its block reads the array)
+        new = type(self).__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        new.__dict__.update(kw)
+        return new
+
+    def standardized(self, block=2000):
+        raise NotImplementedError("ArrayColumns does not standardise (the Post-GWAS page never asks)")
+
+    def block(self, sel, layout=None, _whole=False, _strided=False):
+        """ndarray (n x k): the local columns ``sel`` of this table in its dtype, laid out as
+        LazyColumns.block lays them out (``layout`` F or C, default this object's layout;
+        ``_strided``: a C block as a view of a buffer one column wider)."""
+        sel = self._col_index(sel)
+        w = self.arr[:, self.cols[sel]]              # the window's columns, all rows
+        if self.rows is not None:
+            w = w[self.rows, :]
+        lay = layout or self.layout
+        if lay == "C" and _strided:
+            buf = np.empty((w.shape[0], w.shape[1] + 1), dtype=self.dtype, order="C")
+            buf[:, :w.shape[1]] = w
+            out = buf[:, :w.shape[1]]
+        else:
+            out = np.empty(w.shape, dtype=self.dtype, order="C" if lay == "C" else "F")
+            out[...] = w
+        _note_block(out.shape, whole=_whole, table_cols=self.shape[1])
+        return out
+
+
+def reader(table, dtype=None):
+    """The table read in windows: a LazyColumns as it is (in ``dtype`` if given), an array
+    wrapped in an ArrayColumns; None stays None."""
+    if table is None:
+        return None
+    if is_lazy(table):
+        return table if dtype is None else table.astype(dtype)
+    return ArrayColumns(table, dtype=dtype)
+
+
+class HardCalls:
+    """Hard calls of an imputed table, read a column or a block at a time: today's
+    ``np.rint(geno_ld)[key]`` for dosage012 genotypes, else today's ``geno_ld.copy()[key]``
+    (the same values: rint is elementwise, and the copy only changes the layout)."""
+
+    ndim = 2
+
+    def __init__(self, table, geno_encoding="dosage012"):
+        self.table = table
+        self.geno_encoding = geno_encoding
+
+    @property
+    def shape(self):
+        return tuple(int(x) for x in self.table.shape)
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __getitem__(self, key):
+        part = np.asarray(self.table[key])
+        return np.rint(part) if self.geno_encoding == "dosage012" else np.array(part, copy=True)
+
+
+@dataclass
+class PostTable:
+    """What the Post-GWAS page and its tabs read the trait's table through (module docstring)."""
+
+    identity: str
+    mode: str
+    ld: object
+    ld_aligned: object
+    hard: object
+    raw: object
+    view: object
+    samples: pd.DataFrame
+    keep_mask: np.ndarray
+
+    @property
+    def shape(self):
+        return tuple(int(x) for x in self.ld.shape)
+
+    @property
+    def keep_key(self):
+        return digest(self.keep_mask)
+
+
+def sample_index(geno_df=None, geno_index=None, iid=None):
+    """The trait's sample index, from the first source that has it: the genotype frame's own
+    index (the GWAS page's frame in memory, the store frame on disk), the GWAS context's
+    ``geno_index``, or the table's ``iid`` (its first column)."""
+    if isinstance(geno_df, pd.DataFrame):
+        return geno_df.index
+    if geno_index is not None:
+        return pd.Index(np.asarray(geno_index))
+    if iid is not None:
+        return pd.Index(np.asarray(iid)[:, 0])
+    raise ValueError("the trait's sample IDs are not in the session: run the GWAS page first")
+
+
+def post_table(session_table, keep_mask, geno_encoding="dosage012", samples=None):
+    """The PostTable of a gwas.guitable.SessionTable: ``keep_mask`` the phenotype-aligned rows,
+    ``geno_encoding`` the hard-call rule, ``samples`` the sample index (sample_index)."""
+    view = session_table.view
+    ld = reader(view, np.float64)
+    keep = np.asarray(keep_mask, dtype=bool)
+    if samples is None:
+        samples = sample_index(iid=session_table.iid)
+    return PostTable(
+        identity=str(session_table.identity), mode=str(session_table.mode),
+        ld=ld, ld_aligned=ld.lazy_rows(keep), hard=HardCalls(ld, geno_encoding),
+        raw=reader(session_table.raw), view=view,
+        samples=pd.DataFrame(index=samples), keep_mask=keep)
+
+
+# ---------------------------------------------------------------------------------- keys
+def digest(*parts):
+    """A short blake2b of arrays, strings and numbers (an array by its dtype, shape and bytes)."""
+    h = hashlib.blake2b(digest_size=16)
+    for p in parts:
+        if p is None:
+            h.update(b"<None>")
+        elif isinstance(p, np.ndarray) or isinstance(p, (list, tuple, pd.Index)):
+            a = np.asarray(p)
+            if a.dtype == object:
+                a = a.astype(str)
+            h.update(f"{a.dtype.str}{a.shape}".encode())
+            h.update(np.ascontiguousarray(a).tobytes())
+        else:
+            h.update(repr(p).encode("utf-8"))
+        h.update(b"|")
+    return h.hexdigest()
+
+
+def frame_key(df):
+    """A data frame's content key: its columns and the hash of every value and index entry
+    (pandas.util.hash_pandas_object over all rows: never a sample)."""
+    if df is None:
+        return "none"
+    if not isinstance(df, pd.DataFrame) or df.shape[1] == 0:
+        return digest(type(df).__name__, getattr(df, "shape", None))
+    return digest([str(c) for c in df.columns],
+                  pd.util.hash_pandas_object(df, index=True).to_numpy())
+
+
+def table_key(ctx):
+    """The table's name in cache keys: the SessionTable's identity carried by the context, or,
+    for a context built with a plain array (tests), a digest of the array's content."""
+    ident = str(getattr(ctx, "table_identity", "") or "")
+    if ident:
+        return ident
+    g = getattr(ctx, "geno_ld", None)
+    if isinstance(g, np.ndarray):
+        return "array:" + digest(g)
+    return f"object:{id(g)}"
+
+
+def labels_key(ctx):
+    """The SNP labels' name in cache keys: the table's identity (it names the post-QC SNP
+    set), or, without one, a digest of the context's chroms, positions and SNP IDs."""
+    ident = str(getattr(ctx, "table_identity", "") or "")
+    if ident:
+        return ident
+    return "labels:" + digest(np.asarray(ctx.chroms).astype(str), np.asarray(ctx.positions),
+                              np.asarray(ctx.sid).astype(str))
+
+
+def rows_key(ctx):
+    """The phenotype-aligned rows' name in cache keys."""
+    keep = getattr(ctx, "keep_mask", None)
+    return "all" if keep is None else digest(np.asarray(keep, dtype=bool))
+
+
+def r2_key(ctx, kind, chrom, start_bp, end_bp, lead_snp, sids, min_pair_n=20):
+    """An r2 matrix's cache key: the table, its rows, and the window's SNPs in their order."""
+    sids = np.asarray(sids).astype(str)
+    return (f"r2::{kind}::{table_key(ctx)}::{rows_key(ctx)}::{chrom}:{int(start_bp)}-{int(end_bp)}"
+            f"::{lead_snp}::{digest(sids)}::{sids.size}snps::mp{int(min_pair_n)}")
+
+
+def window_r2_key(G, min_pair_n=20):
+    """The key of an r2 matrix computed from the window ``G`` itself (its values)."""
+    G = np.asarray(G)
+    return f"r2::window::{digest(G)}::mp{int(min_pair_n)}"
+
+
+def detection_key(trait_col, ld_r2, flank_kb, top_n, seed_p, ld_decay_kb, gwas_sig, table):
+    """The session key of the LD Blocks tab's detection: every detection parameter, the GWAS
+    results and the table's identity."""
+    return (f"LDDETECT::{trait_col}"
+            f"::r2{ld_r2}::flank{flank_kb}::topn{int(top_n)}"
+            f"::sig{seed_p}::decay{ld_decay_kb}::ms2::adj0.2::gap10"
+            f"::G{gwas_sig}::T{table}")
+
+
+# ------------------------------------------------------------------------ bounded caches
+R2_CACHE_MAX = 10           # r2 matrices (the page's MAX_R2_CACHE)
+FIGURE_CACHE_MAX = 8        # rendered figures per cache (PNG at 600 dpi, SVG and PDF each)
+RESULT_CACHE_MAX = 8        # haplotype tests / LD-block detections kept in the session
+TRAIT_CACHE_MAX = 8         # traits whose automatic LD blocks are kept
+
+
+def bounded(state, name):
+    """The session's OrderedDict under ``name`` (made, or converted from a plain dict)."""
+    store = state.get(name)
+    if not isinstance(store, OrderedDict):
+        store = OrderedDict(store or {})
+        state[name] = store
+    return store
+
+
+def remember(store, key, value, max_entries):
+    """Put ``value`` under ``key`` in the OrderedDict ``store`` as its newest entry; drop the
+    oldest entries beyond ``max_entries``."""
+    store[key] = value
+    store.move_to_end(key)
+    while len(store) > int(max_entries):
+        store.popitem(last=False)
+    return value
+
+
+def recall(store, key):
+    """The entry under ``key`` (made the newest), or None."""
+    if key in store:
+        store.move_to_end(key)
+        return store[key]
+    return None
+
+
+def keep_recent(d, key, value, max_entries):
+    """Set ``d[key] = value`` as the newest key of the plain dict ``d`` and drop its oldest
+    keys beyond ``max_entries`` (dicts keep insertion order)."""
+    d.pop(key, None)
+    d[key] = value
+    while len(d) > int(max_entries):
+        del d[next(iter(d))]
+    return value
+
+
+def remember_family(state, order_key, key, max_entries, suffixes=()):
+    """Record session key ``key`` (one of a family such as HAPGWAS::...) as the newest; delete
+    the oldest keys of the family beyond ``max_entries``, with their ``key + suffix`` keys."""
+    order = [k for k in state.get(order_key, []) if k != key and k in state]
+    order.append(key)
+    while len(order) > int(max_entries):
+        old = order.pop(0)
+        for k in (old,) + tuple(old + s for s in suffixes):
+            if k in state:
+                del state[k]
+    state[order_key] = order
+
+
+# ------------------------------------------------------------ the haplotype tab's effects
+def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, pheno_for_hap,
+                     trait_col, min_hap_count, min_group_size, compute_maf=True,
+                     geno_encoding=None, pcs=None, strict_selfing=False):
+    """Add publication-oriented QC/effect metrics to hap_gwas_df (the Post-GWAS page's
+    compute_block_qc_effects, unchanged apart from where its inputs come from):
+      - Block_length_kb
+      - n_snps_total (in physical window)
+      - n_snps_poly
+      - maf_median, maf_mean (optional)
+      - EtaSq (eta^2) for MLG ANOVA groups actually tested
+      - n_groups_tested, n_samples_used
+      - Frac_other (based on tested vs total haplotypes, if available)
+
+    ``geno_imputed`` is the imputed table as the LD code reads it (an array or a reader of
+    this module); each block's window is read from it, phenotype-aligned rows first, as the
+    page always cut it. ``pcs`` is the session's PCs (st.session_state["pcs"]) and
+    ``strict_selfing`` its selfing_mode, which the page read inside this function."""
+    from gwas.haplotype import mlg_labels_for_block as _mlg_labels_for_block
+    from gwas.ld import anova_eta_sq_from_labels as _anova_eta_sq_from_labels
+    from gwas.ld import maf_from_matrix as _maf_from_matrix
+    from gwas.utils import align_pheno_to_geno, resolve_trait_column
+
+    if hap_gwas_df is None or hap_gwas_df.empty:
+        return hap_gwas_df
+
+    out = hap_gwas_df.copy()
+    out["Block_length_kb"] = (out["End"].astype(int) - out["Start"].astype(int)) / 1000.0
+
+    # "Other" fraction (only if run_haplotype_block_gwas provides these columns)
+    if ("n_haplotypes" in out.columns) and ("n_tested_haplotypes" in out.columns):
+        denom = out["n_haplotypes"].replace(0, np.nan).astype(float)
+        out["Frac_other"] = 1.0 - (out["n_tested_haplotypes"].astype(float) / denom)
+    else:
+        out["Frac_other"] = np.nan
+
+    chroms_np = np.asarray(chroms).astype(str)
+    pos_np = np.asarray(positions).astype(int)
+
+    trait_col_qc = resolve_trait_column(trait_col, pheno_for_hap)
+
+    # enforce genotype sample order alignment (prevents genotype-phenotype mismatches)
+    ph_aligned, y_vec, keep_mask = align_pheno_to_geno(
+        pheno_for_hap,
+        geno_df,
+        trait_col_qc,
+    )
+
+    n_snps_total = []
+    n_snps_poly = []
+    maf_median = []
+    maf_mean = []
+    eta_sq_list = []
+    n_groups_list = []
+    n_used_list = []
+
+    for _, row in out.iterrows():
+        ch = str(row["Chr"])
+        s = int(row["Start"])
+        e = int(row["End"])
+
+        mask = (chroms_np == ch) & (pos_np >= s) & (pos_np <= e)
+        G = np.asarray(geno_imputed[keep_mask, :][:, mask], float)
+
+        n_snps_total.append(int(G.shape[1]))
+
+        if G.shape[1] < 1:
+            n_snps_poly.append(0)
+            maf_median.append(np.nan)
+            maf_mean.append(np.nan)
+            eta_sq_list.append(np.nan)
+            n_groups_list.append(0)
+            n_used_list.append(int(np.isfinite(y_vec).sum()))
+            continue
+
+        var = np.nanvar(G, axis=0)
+        poly = var > 0
+        n_snps_poly.append(int(np.sum(poly)))
+
+        # MAF summaries
+        if compute_maf and np.any(poly):
+            enc = geno_encoding
+            maf = _maf_from_matrix(G[:, poly], enc)
+            maf_median.append(float(np.nanmedian(maf)))
+            maf_mean.append(float(np.nanmean(maf)))
+        else:
+            maf_median.append(np.nan)
+            maf_mean.append(np.nan)
+
+        # Effect size eta^2 using the same MLG grouping logic as permutation test
+        # (collapse rare haplotypes and drop too-small groups + "Other")
+        keep_y = np.isfinite(y_vec)
+        if keep_y.sum() < 5:
+            eta_sq_list.append(np.nan)
+            n_groups_list.append(0)
+            n_used_list.append(int(keep_y.sum()))
+            continue
+
+        G2 = G[keep_y, :]
+        y2 = y_vec[keep_y]
+
+        # ---- PC-residualize phenotype for eta^2 (match haplotype analysis test) ----
+        pcs_for_eta = pcs
+        if pcs_for_eta is not None:
+            try:
+                pcs_arr = np.asarray(pcs_for_eta, float)
+                # align to same keep_mask used above
+                pcs_sub = pcs_arr[keep_mask, :][keep_y, :]
+                X = np.column_stack([np.ones(pcs_sub.shape[0]), pcs_sub])
+                beta, *_ = np.linalg.lstsq(X, y2, rcond=None)
+                y2 = y2 - X @ beta
+            except Exception:
+                pass  # fall back to unadjusted eta^2 if alignment fails
+
+        if G2.shape[1] < 2:
+            eta_sq_list.append(np.nan)
+            n_groups_list.append(0)
+            n_used_list.append(int(len(y2)))
+            continue
+
+        mlg, keep_mlg = _mlg_labels_for_block(
+            G2,
+            min_hap_count=min_hap_count,
+            return_mask=True,
+            strict_selfing=strict_selfing,
+            geno_encoding=geno_encoding,
+        )
+
+        y2 = y2[keep_mlg]
+
+        df = pd.DataFrame({
+            "MLG": mlg,
+            "y": y2
+        })
+
+        counts = df["MLG"].value_counts()
+        valid = [g for g in counts.index if (counts[g] >= int(min_group_size) and g != "Other")]
+
+        if len(valid) < 2:
+            eta_sq_list.append(np.nan)
+            n_groups_list.append(int(len(valid)))
+            n_used_list.append(int(len(y2)))
+            continue
+
+        df = df[df["MLG"].isin(valid)].copy()
+        eta_sq, n_groups, n_used = _anova_eta_sq_from_labels(df["y"].values, df["MLG"].values)
+
+        eta_sq_list.append(eta_sq)
+        n_groups_list.append(n_groups)
+        n_used_list.append(n_used)
+
+    out["n_snps_total"] = n_snps_total
+    out["n_snps_poly"] = n_snps_poly
+    out["maf_median"] = maf_median
+    out["maf_mean"] = maf_mean
+    out["EtaSq"] = eta_sq_list
+    out["n_groups_tested_effect"] = n_groups_list
+    out["n_samples_used_effect"] = n_used_list
+
+    return out
+
+
+def run_haplotype_tests(haplo_df, chroms, positions, geno_imputed, sid, geno_df, pheno_df,
+                        trait_col, pcs, min_hap_count, min_group_size, n_perm, geno_encoding,
+                        n_pcs_used):
+    """gwas.haplotype.run_haplotype_block_gwas with the LD Blocks tab's positional arguments
+    (the call it makes to run_haplotype_block_gwas_cached_fn). Not wrapped in st.cache_data:
+    that would hash the whole table, and the tab keeps each result in the session under its
+    key (a bounded family, remember_family)."""
+    from gwas.haplotype import run_haplotype_block_gwas
+
+    return run_haplotype_block_gwas(
+        haplo_df=haplo_df, chroms=chroms, positions=positions, geno_imputed=geno_imputed,
+        sid=sid, geno_df=geno_df, pheno_df=pheno_df, trait_col=trait_col, pcs=pcs,
+        min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=n_perm,
+        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used)
+
+
+# ----------------------------------------------------------- the session keys (for Clear)
+# Every session key pages/Post_GWAS_Analysis.py and pages/_ld_tabs/* write, widget keys
+# excluded. Some are also the GWAS page's keys (chroms, positions, sid, trait_col, ...).
+POST_GWAS_SESSION_KEYS = (
+    "chroms", "positions", "sid",                         # the page re-stores the synced labels
+    "ld_chroms", "ld_positions", "ld_sid",
+    "r2_cache", "_ld_prev_trait",
+    "haplo_df_auto", "haplo_df_auto_hash",
+    "ld_blocks_final", "ld_blocks", "ld_block_metadata_auto",
+    "adj_r2_min",
+    "pheno_used_for_hap", "pheno_used_for_hap_label", "trait_col", "trait_col_locked",
+    "haplo_blocks_to_use", "pcs_for_hap",
+    "hap_tables", "hap_gwas_df", "hap_gwas_df_enriched", "hap_tables_vis",
+    "pheno_vis", "sample_vis",
+    "_local_ld_cache", "_hap_pca_cache", "_hap_box_cache",
+    "_hapgwas_order", "_lddetect_order",
+    "genes_df",
+)
+# Families of keys named by their settings: each haplotype test (HAPGWAS::..., with its
+# "::tables" and "::assign" keys) and each LD-block detection (LDDETECT::...).
+POST_GWAS_SESSION_PREFIXES = ("HAPGWAS::", "LDDETECT::")

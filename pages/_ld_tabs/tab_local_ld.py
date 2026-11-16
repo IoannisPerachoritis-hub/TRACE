@@ -9,6 +9,7 @@ from io import BytesIO
 from streamlit.runtime.scriptrunner import StopException
 from utils.pub_theme import LD_HEATMAP_CMAP, FIGSIZE, export_plotly, show_plot  # noqa: F401 (export_plotly kept for parity)
 
+from gwas import guipost
 from gwas.ld import extract_block_geno_for_paper
 from gwas.plotting import (
     ld_pairs_long, lead_snp_position, plot_ld_block_heatmap, select_ld_heatmap_window,
@@ -27,8 +28,6 @@ def _block_heatmap(ctx, window):
 
     Returns the display/PNG/SVG/PDF bytes, the lead SNP marked and a window summary.
     """
-    import hashlib
-
     label_choice = st.radio(
         "Heatmap tick labels", ["Genomic position (Mb)", "SNP IDs"], horizontal=True,
         key="local_ld_block_labels",
@@ -41,19 +40,17 @@ def _block_heatmap(ctx, window):
     lead = getattr(window, "block_lead_snp", "") or window.lead_snp
     lead_pos = lead_snp_position(lead, ctx.sid, ctx.chroms, ctx.positions, window.chr)
     geno = ctx.geno_ld_aligned if ctx.geno_ld_aligned is not None else ctx.geno_ld
-    # Key the image cache on what is drawn: the window's genotypes, positions and IDs.
+    # Key the image cache on what is drawn: the table (its identity and rows) and the
+    # window's SNPs, positions and IDs. The window's genotypes are read only to draw it.
     win = select_ld_heatmap_window(ctx.chroms, ctx.positions, window.chr,
                                    window.core_start, window.core_end, lead_pos=lead_pos)
-    fingerprint = hashlib.sha1()
-    for part in (np.ascontiguousarray(np.asarray(geno)[:, win["indices"]], dtype=float),
-                 np.asarray(win["positions"]),
-                 np.asarray(ctx.sid)[win["indices"]].astype(str)):
-        fingerprint.update(np.ascontiguousarray(part).tobytes())
     key = ("LOCAL_LD_BLOCK_BYTES", str(window.chr), int(window.core_start),
            int(window.core_end), str(lead), label_mode, bool(show_star),
-           fingerprint.hexdigest())
-    cache = st.session_state.setdefault("_local_ld_cache", {})
-    hit = cache.get(key)
+           guipost.table_key(ctx), guipost.rows_key(ctx),
+           guipost.digest(np.asarray(win["indices"]), np.asarray(win["positions"]),
+                          np.asarray(ctx.sid)[win["indices"]].astype(str)))
+    cache = guipost.bounded(st.session_state, "_local_ld_cache")
+    hit = guipost.recall(cache, key)
     if hit is None:
         fig, info = plot_ld_block_heatmap(
             geno, ctx.chroms, ctx.positions, window.chr, window.core_start, window.core_end,
@@ -70,12 +67,14 @@ def _block_heatmap(ctx, window):
             fig.savefig(buf, bbox_inches="tight", **kw)
             hit[name] = buf.getvalue()
         plt.close(fig)
-        cache[key] = hit
+        guipost.remember(cache, key, hit, guipost.FIGURE_CACHE_MAX)
     return hit
 
 
-def _lead_snp_heatmap(r2, region_pos, region_sids, chr_sel, start_bp, end_bp, lead_snp):
-    """Lead-SNP mode: the SNP-centred local LD heatmap (unchanged by CC-8)."""
+def _lead_snp_heatmap(r2, region_pos, region_sids, chr_sel, start_bp, end_bp, lead_snp,
+                      table=""):
+    """Lead-SNP mode: the SNP-centred local LD heatmap (unchanged by CC-8). ``table`` names
+    the genotype table and its rows in the image cache's key."""
     show_star = st.checkbox(
         "Show lead-SNP star", value=True, key="local_ld_show_star",
         help="Mark the lead SNP with a gold star on the heatmap.",
@@ -149,16 +148,19 @@ def _lead_snp_heatmap(r2, region_pos, region_sids, chr_sel, start_bp, end_bp, le
         _star_note = f" (Lead SNP {lead_snp} is not shown -- outside the window or filtered by QC.)"
     st.caption("LD computed from imputed dosages; haplotype labels use hard-called genotypes." + _star_note)
 
-    # Byte-cache the savefig output keyed on what affects the rendered image.
+    # Byte-cache the savefig output keyed on what affects the rendered image: the table and
+    # its rows, the window's SNPs (in their order) and the display settings.
     local_cache_key = (
         "LOCAL_LD_BYTES",
         chr_sel, int(start_bp), int(end_bp),
         str(lead_snp),
         int(ld_matrix_to_plot.shape[0]),
         bool(show_star),
+        str(table),
+        guipost.digest(np.asarray(region_sids).astype(str), np.asarray(region_pos)),
     )
-    local_cache = st.session_state.setdefault("_local_ld_cache", {})
-    local_cached = local_cache.get(local_cache_key)
+    local_cache = guipost.bounded(st.session_state, "_local_ld_cache")
+    local_cached = guipost.recall(local_cache, local_cache_key)
 
     if local_cached is None:
         buf_disp = BytesIO()
@@ -175,7 +177,7 @@ def _lead_snp_heatmap(r2, region_pos, region_sids, chr_sel, start_bp, end_bp, le
             "svg": buf_svg.getvalue(),
             "pdf": buf_pdf.getvalue(),
         }
-        local_cache[local_cache_key] = local_cached
+        guipost.remember(local_cache, local_cache_key, local_cached, guipost.FIGURE_CACHE_MAX)
     plt.close(fig_ld)
     return local_cached
 
@@ -202,7 +204,8 @@ def render(ctx: LDContext, get_r2_cached, window):
 
         # ---- Extract region genotypes ----
         # In detected-block mode these are the block's member SNPs: they back the r²
-        # exports below; the heatmap itself is the shared block heatmap.
+        # exports below; the heatmap itself is the shared block heatmap. Only the window
+        # is read from the table (its phenotype-aligned rows).
         keep_mask = ctx.keep_mask
 
         region_geno, region_pos, region_sids = extract_block_geno_for_paper(
@@ -246,9 +249,11 @@ def render(ctx: LDContext, get_r2_cached, window):
             )
 
         # ---- Compute r² matrix ----
+        # keyed by the table's identity, its rows and the window's SNPs
         r2 = get_r2_cached(
             region_geno, region_pos, min_pair_n=20,
-            cache_key=f"r2::local::{chr_sel}:{start_bp}-{end_bp}::{lead_snp}::{region_geno.shape[1]}snps",
+            cache_key=guipost.r2_key(ctx, "local", chr_sel, start_bp, end_bp, lead_snp,
+                                     region_sids, min_pair_n=20),
         )
 
         if block_mode:
@@ -277,7 +282,8 @@ def render(ctx: LDContext, get_r2_cached, window):
             )
         else:
             local_cached = _lead_snp_heatmap(
-                r2, region_pos, region_sids, chr_sel, start_bp, end_bp, lead_snp)
+                r2, region_pos, region_sids, chr_sel, start_bp, end_bp, lead_snp,
+                table=f"{guipost.table_key(ctx)}::{guipost.rows_key(ctx)}")
 
         show_plot(local_cached["display"], "medium")
         local_fname = f"LD_heatmap_{lead_snp}_Chr{chr_sel}_{start_bp}_{end_bp}"

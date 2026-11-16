@@ -14,6 +14,7 @@ from utils.pub_theme import (PALETTE_CYCLE, FIGSIZE, export_matplotlib, haplotyp
                              hap_sort_key, show_plot)
 from utils.plot_data import pca_haplotype_labels, pca_points_table
 
+from gwas import guipost
 from gwas.ld import (
     find_ld_clusters_genomewide,
     filter_contained_blocks,
@@ -39,10 +40,11 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
     On cache miss, calls build_fig_fn() to construct the figure, renders to
     PNG@120dpi (display) + PNG@600dpi + SVG + PDF byte buffers, caches them,
     closes the fig, then displays via st.image. Subsequent reruns with the
-    same cache_key short-circuit straight to st.image with cached bytes.
+    same cache_key short-circuit straight to st.image with cached bytes. The cache keeps
+    the most recent gwas.guipost.FIGURE_CACHE_MAX figures.
     """
-    cache = st.session_state.setdefault(cache_namespace, {})
-    cached = cache.get(cache_key)
+    cache = guipost.bounded(st.session_state, cache_namespace)
+    cached = guipost.recall(cache, cache_key)
 
     if cached is None:
         fig = build_fig_fn()
@@ -63,7 +65,7 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
             "svg": buf_svg.getvalue(),
             "pdf": buf_pdf.getvalue(),
         }
-        cache[cache_key] = cached
+        guipost.remember(cache, cache_key, cached, guipost.FIGURE_CACHE_MAX)
 
     show_plot(cached["display"], "small")
     col_png, col_svg, col_pdf = st.columns(3)
@@ -87,19 +89,29 @@ def _render_fig_or_cached(cache_namespace, cache_key, fname_stem, label_prefix, 
 def _render_haplotype_pca(
     block_assignments, geno_sample_ids,
     block_chr, block_start, block_end,
+    geno_view=None, table="",
 ):
     """PC1 vs PC2 inset, one point per accession, coloured by its haplotype in the block:
     the label of the block's sample-to-haplotype assignments (the CSV's Haplotype).
     Samples the haplotype test left out are hollow, "not tested"; samples without a
-    haplotype keep the grey look, "no haplotype"."""
+    haplotype keep the grey look, "no haplotype". Without the GWAS page's PCs it computes
+    two from ``geno_view`` (the GWAS page's imputed table; the session's geno_imputed when
+    not given), which needs the whole table: not done when the table is on disk. ``table``
+    names the table in the figure cache's key."""
+    from gwas.genostore import is_lazy
+
     pcs_full = st.session_state.get("pcs_full")
     eigenvalues = st.session_state.get("pca_eigenvalues")
 
     if pcs_full is None or pcs_full.shape[1] < 2:
         from gwas.kinship import _standardize_geno_for_grm
-        geno = st.session_state.get("geno_imputed")
+        geno = geno_view if geno_view is not None else st.session_state.get("geno_imputed")
         if geno is None:
             st.info("PCA panel unavailable: no cached PCs and no imputed genotype.")
+            return
+        if is_lazy(geno):
+            st.info("PCA panel unavailable: the GWAS run left no PCs, and computing them "
+                    "here would read the whole genotype table, which is kept on disk.")
             return
         Z = _standardize_geno_for_grm(geno)
         U, S, _ = np.linalg.svd(Z, full_matrices=False)
@@ -265,14 +277,16 @@ def _render_haplotype_pca(
         )
         return fig
 
-    # Static cache key (matplotlib only; Plotly rebuilds each fragment rerun)
+    # Static cache key (matplotlib only; Plotly rebuilds each fragment rerun): the block,
+    # its labels, and the table whose PCs are drawn
     static_cache_key = (
         "_hap_pca_render",
         block_chr, int(block_start), int(block_end),
         hash((tuple(labels.values), tuple(in_test.tolist()))),
         pcs_2.shape[0],
+        str(table),
     )
-    cache = st.session_state.setdefault("_hap_pca_cache", {})
+    cache = guipost.bounded(st.session_state, "_hap_pca_cache")
 
     pca_widget_key = (
         f"pca_viz_type_{block_chr}_{int(block_start)}_{int(block_end)}"
@@ -306,7 +320,7 @@ def _render_haplotype_pca(
                 data_name=f"haplotype_pca_{block_chr}_{int(block_start)}_{int(block_end)}",
             )
         else:
-            cached = cache.get(static_cache_key)
+            cached = guipost.recall(cache, static_cache_key)
             if cached is None:
                 fig = _build_static_pca_fig()
                 buf_disp = BytesIO()
@@ -324,7 +338,7 @@ def _render_haplotype_pca(
                     "svg": buf_svg.getvalue(),
                     "pdf": buf_pdf.getvalue(),
                 }
-                cache[static_cache_key] = cached
+                guipost.remember(cache, static_cache_key, cached, guipost.FIGURE_CACHE_MAX)
 
             show_plot(cached["display"], "medium",
                       data=pca_points_table(geno_iids, pcs_2, labels.to_numpy(),
@@ -588,24 +602,23 @@ def render(
 
         # Cache key: the data version (reuse the page's gwas_hash, cheap; fall back to
         # hashing gwas_df) + every detection parameter, incl. the fixed literals so a
-        # future change to them re-keys. Detection recomputes only on a key change.
+        # future change to them re-keys, + the table's identity. Detection recomputes only
+        # on a key change; the session keeps the most recent detections only.
         _gwas_sig = st.session_state.get("haplo_df_auto_hash", {}).get(trait_col)
         if _gwas_sig is None:
             _gwas_sig = _hash_df(gwas_df) if isinstance(gwas_df, pd.DataFrame) else "nogwas"
-        ld_key = (
-            f"LDDETECT::{trait_col}"
-            f"::r2{ld_threshold_auto}::flank{flank_kb_auto}::topn{int(top_n)}"
-            f"::sig{sig_thresh}::decay{ld_decay_kb}::ms2::adj0.2::gap10"
-            f"::G{_gwas_sig}"
-        )
+        ld_key = guipost.detection_key(trait_col, ld_threshold_auto, flank_kb_auto, top_n,
+                                       sig_thresh, ld_decay_kb, _gwas_sig, guipost.table_key(ctx))
 
         if ld_key not in st.session_state:
             with st.spinner("Finding LD blocks around significant SNPs…"):
+                # the table is read window by window, each window the float64 copy the
+                # whole-table conversion gave
                 haplo_df_auto = find_ld_clusters_genomewide(
                     gwas_df=gwas_df,
                     chroms=chroms,
                     positions=positions,
-                    geno_imputed=np.asarray(geno_ld, float),
+                    geno_imputed=geno_ld,
                     sid=sid,
                     ld_threshold=ld_threshold_auto,
                     flank_kb=flank_kb_auto,
@@ -640,7 +653,8 @@ def render(
             if "haplo_df_auto" not in st.session_state:
                 st.session_state["haplo_df_auto"] = {}
 
-            st.session_state["haplo_df_auto"][trait_col] = haplo_df_auto
+            guipost.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_df_auto,
+                                guipost.TRAIT_CACHE_MAX)
             st.session_state["ld_blocks_final"] = haplo_df_auto.copy()
             st.session_state["ld_blocks"] = haplo_df_auto.copy()
 
@@ -656,6 +670,8 @@ def render(
                 "adjacent_r2_split": 0.2,
             }
             st.session_state[ld_key] = haplo_df_auto
+            guipost.remember_family(st.session_state, "_lddetect_order", ld_key,
+                                    guipost.RESULT_CACHE_MAX)
         else:
             haplo_df_auto = st.session_state[ld_key]
 
@@ -886,6 +902,9 @@ def _render_haplotype_gwas(
                      and k.endswith(("::tables", "::assign"))]:
             del st.session_state[_old]
         st.session_state[f"{hap_key}::tables"] = hap_tables
+        # the session keeps the most recent results only
+        guipost.remember_family(st.session_state, "_hapgwas_order", hap_key,
+                                guipost.RESULT_CACHE_MAX, suffixes=("::tables", "::assign"))
 
     else:
         hap_gwas_df = st.session_state[hap_key]
@@ -1208,7 +1227,8 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=No
             st.warning("Chosen SNP is not in the QC'd genotype matrix; cannot render.")
             return
         _ci = int(_idx_arr[0])
-        _dose = np.asarray(geno_hard)[:, _ci].astype(float)
+        # the one SNP's hard calls (a single column is read from the table)
+        _dose = np.asarray(geno_hard[:, _ci]).astype(float)
 
         _ph_used = st.session_state.get("pheno_used_for_hap")
         # sample axis of `geno_hard` above -- same source, so the two always agree
@@ -1549,6 +1569,8 @@ def _render_block_visualization(
         block_chr=block_chr,
         block_start=block_start,
         block_end=block_end,
+        geno_view=getattr(ctx, "geno_view", None),
+        table=guipost.table_key(ctx),
     )
 
     # Store for expression panel selection

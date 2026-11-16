@@ -12,15 +12,19 @@ import pandas as pd
 
 @dataclasses.dataclass
 class LDContext:
-    """Shared state passed to every LD tab renderer."""
+    """Shared state passed to every LD tab renderer.
 
-    # --- genotype arrays (column-aligned) ---
-    geno_ld: np.ndarray
-    geno_hard: np.ndarray
+    The genotype tables are read in windows and blocks, never copied whole. The page passes
+    gwas.guipost readers (the trait's table in memory or on disk); a test may pass plain
+    arrays, which are read the same way."""
+
+    # --- genotype tables (column-aligned; read a window or a block at a time) ---
+    geno_ld: object            # the imputed table as the LD code reads it (float64 windows)
+    geno_hard: object          # its hard calls, a column or a block at a time
     chroms: np.ndarray
     positions: np.ndarray
     sid: np.ndarray
-    geno_df: pd.DataFrame
+    geno_df: pd.DataFrame      # the sample index (the page passes an index-only frame)
 
     # --- phenotype ---
     pheno_df: pd.DataFrame
@@ -28,7 +32,7 @@ class LDContext:
     ph_aligned: pd.DataFrame
     y_aligned: np.ndarray
     keep_mask: np.ndarray
-    geno_ld_aligned: np.ndarray
+    geno_ld_aligned: object    # geno_ld's phenotype-aligned rows
 
     # --- GWAS results ---
     gwas_df: pd.DataFrame
@@ -51,7 +55,14 @@ class LDContext:
     has_annotation: bool = False
 
     # --- significant-SNP tab: raw dosage + the resolved reporting rule ---
-    geno_dosage_raw: np.ndarray | None = None
+    geno_dosage_raw: object | None = None   # the raw dosage table, read like geno_ld
     meff_val: int | None = None
     sig_rule_label: str = ""
     custom_thresh: float | None = None
+
+    # --- the table's identity (every tab cache names it: gwas.guipost.table_key) ---
+    table_identity: str = ""
+    # --- the GWAS page's imputed table as it is (the haplotype PCA panel's fallback) ---
+    geno_view: object | None = None
+    # --- the GWAS results' key (gwas.guipost.frame_key), filled when first needed ---
+    gwas_key: str = ""

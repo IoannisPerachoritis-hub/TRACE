@@ -7,6 +7,7 @@ import seaborn as sns
 from streamlit.runtime.scriptrunner import StopException
 from utils.pub_theme import LD_HEATMAP_CMAP, FIGSIZE, export_matplotlib
 
+from gwas import guipost
 from gwas.ld import extract_block_geno_for_paper
 from . import LDContext
 
@@ -129,10 +130,11 @@ def render(ctx: LDContext, get_r2_cached):
         block_pos = block_pos[order2]
         block_sids = block_sids[order2]
 
-        # Compute LD AFTER sorting
+        # Compute LD AFTER sorting (keyed by the table's identity, its rows and the SNPs)
         r2 = get_r2_cached(
             block_geno, block_pos, min_pair_n=20,
-            cache_key=f"r2::block::{chr_block}:{start_bp}-{end_bp}::{block_geno.shape[1]}snps",
+            cache_key=guipost.r2_key(ctx, "block", chr_block, start_bp, end_bp, "",
+                                     block_sids, min_pair_n=20),
         )
 
         seg_start_bp = int(block_pos.min())
