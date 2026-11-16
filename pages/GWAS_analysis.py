@@ -1990,11 +1990,21 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         "nocov" if user_covar_mat is None
         else f"cov{hash_bytes(user_covar_mat.tobytes(), digest_size=8)}"
     )
+    # ... and every setting the Run reads: LOCO, the models, MLMM's and FarmCPU's PCs and
+    # settings, the significance rule and its threshold, and the subsampling settings (drawn
+    # below, so read from the session: gwas.guigwas.subsampling_settings)
+    _run_fp = (
+        bool(use_loco), tuple(sorted(model_choices)), int(n_pcs_mlmm), int(n_pcs_farmcpu),
+        float(mlmm_p_enter), int(mlmm_max_cof),
+        int(farmcpu_max_iter) if "FarmCPU (multi-locus)" in model_choices else None,
+        sig_rule, None if custom_sig_thresh is None else float(custom_sig_thresh),
+        _gg.subsampling_settings(st.session_state, random_seed, min(4, os.cpu_count() or 1)),
+    )
     _scan_fp = hash_bytes(repr((
         trait_col, int(n_pcs), _covar_fp,
         maf_thresh, miss_thresh, ind_miss_thresh, mac_thresh, info_thresh,
         impute_method, impute_k, impute_l,
-        int(drop_alt), vcf_hash, pheno_hash, norm_option,
+        int(drop_alt), vcf_hash, pheno_hash, norm_option, _run_fp,
     )).encode(), digest_size=16)
     # Navigated back (did not click Run this rerun) and results already exist for this
     # trait -> re-display them, with a staleness notice if the inputs have since changed.
@@ -2130,6 +2140,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             try:
                 meff_val, _meff_eigs = _gg.meff(st.session_state, _table_id, geno_imputed)
                 st.session_state["meff_val"] = meff_val
+                # the table M_eff belongs to: the Post-GWAS page uses meff_val only for it
+                st.session_state["meff_identity"] = _table_id
                 meff_thresh = 0.05 / meff_val
                 _meff_computed = True
             except Exception as e:
@@ -2398,14 +2410,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # Stable cache key for subsampling results: the table's identity (the genotypes,
             # the trait and its normalisation, the samples, covariates, QC and imputation
             # settings), so an Apply / Remove in the phenotype QC panel or a new upload is a
-            # miss; then the PC count and the subsampling settings.
-            boot_cache_key = (
-                f"BOOT_GWAS::{trait_col}::{_table_id}::pcs{int(n_pcs)}"
-                f"::reps{boot_n_reps}::frac{boot_sample_frac:.2f}"
-                f"::thresh{boot_disc_thresh:.1e}::seed{boot_seed}"
-                f"::loco{boot_use_loco}"
-                f"::n{geno_imputed.shape[0]}x{geno_imputed.shape[1]}"
-            )
+            # miss; then the PC count and the subsampling settings, the threshold exactly and
+            # the cores (gwas.guigwas.subsampling_key).
+            boot_cache_key = _gg.subsampling_key(
+                trait_col, _table_id, n_pcs, boot_n_reps, boot_sample_frac, boot_disc_thresh,
+                boot_seed, boot_use_loco, boot_n_jobs, geno_imputed.shape)
 
             if boot_cache_key not in st.session_state:
                 # one entry per trait (each holds a reps x SNPs p-value matrix)
@@ -2597,11 +2606,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # ---- LD block aggregation ----
             st.markdown("#### Per-LD-block subsampling stability")
 
-            haplo_df_for_agg = st.session_state.get("ld_blocks_final", None)
-            if haplo_df_for_agg is None:
-                haplo_df_for_agg = st.session_state.get("haplo_df_auto", None)
-                if isinstance(haplo_df_for_agg, dict):
-                    haplo_df_for_agg = haplo_df_for_agg.get(trait_col, None)
+            # the Post-GWAS page's blocks of this trait and this table only (gwas.guigwas)
+            haplo_df_for_agg = _gg.stability_blocks(st.session_state, trait_col, _table_id)
+            _other_blocks = haplo_df_for_agg is None and (
+                st.session_state.get("ld_blocks_final") is not None
+                or bool(st.session_state.get("haplo_df_auto")))
 
             with st.container():
                 if haplo_df_for_agg is not None and not haplo_df_for_agg.empty:
@@ -2646,6 +2655,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         st.session_state["subsampling_block_stability"] = block_stab
                     else:
                         st.warning("No LD blocks could be matched to subsampling SNP results.")
+                elif _other_blocks:
+                    st.caption(
+                        "Not aggregated: the Post-GWAS page's LD blocks belong to another trait or "
+                        "another genotype table. Open the Post-GWAS page after this run, then click "
+                        "Run GWAS again to aggregate its blocks.")
                 else:
                     st.write(
                         "No LD blocks available for aggregation. "
@@ -3289,6 +3303,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     if "gwas_results" not in st.session_state:
         st.session_state["gwas_results"] = {}
     st.session_state["gwas_results"][trait_col] = selected_df.copy()
+    # this Run's table: the Post-GWAS page reads gwas_results only while the session's table is it
+    st.session_state["gwas_run_identity"] = _table_id
     st.session_state["gwas_df"] = selected_df.copy()
     st.session_state["downstream_model"] = downstream_model
 

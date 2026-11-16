@@ -87,7 +87,7 @@ def test_clear_frees_tables_uploads_cached_results_memo_files_and_session_keys(t
     G = rng.integers(0, 3, size=(30, 60)).astype(np.float32)
     guigwas.ld_decay("clear-test", G, np.repeat(np.array(["1", "2"]), 30), np.tile(np.arange(30) * 1000, 2))
     kinship.compute_pcs_full_cached("clear-test", G, max_pcs=2)
-    assert _n_cache_entries() >= 3
+    assert _n_cache_entries() >= 2                                    # (the registry is not counted)
     # the session: the GWAS page's keys, the Post-GWAS page's, and widget settings that stay
     page_keys = {"_persist_vcf_path": "x", "geno_imputed": 1, "geno_table": 1, guigwas.PREP_KEY: 1,
                  guigwas.MEFF_KEY: 1, "gwas_zip_pheno__T__MLM__n1": {}, "BOOT_GWAS::T::id": {},

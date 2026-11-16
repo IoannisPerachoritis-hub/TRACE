@@ -322,6 +322,56 @@ def pc_diagnostics(state, table_key, Z):
 
 
 # ----------------------------------------------------------------------------- subsampling
+def subsampling_key(trait, table_key, n_pcs, n_reps, sample_frac, discovery_thresh, seed, use_loco,
+                    n_jobs, shape):
+    """The session key of one subsampling result of the page ("BOOT_GWAS::<trait>::..."): the trait
+    table's identity, the PC count and every subsampling setting. The discovery threshold is
+    written exactly (repr): the number box takes any value, and two thresholds that print alike
+    with two digits are two thresholds. The workers are named: each one's BLAS threads (cores /
+    workers when no thread count is set) decide the last digits of the p-values."""
+    return (f"BOOT_GWAS::{trait}::{table_key}::pcs{int(n_pcs)}"
+            f"::reps{n_reps}::frac{sample_frac:.2f}"
+            f"::thresh{float(discovery_thresh)!r}::seed{seed}"
+            f"::loco{use_loco}::jobs{int(n_jobs)}"
+            f"::n{int(shape[0])}x{int(shape[1])}")
+
+
+# The subsampling settings of the detailed view (widget key, default when it has not been drawn),
+# for the re-display notice: they are drawn after the notice is decided.
+SUBSAMPLING_WIDGETS = ("boot_n_reps", "boot_sample_frac", "boot_disc_thresh", "boot_seed", "boot_n_jobs",
+                       "boot_use_loco")
+
+
+def subsampling_settings(state, seed_default, jobs_default):
+    """The subsampling settings a Run GWAS would use now, read from the session ``state`` (the
+    widgets' values, or their defaults when not drawn yet: 50 iterations, 0.80, 1e-4, the sidebar's
+    seed, ``jobs_default`` cores, no LOCO); ("none",) without subsampling."""
+    if not state.get("run_subsampling_gwas", False):
+        return ("none",)
+    defaults = dict(boot_n_reps=50, boot_sample_frac=0.80, boot_disc_thresh=1e-4, boot_seed=seed_default,
+                    boot_n_jobs=jobs_default, boot_use_loco=False)
+    return tuple(state.get(k, defaults[k]) for k in SUBSAMPLING_WIDGETS)
+
+
+def stability_blocks(state, trait, table_key):
+    """The LD blocks the GWAS page's per-block subsampling stability aggregates, or None when the
+    session has none of this trait and this table: the Post-GWAS page's last blocks
+    (ld_blocks_final) when ld_blocks_final_key, written with them, is (trait, table identity);
+    else the Post-GWAS page's automatic blocks of this trait (haplo_df_auto) when their signature
+    (haplo_df_auto_hash, "<GWAS hash>::T<table identity>::R<rows>") names this table."""
+    final = state.get("ld_blocks_final")
+    key = state.get("ld_blocks_final_key")
+    if final is not None and isinstance(key, (tuple, list)) and len(key) == 2 \
+            and (str(key[0]), str(key[1])) == (str(trait), str(table_key)):
+        return final
+    auto, sigs = state.get("haplo_df_auto"), state.get("haplo_df_auto_hash")
+    if isinstance(auto, dict) and isinstance(sigs, dict):
+        blocks, sig = auto.get(trait), sigs.get(trait)
+        if blocks is not None and sig is not None and f"::T{table_key}::" in str(sig):
+            return blocks
+    return None
+
+
 def subsampling_workers_fit(n_samples, n_snps_, n_jobs, available=None):
     """(fits, need_bytes, free_bytes): whether ``n_jobs`` subsampling workers fit in the free
     memory. Each worker after the first is a process with its own share of the table:
@@ -421,7 +471,7 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
 SESSION_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_", "BOOT_GWAS::")
 SESSION_KEYS = (
     "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
-    "_vcf_live", "_vcf_save_failed", FREQ_KEY, PC_DIAG_KEY,
+    "_vcf_live", "_vcf_save_failed", FREQ_KEY, PC_DIAG_KEY, "meff_identity", "gwas_run_identity",
     "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
     "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
     "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
