@@ -181,15 +181,20 @@ def _read_only_arrays(*arrays):
             a.setflags(write=False)
 
 
-def build_loco_kernels_cached(iid, Z_grm, chroms_grm, K_base=None):
-    """Cached wrapper for _build_loco_kernels_impl (its kernels are shared, read-only)."""
-    K0, K_by_chr, diag = _build_loco_kernels_impl(iid, Z_grm, chroms_grm, K_base)
+def build_loco_kernels_cached(table_key, _iid=None, _Z_grm=None, _chroms_grm=None, _K_base=None):
+    """Cached wrapper for _build_loco_kernels_impl (its kernels are shared, read-only).
+
+    Keyed by ``table_key``, the trait table's identity (gwas.guigwas.trait_identity), which names
+    everything the pruned table, its chromosomes and the kinship matrix are made from. The arrays
+    are underscore arguments: Streamlit never hashes them (it hashed a 100,000-cell sample of a
+    table of 500,000 cells or more, so a change outside the sample was not seen)."""
+    K0, K_by_chr, diag = _build_loco_kernels_impl(_iid, _Z_grm, _chroms_grm, _K_base)
     _read_only_arrays(getattr(K0, "val", None), *(getattr(k, "val", None) for k in K_by_chr.values()))
     return K0, K_by_chr, diag
 
 if st is not None:
     build_loco_kernels_cached = st.cache_resource(
-        show_spinner="Building LOCO kernels (cached)…"
+        show_spinner="Building LOCO kernels (cached)…", max_entries=8,
     )(build_loco_kernels_cached)
 
 
@@ -214,15 +219,17 @@ def _compute_pcs_full_impl(Z_for_pca: np.ndarray, max_pcs: int = 20):
     return pcs_full.astype(np.float32, copy=False), pca.explained_variance_
 
 
-def compute_pcs_full_cached(Z_for_pca: np.ndarray, max_pcs: int = 20):
-    """Cached wrapper for _compute_pcs_full_impl (its PCs are shared, read-only)."""
-    pcs, eig = _compute_pcs_full_impl(Z_for_pca, max_pcs)
+def compute_pcs_full_cached(table_key, _Z_for_pca=None, max_pcs: int = 20):
+    """Cached wrapper for _compute_pcs_full_impl (its PCs are shared, read-only), keyed by
+    ``table_key``, the trait table's identity, and the number of PCs; the table is an underscore
+    argument, never hashed."""
+    pcs, eig = _compute_pcs_full_impl(_Z_for_pca, max_pcs)
     _read_only_arrays(pcs, eig)
     return pcs, eig
 
 if st is not None:
     compute_pcs_full_cached = st.cache_resource(
-        show_spinner="Computing PCA (cached)…"
+        show_spinner="Computing PCA (cached)…", max_entries=8,
     )(compute_pcs_full_cached)
 
 
