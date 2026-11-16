@@ -33,10 +33,12 @@ server's registry making room) ends the page with a plain message (RELEASED_MESS
 table_released, released_guard).
 
 The GWAS results and M_eff in the session are taken only for the table they were computed on
-(run_table_changed, meff_for_table: the identities the GWAS page records with them), the PCs
-only from what the GWAS page writes with the table (run_pcs, pcs_of_samples), and the page
-records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for the GWAS page's
-block stability.
+(run_table_changed, meff_for_table: the identities the GWAS page records with them), and the
+results only for the trait of the last finished Run GWAS (run_trait); otherwise the page says
+what happened (results_message: the last Run GWAS did not finish, or the settings changed since
+it). The PCs come only from what the GWAS page writes with the table (run_pcs, pcs_of_samples),
+and the page records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for
+the GWAS page's block stability.
 
 SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
 result when their inputs are provably the same (the tab at its defaults, every sample
