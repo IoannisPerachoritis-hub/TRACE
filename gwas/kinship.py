@@ -173,9 +173,19 @@ def _build_loco_kernels_impl(iid, Z_grm, chroms_grm, K_base=None):
     return K0, K_by_chr, diagnostics_by_chr
 
 
+def _read_only_arrays(*arrays):
+    """Mark arrays read-only: what st.cache_resource returns is shared by every session of the
+    server, so an in-place change must fail loudly instead of altering another run's data."""
+    for a in arrays:
+        if isinstance(a, np.ndarray):
+            a.setflags(write=False)
+
+
 def build_loco_kernels_cached(iid, Z_grm, chroms_grm, K_base=None):
-    """Cached wrapper for _build_loco_kernels_impl."""
-    return _build_loco_kernels_impl(iid, Z_grm, chroms_grm, K_base)
+    """Cached wrapper for _build_loco_kernels_impl (its kernels are shared, read-only)."""
+    K0, K_by_chr, diag = _build_loco_kernels_impl(iid, Z_grm, chroms_grm, K_base)
+    _read_only_arrays(getattr(K0, "val", None), *(getattr(k, "val", None) for k in K_by_chr.values()))
+    return K0, K_by_chr, diag
 
 if st is not None:
     build_loco_kernels_cached = st.cache_resource(
@@ -205,8 +215,10 @@ def _compute_pcs_full_impl(Z_for_pca: np.ndarray, max_pcs: int = 20):
 
 
 def compute_pcs_full_cached(Z_for_pca: np.ndarray, max_pcs: int = 20):
-    """Cached wrapper for _compute_pcs_full_impl."""
-    return _compute_pcs_full_impl(Z_for_pca, max_pcs)
+    """Cached wrapper for _compute_pcs_full_impl (its PCs are shared, read-only)."""
+    pcs, eig = _compute_pcs_full_impl(Z_for_pca, max_pcs)
+    _read_only_arrays(pcs, eig)
+    return pcs, eig
 
 if st is not None:
     compute_pcs_full_cached = st.cache_resource(

@@ -1,6 +1,8 @@
 [server]
-# Increase file upload limit to 1 GB
-maxUploadSize = 1024
+# Upload limit: 2 GB. An upload is held in memory twice while it arrives, before TRACE can
+# check anything, so bigger VCFs go through the GWAS page's location box ("Or type the VCF's
+# location on this computer"), which reads the file where it is and holds nothing in memory.
+maxUploadSize = 2048
 
 # (Optional but useful)
 enableXsrfProtection = false

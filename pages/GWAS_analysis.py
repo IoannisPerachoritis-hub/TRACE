@@ -23,6 +23,9 @@ from gwas.utils import (
 )
 from gwas.io import load_vcf_cached, _clean_chr_series
 from gwas.qc import gwas_pipeline, allele_freq_from_called_dosage
+from gwas import guitable as _gt
+from gwas import storeplan as _sp
+from pathlib import Path as _Path
 from gwas.windows import ld_window_kb
 from utils.pub_theme import plotly_html_bytes
 from gwas.utils import _mean_impute_cols
@@ -245,12 +248,17 @@ def _has_persisted_gwas():
     return _g is not None and not (hasattr(_g, "empty") and _g.empty)
 
 
+def _vcf_file_ready():
+    """The VCF in use (a typed location, or the upload saved in the work folder) is there."""
+    _p = st.session_state.get("_persist_vcf_path")
+    return bool(_p) and os.path.isfile(_p)
+
+
 def _has_persisted_upload():
-    """The raw genotype/phenotype inputs from a prior run are still in memory, so
-    a re-run can proceed without re-uploading (Streamlit drops the uploaded-file
-    buffers on page navigation)."""
-    return ("_persist_vcf_bytes" in st.session_state
-            and "_persist_pheno" in st.session_state)
+    """The genotype file and the phenotype table of a prior run are still available (the
+    VCF by its path, the phenotype in memory), so a re-run can proceed without
+    re-uploading (Streamlit drops the uploaded-file buffers on page navigation)."""
+    return _vcf_file_ready() and "_persist_pheno" in st.session_state
 
 
 def _covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):
@@ -264,7 +272,8 @@ def _covar_persist_decision(covar_file_present, running_from_memory, has_persist
                  otherwise apply silently to every later trait).
     "none"    -> no file and nothing persisted.
     Pure decision (no Streamlit / IO) so both branches are unit-testable without a
-    browser; `running_from_memory` is `vcf_file is None` (the page's own read-back gate).
+    browser; `running_from_memory` is `phe_file is None` (the phenotype comes from the
+    session: the page is rehydrating; the VCF is always read from its file now).
     """
     if covar_file_present:
         return "upload"
@@ -348,15 +357,15 @@ def _rehydrate_or_stop(msg=None, level="error"):
     st.stop()
 
 
-_CLEAR_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "VCF_BYTES::", "gwas_zip_",
+_CLEAR_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_",
                    "BOOT_GWAS::")
 _CLEAR_KEYS = (
-    "_persist_vcf_bytes", "_persist_pheno", "_persist_is_gz", "_persist_covar",
+    "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
     "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
     "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
     "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
     "pheno_reader", "covar_reader", "pheno_aligned", "pheno", "y", "iid",
-    "sid", "chroms", "chroms_num", "positions", "GWAS_CTX", "pheno_raw",
+    "sid", "chroms", "chroms_num", "positions", "GWAS_CTX", "geno_table", "pheno_raw",
     "pheno_applied_transforms", "_pheno_raw_fp", "subsampling_gwas_summary",
 )
 
@@ -373,17 +382,33 @@ with st.container():
     col_files, col_qc = st.columns([2, 3])
 
     with col_files:
-        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key="vcf_upload")
+        # the upload box gets a new key once its file is saved to the work folder, which
+        # empties it and lets Streamlit release its copy of the upload
+        _vcf_widget_n = int(st.session_state.get("_vcf_upload_widget", 0))
+        vcf_file = st.file_uploader(
+            "Upload Genotype (VCF)", type=["vcf", "vcf.gz"],
+            key="vcf_upload" if _vcf_widget_n == 0 else f"vcf_upload_{_vcf_widget_n}")
         if vcf_file is not None:
             _vcf_size_mb = vcf_file.size / (1024 * 1024)
             if _vcf_size_mb > 200:
                 st.warning(
-                    f"VCF file is {_vcf_size_mb:.0f} MB. Large files may cause slow "
-                    "processing or memory issues. Consider pre-filtering to keep only "
-                    "target chromosomes and MAF > 0.01 variants. Note: the genotype is "
-                    "kept in session memory so runs can repeat without re-uploading; "
-                    "use **Clear session data** (right) to release it."
+                    f"VCF file is {_vcf_size_mb:.0f} MB. An upload is held in memory while "
+                    "it arrives, so for large files type the file's location below "
+                    "instead: TRACE then reads it from disk and holds nothing in memory "
+                    "for it. Before reading, TRACE checks the memory and keeps the "
+                    "genotype table on disk when it would not fit (see Large datasets)."
                 )
+        _vcf_location = ""
+        if not _gt.path_input_disabled():
+            _vcf_location = st.text_input(
+                "Or type the VCF's location on this computer",
+                key="vcf_location",
+                placeholder="for example C:\\data\\panel.vcf.gz or /home/me/panel.vcf.gz",
+                help="The full location of a .vcf or .vcf.gz file on the computer that runs "
+                     "TRACE. Nothing is uploaded or copied: TRACE reads the file where it is, "
+                     "so this suits files too big to upload. In Docker, give the location "
+                     "inside the container (the mounted folder).",
+            )
         phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"], key="pheno_upload")
         # ------------------------------------------------------------
         # Store phenotype file label for reproducible exports
@@ -408,6 +433,60 @@ with st.container():
                  "Samples without a value for a covariate are dropped before QC, "
                  "kinship and the PCs, with a warning, as in the CLI's --covar.",
         )
+
+        with st.expander("Large datasets", expanded=False):
+            geno_store_choice = st.radio(
+                "Where to keep the genotype table",
+                list(_gt.CHOICES),
+                index=list(_gt.CHOICES).index(_gt.default_choice()),
+                format_func=_gt.CHOICE_LABELS.get,
+                key="geno_store_choice",
+                help="Automatic keeps the table in memory when it fits and on disk otherwise. "
+                     "On disk reads it in pieces, with the same results and far less memory. "
+                     "The default comes from the environment variable TRACE_GENO_STORE "
+                     "(auto, memory or disk).",
+            )
+            _work_dir_text = st.text_input(
+                "Work folder (saved uploads and table files)",
+                value=str(_gt.default_work_dir()),
+                key="geno_store_dir",
+                help="Uploads are saved here once, and tables kept on disk are written here. "
+                     "The default comes from the environment variable TRACE_GENO_STORE_DIR, "
+                     "else a folder in the system's temporary folder.",
+            )
+        geno_work_dir = _Path(_work_dir_text.strip() or str(_gt.default_work_dir()))
+
+        # ---- The VCF in use: a typed location, else the upload saved once ----
+        if _vcf_location.strip():
+            _loc = _gt.check_vcf_location(_vcf_location)
+            if _loc.ok:
+                st.caption(f"Using {_loc.path} ({_gt.size_text(_loc.size)}).")
+                if st.session_state.get("_persist_vcf_path") != str(_loc.path):
+                    st.session_state["_persist_vcf_path"] = str(_loc.path)
+                    st.session_state["_persist_vcf_name"] = _loc.path.name
+                    st.session_state["_vcf_source"] = "location"
+            else:
+                st.error(_loc.message)
+        elif vcf_file is not None:
+            _token = _gt.new_upload_token(vcf_file)
+            if st.session_state.get("_vcf_upload_token") != _token:
+                try:
+                    _saved_path, _saved_id = _gt.save_upload(vcf_file, geno_work_dir)
+                except OSError as _save_err:
+                    st.error(f"The upload cannot be saved in the work folder {geno_work_dir} "
+                             f"({_save_err}). Choose another work folder under Large datasets.")
+                    st.stop()
+                st.session_state["_persist_vcf_path"] = str(_saved_path)
+                st.session_state["_persist_vcf_name"] = vcf_file.name
+                st.session_state["_vcf_upload_token"] = _token
+                st.session_state["_vcf_source"] = "upload"
+            # empty the upload box (new key) so Streamlit can release its copy
+            st.session_state["_vcf_upload_widget"] = _vcf_widget_n + 1
+            st.rerun()
+        elif _vcf_file_ready() and st.session_state.get("_vcf_source") == "upload":
+            st.caption(f"Genotype file: {st.session_state.get('_persist_vcf_name', '')} "
+                       f"(saved in the work folder, "
+                       f"{_gt.size_text(os.path.getsize(st.session_state['_persist_vcf_path']))}).")
 
     # ---- Data format guidance (collapsible) ----
     with st.expander("Data format requirements", expanded=False):
@@ -711,7 +790,7 @@ random_seed = st.sidebar.number_input(
 # =========================
 # 2. Phenotype handling & transforms
 # =========================
-if (vcf_file and phe_file) or _has_persisted_upload():
+if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
 
     # --- Load phenotype file (with encoding fallbacks; from memory on re-run) ---
     if phe_file is not None:
@@ -776,7 +855,7 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     covar_df = None
     _covar_source = None
     _covar_decision = _covar_persist_decision(
-        covar_file is not None, vcf_file is None, "_persist_covar" in st.session_state
+        covar_file is not None, phe_file is None, "_persist_covar" in st.session_state
     )
     if _covar_decision == "upload":
         try:
@@ -942,30 +1021,44 @@ if (vcf_file and phe_file) or _has_persisted_upload():
     # the significance divisor). Not a user choice.
     drop_alt = True
 
-    # Load VCF bytes
-    if vcf_file is not None:
-        vcf_bytes = vcf_file.read()
-        is_gz = vcf_file.name.endswith(".gz")
-        # persist the raw genotype bytes so a re-run can proceed from memory
-        st.session_state["_persist_vcf_bytes"] = vcf_bytes
-        st.session_state["_persist_is_gz"] = is_gz
-        st.session_state["_persist_vcf_name"] = vcf_file.name
-    else:
-        vcf_bytes = st.session_state["_persist_vcf_bytes"]
-        is_gz = st.session_state.get("_persist_is_gz", False)
+    # The VCF is read from its file (the typed location, or the upload saved in the work
+    # folder); the session holds only its path, never its bytes.
+    vcf_path = st.session_state["_persist_vcf_path"]
 
     # Phenotype normalisation: each trait's applied transformation from Section 2b
     # (else 'none'), passed to the pipeline as its --norm slug, which applies it as
     # cli.py --norm does. The phenotype table (and so pheno_hash) holds raw values.
 
     # --- Build stable cache keys ---
-    vcf_hash = hash_bytes(vcf_bytes)
+    # the file's content hash, read in pieces once per (path, size, modification time): the
+    # value hash_bytes gives the whole file, so every key and seed built on it is unchanged
+    vcf_hash = _gt.file_identity(vcf_path)
     # the raw table's fingerprint from the new-upload check above (the table has not
     # changed since: only an idempotent column-name strip ran in between)
     pheno_hash = _pheno_raw_fp
 
+    # --- Where the genotype table is kept: checked before anything is read ---
+    _geno_plan = _sp.plan(vcf_path, choice=geno_store_choice, store_base=geno_work_dir,
+                          models=("mlm", "mlmm", "farmcpu"), impute=impute_method)
+    st.caption(_gt.page_message(_geno_plan))
+    if geno_work_dir.exists():
+        _own = _gt.own_folders()
+        for _stale_dir, _stale_bytes in _sp.stale_store_folders(geno_work_dir):
+            if _stale_dir not in _own:
+                st.warning(
+                    f"A genotype table folder of an earlier TRACE run that did not close is "
+                    f"still here: {_stale_dir} ({_stale_bytes / 1e9:.2f} GB). Delete it to free "
+                    "the space.")
+    if _geno_plan.stop:
+        _rehydrate_or_stop(_gt.page_stop(_geno_plan, geno_work_dir))
+    if _geno_plan.mode == "disk":
+        _rehydrate_or_stop(
+            "The genotype table of this dataset is kept on disk (see the line above). The "
+            "page's analyses read it in pieces once the next change of this batch is in; "
+            "until then, keep it in memory under Large datasets, or run the CLI with "
+            "--geno-store auto.", level="info")
+
     # --- Store heavy inputs in session_state under those keys ---
-    st.session_state[f"VCF_BYTES::{vcf_hash}"] = vcf_bytes
     st.session_state[f"PHENO_DF::{pheno_hash}"] = pheno.copy()
     # the covariate table: the preprocessing drops its incomplete samples, as the CLI
     _covar_hash = None
@@ -997,10 +1090,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 impute_k=impute_k,
                 impute_l=impute_l,
                 covar_hash=_covar_hash,
+                _vcf_path=vcf_path,
             )
         except _CovariateDropError as _cov_err:
             # no sample keeps its covariate values: the same for every trait
-            st.session_state.pop(f"VCF_BYTES::{vcf_hash}", None)
             _rehydrate_or_stop(str(_cov_err))
         except ValueError as _setup_err:
             # Skip only a phenotype-QC refusal, which is about this trait. Any other
@@ -1020,7 +1113,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         trait_col = _setup_trait
         break
     if results is None:
-        st.session_state.pop(f"VCF_BYTES::{vcf_hash}", None)
         _rehydrate_or_stop(
             "No selected trait can be analysed: "
             + "; ".join(f"{t}: {e}" for t, e in _setup_failed.items()))
@@ -1040,8 +1132,6 @@ if (vcf_file and phe_file) or _has_persisted_upload():
             f"**{trait_col}**."
         )
 
-    # Free VCF bytes from session state, no longer needed after parsing
-    st.session_state.pop(f"VCF_BYTES::{vcf_hash}", None)
     st.session_state["Z_grm"] = results["Z_for_pca"]
     # Force numpy dtype: chroms_grm may be ArrowStringArray on newer pandas,
     # which Streamlit @st.cache_data cannot hash (build_loco_kernels_cached fails).
@@ -1430,6 +1520,23 @@ if (vcf_file and phe_file) or _has_persisted_upload():
         # {SNP: (REF, ALT)}: the lead-SNP box plot names the genotypes (A/A, A/G, G/G)
         "allele_map": (results.get("allele_map") if isinstance(results, dict) else None),
     }
+    # The genotype table this page leaves for One-Click and the Post-GWAS page
+    # (gwas.guitable.SessionTable): its identity, the in-memory table (or the view of a
+    # table on disk), the row selection, the fill vector and the SNP and sample labels.
+    st.session_state["geno_table"] = _gt.SessionTable(
+        identity=_gt.table_identity(
+            vcf_hash, pheno=pheno_hash, trait=trait_col, norm=norm_option, maf=maf_thresh,
+            miss=miss_thresh, ind_miss=ind_miss_thresh, mac=mac_thresh, info=info_thresh,
+            drop_alt=int(drop_alt), impute=impute_method, impute_k=impute_k,
+            impute_l=impute_l, covar=_covar_hash),
+        file_identity=vcf_hash,
+        mode=_geno_plan.mode,
+        view=st.session_state["geno_imputed"],
+        sid=st.session_state["sid"],
+        chroms=st.session_state["chroms"],
+        positions=st.session_state["positions"],
+        iid=st.session_state["iid"],
+    )
 
     # ================================================================
     #       ONE-CLICK FULL ANALYSIS PIPELINE
@@ -1797,7 +1904,8 @@ if (vcf_file and phe_file) or _has_persisted_upload():
                 covar_frame=covar_df,  # samples without a value are dropped, as in the CLI
             )
 
-            _parsed = ParsedGenotypes.from_callset(load_vcf_cached(vcf_bytes))
+            with open(vcf_path, "rb") as _vcf_fh:      # read from its file, not the session
+                _parsed = ParsedGenotypes.from_callset(load_vcf_cached(_vcf_fh.read()))
             _n_total = len(selected_traits)
             _done, _failed, _elapsed = {}, {}, []
             _clock = {"t0": _time_mod.time(), "trait": ""}
@@ -2227,7 +2335,10 @@ if (vcf_file and phe_file) or _has_persisted_upload():
 
     # Run manifest (embedded in GWAS ZIP)
     pheno_label = st.session_state.get("pheno_file_label", "unknown_pheno")
-    vcf_name = getattr(vcf_file, "name", "unknown_vcf")
+    # the VCF's name: the upload's or the typed file's (the upload box is emptied once its
+    # file is saved, so the name is kept with the saved path)
+    vcf_name = ((st.session_state.get("_persist_vcf_name") or "unknown_vcf")
+                if st.session_state.get("_vcf_source") else getattr(vcf_file, "name", "unknown_vcf"))
     phe_name = getattr(phe_file, "name", "unknown_pheno_file")
 
     manifest = _make_run_manifest(

@@ -33,6 +33,7 @@ if str(_ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
+from tests import _gui_inputs as _gi  # noqa: E402
 from tests import _multitrait_data as mt  # noqa: E402
 
 # over about 30 s: run once per batch, not per task (-m 'not slow_gui')
@@ -50,8 +51,7 @@ def session():
     st.cache_data.clear()
     at = AppTest.from_file(_PAGE, default_timeout=900)
     ss = at.session_state
-    ss["_persist_vcf_bytes"] = vcf_text.encode()
-    ss["_persist_is_gz"] = False
+    ss["_persist_vcf_path"] = _gi.vcf_file(vcf_text)
     ss["_persist_pheno"] = pheno
     ss["selected_traits_multiselect"] = [TRAIT]
     ss["gwas_pheno_qc_transform"] = "None (raw values)"

@@ -123,6 +123,35 @@ works if the user TRACE runs as can write to it; a new volume is owned by root, 
 user cannot write there unless you give the volume to that user. A container memory limit is read
 by `auto`: a run that does not fit under the limit keeps its table on disk.
 
+## In the GUI
+
+**Opening a big VCF.** Next to the upload box, the GWAS page has a box "Or type the VCF's location
+on this computer". It takes a `.vcf` or `.vcf.gz` file on the computer that runs TRACE, checks
+that it exists and can be read, and shows its size. Nothing is uploaded or copied: TRACE reads the
+file where it is. The upload box takes files up to 2 GB; an upload is held in memory twice while it
+arrives, before TRACE can check anything, so bigger files should go through the location box. An
+uploaded file is written once to the work folder (below) and read from there; the upload box is
+then emptied so the browser's copy can be released.
+
+On a shared server, whose users should not open the server's own files, set
+`TRACE_DISABLE_PATH_INPUT=1` to hide the location box. In Docker, the location is a path inside
+the container: the folder you mounted (for example `/data/panel.vcf.gz` for `-v
+"$PWD:/data"`).
+
+**Where the table is kept.** A collapsed section "Large datasets" on the GWAS page offers
+Automatic (the default), In memory or On disk, with the same meaning as `--geno-store`. Before
+anything is read, the page shows the same check the CLI logs (how many genotype calls, the memory
+an in-memory run needs, the free memory) and stops with a plain message when the choice cannot
+work. The environment variable `TRACE_GENO_STORE` (`auto`, `memory` or `disk`) sets the default,
+so a server or a Docker image can force it.
+
+**Work folder.** Saved uploads and tables kept on disk go into the work folder: the environment
+variable `TRACE_GENO_STORE_DIR`, else a folder `trace_gui` in the system's temporary folder. The
+same section can change it, and the check includes its free space. Each table file gets its own
+folder, `_trace_geno_store_gui_<process>_<random>`; TRACE keeps at most two, and removes a folder
+when its table is no longer kept and when the server stops normally. Folders left by a server that
+did not stop are named on the page with their size; they are never deleted automatically.
+
 ## Checking that both modes agree
 
 Run the same analysis twice, once with each mode, into two folders, and compare the two ZIPs:

@@ -39,6 +39,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import gwas.pipeline as _pl  # noqa: E402
 import gwas.plotting as _gp  # noqa: E402
+from tests import _gui_inputs as _gi  # noqa: E402
 from tests import _multitrait_data as mt  # noqa: E402
 
 # over about 30 s: run once per batch, not per task (-m 'not slow_gui')
@@ -68,8 +69,7 @@ def _one_click(traits, rec):
     vcf_text, pheno, _info = mt.build()
     st.cache_data.clear()
     at = AppTest.from_file(_PAGE, default_timeout=900)
-    at.session_state["_persist_vcf_bytes"] = vcf_text.encode()
-    at.session_state["_persist_is_gz"] = False
+    at.session_state["_persist_vcf_path"] = _gi.vcf_file(vcf_text)
     at.session_state["_persist_pheno"] = pheno
     at.session_state["selected_traits_multiselect"] = list(traits)
     # all three models, so every model's p-values are compared
@@ -188,8 +188,7 @@ def test_gui_widgets_reach_the_pipeline_options(monkeypatch):
     vcf_text, pheno, _info = mt.build()
     st.cache_data.clear()
     at = AppTest.from_file(_PAGE, default_timeout=900)
-    at.session_state["_persist_vcf_bytes"] = vcf_text.encode()
-    at.session_state["_persist_is_gz"] = False
+    at.session_state["_persist_vcf_path"] = _gi.vcf_file(vcf_text)
     at.session_state["_persist_vcf_name"] = "planted.vcf"
     at.session_state["_persist_pheno"] = pheno
     at.session_state["selected_traits_multiselect"] = ["T_chr1"]

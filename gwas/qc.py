@@ -1,4 +1,5 @@
 import logging
+import os
 import numpy as np
 import pandas as pd
 try:
@@ -815,19 +816,22 @@ def gwas_pipeline(
     impute_k=5,
     impute_l=20,
     covar_hash=None,
+    _vcf_path=None,
 ):
     """
     Cached preprocessing pipeline.
-    Inputs are retrieved from st.session_state via stable hashes
-    to avoid caching on huge bytes/DataFrames. ``covar_hash`` names the uploaded
-    covariate table (None without one): its samples without a value are dropped.
+    The VCF is read from ``_vcf_path`` (the location the user typed, or the upload saved in the
+    work folder; the leading underscore keeps the path out of the cache key, which names the
+    file's content by ``vcf_hash``); the phenotype and covariate tables come from
+    st.session_state via stable hashes. ``covar_hash`` names the uploaded covariate table (None
+    without one): its samples without a value are dropped.
     """
     # -- Streamlit coupling: resolve session state --
-    vcf_bytes = st.session_state.get(f"VCF_BYTES::{vcf_hash}", None)
     pheno = st.session_state.get(f"PHENO_DF::{pheno_hash}", None)
 
-    if vcf_bytes is None:
-        raise RuntimeError("VCF bytes missing from session_state (hash key not found).")
+    if not _vcf_path or not os.path.isfile(_vcf_path):
+        raise RuntimeError(f"The VCF file is not there any more: {_vcf_path}. Upload it again or "
+                           "type its location.")
     if pheno is None:
         raise RuntimeError("Phenotype table missing from session_state (hash key not found).")
     covar_df = None
@@ -836,6 +840,8 @@ def gwas_pipeline(
         if covar_df is None:
             raise RuntimeError("Covariate table missing from session_state (hash key not found).")
 
+    with open(_vcf_path, "rb") as fh:          # read here, never kept in the session
+        vcf_bytes = fh.read()
     return _gwas_pipeline_impl(
         vcf_bytes, pheno, trait_col, maf_thresh, miss_thresh, norm_option, drop_alt,
         ind_miss_thresh, mac_thresh, info_thresh=info_thresh, canonical=canonical,

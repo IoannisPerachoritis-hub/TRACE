@@ -1,0 +1,393 @@
+"""The GUI's genotype file and genotype table (the GWAS page, One-Click and the Post-GWAS page).
+
+Where the VCF comes from
+    check_vcf_location  the location box: a .vcf or .vcf.gz file the server can read
+    save_upload         an upload written once, in pieces, into a folder of this server in the work
+                        folder; the page then keeps only its path, never the bytes
+    file_identity       the content hash every cache key names: blake2b-256 of the file read in
+                        pieces, the same value gwas.utils.hash_bytes gives the whole file (so the
+                        keys and seeds built on it keep their values), computed once per
+                        (path, size, modification time)
+
+Where the table is kept
+    default_choice, default_work_dir, path_input_disabled
+                        the environment's defaults (TRACE_GENO_STORE, TRACE_GENO_STORE_DIR,
+                        TRACE_DISABLE_PATH_INPUT), so a server or a Docker image can set them
+    page_message, page_stop
+                        gwas.storeplan's message and stops in the page's words (no command-line
+                        flags)
+    TableRegistry       at most two tables per server, keyed by (file identity, mode): the parsed
+                        genotypes in memory (read-only arrays) or a table file on disk in its own
+                        folder, _trace_geno_store_gui_<pid>_<random>. A folder is removed when its
+                        entry is evicted, by Clear and when the server stops normally
+    get_registry        the server's registry, held under st.cache_resource
+    SessionTable        the small object the GWAS page leaves in the session for One-Click and the
+                        Post-GWAS page
+
+Shared arrays are read-only (``flags.writeable`` False), so an in-place change fails loudly
+instead of altering another session's data.
+"""
+import atexit
+import hashlib
+import os
+import tempfile
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+VCF_SUFFIXES = (".vcf", ".vcf.gz")
+HASH_PIECE = 8 * 2**20                     # bytes read at a time when hashing or saving a file
+GUI_STORE_PREFIX = "_trace_geno_store_gui"
+UPLOAD_PREFIX = "_trace_upload_gui"
+CHOICES = ("auto", "memory", "disk")
+CHOICE_LABELS = {"auto": "Automatic", "memory": "In memory", "disk": "On disk"}
+
+
+# ----------------------------------------------------------------- the environment's defaults
+def path_input_disabled(environ=None):
+    """TRACE_DISABLE_PATH_INPUT=1 hides the location box (a shared server, whose users should
+    not open the server's files)."""
+    env = os.environ if environ is None else environ
+    return str(env.get("TRACE_DISABLE_PATH_INPUT", "") or "").strip() == "1"
+
+
+def default_choice(environ=None):
+    """Where to keep the table unless the page says otherwise: TRACE_GENO_STORE (auto, memory or
+    disk), else auto. Any other value is ignored."""
+    env = os.environ if environ is None else environ
+    v = str(env.get("TRACE_GENO_STORE", "") or "").strip().lower()
+    return v if v in CHOICES else "auto"
+
+
+def default_work_dir(environ=None):
+    """The folder for saved uploads and table files: TRACE_GENO_STORE_DIR, else a folder
+    ``trace_gui`` in the system's temporary folder."""
+    env = os.environ if environ is None else environ
+    v = str(env.get("TRACE_GENO_STORE_DIR", "") or "").strip()
+    return Path(v) if v else Path(tempfile.gettempdir()) / "trace_gui"
+
+
+def size_text(n_bytes):
+    n = float(n_bytes)
+    for unit, scale in (("GB", 1e9), ("MB", 1e6), ("KB", 1e3)):
+        if n >= scale:
+            return f"{n / scale:.1f} {unit}"
+    return f"{int(n)} bytes"
+
+
+# ------------------------------------------------------------------------ the VCF's location
+@dataclass
+class LocationCheck:
+    ok: bool
+    path: object = None     # the resolved Path when ok
+    size: int = 0           # bytes
+    message: str = ""
+
+
+def check_vcf_location(text):
+    """The location box's check: a .vcf or .vcf.gz file that exists and can be read. Quotes
+    around the text (Windows' "Copy as path") and a leading ~ are accepted."""
+    raw = str(text or "").strip().strip('"').strip("'").strip()
+    if not raw:
+        return LocationCheck(False, message="Type the full location of a .vcf or .vcf.gz file.")
+    p = Path(os.path.expanduser(raw))
+    if not p.name.lower().endswith(VCF_SUFFIXES):
+        return LocationCheck(False, message=f"TRACE reads .vcf and .vcf.gz files; {p.name} is neither.")
+    if not p.exists():
+        return LocationCheck(False, message=f"No file at {p}.")
+    if not p.is_file():
+        return LocationCheck(False, message=f"{p} is a folder, not a file.")
+    try:
+        with open(p, "rb") as fh:
+            fh.read(1)
+    except OSError as exc:
+        return LocationCheck(False, message=f"TRACE cannot read {p} ({exc.strerror or exc}).")
+    size = p.stat().st_size
+    return LocationCheck(True, path=p.resolve(), size=size, message=f"{p.name}: {size_text(size)}")
+
+
+# ------------------------------------------------------------------------- the file identity
+_ID_CACHE = OrderedDict()                  # (path, size, mtime_ns) -> identity
+_ID_MAX = 64
+_ID_LOCK = threading.Lock()
+
+
+def _id_key(path):
+    st = os.stat(path)
+    return (os.path.normcase(os.path.abspath(path)), int(st.st_size), int(st.st_mtime_ns))
+
+
+def _remember(key, identity):
+    with _ID_LOCK:
+        _ID_CACHE[key] = identity
+        _ID_CACHE.move_to_end(key)
+        while len(_ID_CACHE) > _ID_MAX:
+            _ID_CACHE.popitem(last=False)
+
+
+def file_identity(path):
+    """blake2b-256 of the file's content, read in pieces: the value gwas.utils.hash_bytes gives
+    the whole file. Computed once per (path, size, modification time)."""
+    key = _id_key(path)
+    with _ID_LOCK:
+        if key in _ID_CACHE:
+            _ID_CACHE.move_to_end(key)
+            return _ID_CACHE[key]
+    h = hashlib.blake2b(digest_size=32)
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(HASH_PIECE), b""):
+            h.update(chunk)
+    identity = h.hexdigest()
+    _remember(key, identity)
+    return identity
+
+
+# ---------------------------------------------------------------------------- saved uploads
+_SAVED_UPLOADS = set()                     # folders of uploads this server saved
+_SAVED_LOCK = threading.Lock()
+
+
+def save_upload(uploaded, work_dir):
+    """Write the upload (a Streamlit UploadedFile, or any file-like object with ``name`` and
+    ``read``) once, in pieces, into a new folder of this server in ``work_dir``, under its own
+    name. The identity is computed while writing. Returns (path, identity)."""
+    from gwas.genostore import new_store_dir
+
+    name = Path(str(getattr(uploaded, "name", "") or "upload.vcf")).name
+    folder = new_store_dir(work_dir, prefix=UPLOAD_PREFIX)
+    with _SAVED_LOCK:
+        _SAVED_UPLOADS.add(folder)
+    out = folder / name
+    h = hashlib.blake2b(digest_size=32)
+    if hasattr(uploaded, "seek"):
+        uploaded.seek(0)
+    with open(out, "wb") as fh:
+        for chunk in iter(lambda: uploaded.read(HASH_PIECE), b""):
+            fh.write(chunk)
+            h.update(chunk)
+    identity = h.hexdigest()
+    _remember(_id_key(out), identity)
+    return out, identity
+
+
+def saved_upload_folders():
+    with _SAVED_LOCK:
+        return sorted(_SAVED_UPLOADS)
+
+
+def remove_saved_uploads():
+    """Delete every upload this server saved (Clear, and when the server stops)."""
+    import shutil
+
+    with _SAVED_LOCK:
+        folders = list(_SAVED_UPLOADS)
+        _SAVED_UPLOADS.clear()
+    for f in folders:
+        shutil.rmtree(f, ignore_errors=True)
+
+
+atexit.register(remove_saved_uploads)
+
+
+# ------------------------------------------------------------- storeplan in the page's words
+def page_message(plan):
+    """storeplan's log line in the page's words (no command-line flags)."""
+    return (plan.message
+            .replace(" (--geno-store memory)", " (as chosen under Large datasets)")
+            .replace(" (--geno-store disk)", " (as chosen under Large datasets)"))
+
+
+def page_stop(plan, work_dir):
+    """storeplan's stop reworded for the page: what to change on the page, not which flag."""
+    from gwas import storeplan as sp
+
+    e_gb = plan.estimate_mib * sp.MIB / sp.GB
+    a_gb = plan.available_bytes / sp.GB
+    calls = sp._calls_text(plan.size)
+    kind = getattr(plan, "stop_kind", "")
+    if kind == "memory":
+        return (f"An in-memory run of this dataset ({calls} genotype calls) would need about "
+                f"{e_gb:.1f} GB of memory, and {a_gb:.1f} GB are free. Choose On disk under Large "
+                "datasets (the same results with far less memory), or Automatic.")
+    if kind == "disk":
+        need = sp.disk_need_bytes(plan.size) / sp.GB
+        free = sp.free_disk_bytes(work_dir) / sp.GB
+        return (f"The genotype table on disk needs about {need:.1f} GB in {work_dir}, and "
+                f"{free:.1f} GB are free there. Free some space, or choose a work folder on "
+                "another drive under Large datasets.")
+    if kind == "ldknni":
+        if plan.choice == "auto":
+            return (f"LD-kNNi imputation ranks every SNP against all others and needs the whole "
+                    f"genotype table in memory: about {e_gb:.1f} GB for this dataset, and "
+                    f"{a_gb:.1f} GB are free. Choose mean imputation, which works with the table "
+                    "on disk, or free some memory.")
+        return ("LD-kNNi imputation ranks every SNP against all others and needs the whole "
+                "genotype table in memory, so it cannot run with the table on disk. Choose mean "
+                "imputation, or keep the table in memory under Large datasets.")
+    if kind == "export_qc":
+        return (f"Exporting the QC'd genotype table writes it whole as text ({calls} calls), which "
+                "is not available for a dataset this large with the table on disk.")
+    return plan.stop or ""
+
+
+# --------------------------------------------------------------------------- the registry
+def _read_only(parsed):
+    """Mark every array of a parsed VCF read-only (the in-memory parse is shared by sessions)."""
+    for v in vars(parsed).values() if hasattr(parsed, "__dict__") else ():
+        if isinstance(v, np.ndarray):
+            v.setflags(write=False)
+    return parsed
+
+
+class TableRegistry:
+    """The tables of this server: at most ``max_entries``, keyed by (file identity, mode).
+
+    memory  the parsed genotypes (gwas.pipeline.ParsedGenotypes), read once from the file
+            without Streamlit's byte-keyed cache; their arrays are read-only
+    disk    a table file built by gwas.genostore.ingest_vcf in its own new folder in the work
+            folder (``_trace_geno_store_gui_<pid>_<random>``)
+
+    The least recently used entry is evicted when a new one is needed: a disk entry's table is
+    closed and its folder deleted. ``close_all`` (Clear, and the server's normal stop) drops
+    everything. Nothing here is ever pickled."""
+
+    MAX_ENTRIES = 2
+
+    def __init__(self, max_entries=MAX_ENTRIES):
+        self.max_entries = int(max_entries)
+        self._lock = threading.RLock()
+        self._entries = OrderedDict()
+        atexit.register(self.close_all)
+
+    def get(self, identity, mode, vcf_path, work_dir=None, log=None):
+        """The table of ``vcf_path`` in ``mode`` ("memory" or "disk"), built if needed."""
+        if mode not in ("memory", "disk"):
+            raise ValueError(f"unknown table mode {mode!r}")
+        key = (str(identity), mode)
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is not None:
+                self._entries.move_to_end(key)
+                return entry["parsed"]
+            while len(self._entries) >= self.max_entries:
+                _, old = self._entries.popitem(last=False)
+                self._release(old)
+            entry = self._open(mode, vcf_path, work_dir, log)
+            self._entries[key] = entry
+            return entry["parsed"]
+
+    @staticmethod
+    def _open(mode, vcf_path, work_dir, log):
+        if mode == "memory":
+            from gwas.io import load_vcf_cached
+            from gwas.pipeline import ParsedGenotypes
+
+            load = getattr(load_vcf_cached, "__wrapped__", load_vcf_cached)    # not the cache
+            parsed = ParsedGenotypes.from_callset(load(Path(vcf_path).read_bytes()))
+            return {"parsed": _read_only(parsed), "dir": None}
+        from gwas import genostore
+
+        store_dir = genostore.new_store_dir(work_dir if work_dir is not None else default_work_dir(),
+                                            prefix=GUI_STORE_PREFIX)
+        try:
+            parsed = genostore.ingest_vcf(vcf_path, store_dir, log=log)
+        except BaseException:
+            genostore.remove_store(store_dir)
+            raise
+        return {"parsed": parsed, "dir": store_dir}
+
+    @staticmethod
+    def _release(entry):
+        if entry.get("dir") is not None:
+            from gwas import genostore
+
+            genostore.remove_store(entry["dir"], entry["parsed"])
+
+    def keys(self):
+        with self._lock:
+            return list(self._entries)
+
+    def folders(self):
+        with self._lock:
+            return [e["dir"] for e in self._entries.values() if e.get("dir") is not None]
+
+    def drop(self, identity=None, mode=None):
+        """Drop (and close) the entries of ``identity`` and/or ``mode``; all of them by default."""
+        with self._lock:
+            for key in [k for k in self._entries
+                        if (identity is None or k[0] == str(identity)) and (mode is None or k[1] == mode)]:
+                self._release(self._entries.pop(key))
+
+    def close_all(self):
+        self.drop()
+
+
+def _new_registry():
+    return TableRegistry()
+
+
+try:                                        # the GUI: one registry per server process
+    import streamlit as _st
+
+    get_registry = _st.cache_resource(show_spinner=False)(_new_registry)
+except ImportError:                         # pragma: no cover - streamlit is a TRACE dependency
+    import functools
+
+    get_registry = functools.lru_cache(maxsize=1)(_new_registry)
+
+
+def own_folders():
+    """The folders this server made (table files and saved uploads): never listed as stale."""
+    return set(get_registry().folders()) | set(saved_upload_folders())
+
+
+# ------------------------------------------------------------------------ the session's table
+def table_identity(file_identity, **settings):
+    """The identity of one trait's genotype table: the file's identity and every setting that
+    changes the table (QC and imputation settings, the trait and its samples, covariates, ...),
+    as one short string for cache and session keys."""
+    payload = repr((str(file_identity), sorted((str(k), repr(v)) for k, v in settings.items())))
+    return hashlib.blake2b(payload.encode("utf-8"), digest_size=16).hexdigest()
+
+
+@dataclass
+class SessionTable:
+    """What the GWAS page leaves in the session for One-Click and the Post-GWAS page.
+
+    identity        the trait table's identity: the file's identity and every setting that
+                    changes the table (QC, imputation, samples, covariates, chromosome options)
+    file_identity   the VCF's identity
+    mode            "memory" or "disk"
+    parsed          the registry's parsed genotypes or table file (shared, read-only)
+    view            the trait's table: the in-memory array, or a gwas.genostore.LazyColumns that
+                    stays on disk
+    rows            the trait's rows in ``parsed`` (None: the view's own rows)
+    fill            the per-SNP fill of the mean-imputed table on disk (None in memory)
+    sid, chroms, positions, iid
+                    the SNP and sample labels of the view
+    """
+
+    identity: str
+    file_identity: str
+    mode: str
+    parsed: object = None
+    view: object = None
+    rows: object = None
+    fill: object = None
+    sid: object = None
+    chroms: object = None
+    positions: object = None
+    iid: object = None
+
+    @property
+    def shape(self):
+        return tuple(int(x) for x in self.view.shape) if self.view is not None else (0, 0)
+
+
+def new_upload_token(uploaded):
+    """What identifies one upload in the session (so a rerun does not save it again)."""
+    return (str(getattr(uploaded, "name", "")), int(getattr(uploaded, "size", 0) or 0),
+            str(getattr(uploaded, "file_id", "") or ""))

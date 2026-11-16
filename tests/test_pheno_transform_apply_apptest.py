@@ -198,8 +198,7 @@ def _session(rec, mp, traits=("Trait1",), table=None, extra=None):
     st.cache_data.clear()
     at = AppTest.from_file(_PAGE, default_timeout=900)
     ss = at.session_state
-    ss["_persist_vcf_bytes"] = _VCF.read_bytes()
-    ss["_persist_is_gz"] = True
+    ss["_persist_vcf_path"] = str(_VCF)
     ss["_persist_pheno"] = _upload(table)
     ss["selected_traits_multiselect"] = list(traits)
     for key, value in {**_PIPE, **(extra or {})}.items():

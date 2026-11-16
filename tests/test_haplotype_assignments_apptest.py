@@ -106,8 +106,7 @@ def sites(tmp_path_factory):
         # the GWAS page: detailed run (publishes what Post-GWAS reads), then One-Click
         at = AppTest.from_file(str(_ROOT / "pages" / "GWAS_analysis.py"), default_timeout=900)
         ss = at.session_state
-        ss["_persist_vcf_bytes"] = _VCF.read_bytes()
-        ss["_persist_is_gz"] = True
+        ss["_persist_vcf_path"] = str(_VCF)
         ss["_persist_pheno"] = pd.read_csv(_PHENO, sep=None, engine="python", encoding="utf-8-sig")
         ss["selected_traits_multiselect"] = [_TRAIT]
         for key, value in {"pipe_models": [], "pipe_subsampling": False,

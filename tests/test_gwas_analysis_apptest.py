@@ -20,6 +20,8 @@ if str(_ROOT) not in sys.path:
 from streamlit.testing.v1 import AppTest  # noqa: E402
 import pytest  # noqa: E402
 
+from tests import _gui_inputs as _gi  # noqa: E402
+
 _PAGE = str(_ROOT / "pages" / "GWAS_analysis.py")
 
 
@@ -43,8 +45,7 @@ def _synth(n=50, per=40, chroms=("1", "2", "3"), seed=0):
 def _seed_from_memory(at, run=False, extra=None):
     """Seed the persisted inputs so the page enters the run block from memory."""
     vcf_bytes, pheno, samples = _synth()
-    at.session_state["_persist_vcf_bytes"] = vcf_bytes
-    at.session_state["_persist_is_gz"] = False
+    at.session_state["_persist_vcf_path"] = _gi.vcf_file(vcf_bytes)
     at.session_state["_persist_pheno"] = pheno
     at.session_state["selected_traits_multiselect"] = ["TestTrait"]
     for k, v in (extra or {}).items():
@@ -101,11 +102,11 @@ def test_clear_session_data_releases_memory():
     at = AppTest.from_file(_PAGE, default_timeout=200)
     _seed_from_memory(at)
     at.run()
-    assert "_persist_vcf_bytes" in at.session_state
+    assert "_persist_vcf_path" in at.session_state
     btns = [b for b in at.button if "Clear session data" in b.label]
     assert btns, "Clear session data button not found"
     btns[0].click().run()
-    assert "_persist_vcf_bytes" not in at.session_state
+    assert "_persist_vcf_path" not in at.session_state
     assert "_persist_pheno" not in at.session_state
 
 
