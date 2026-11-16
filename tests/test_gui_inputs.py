@@ -51,7 +51,7 @@ def _navigate(state):
 
 
 # ff56e5c's decision in each workflow (its call passed `vcf_file is None`; its VCF box held the file
-# for the whole visit): batch13/cc59/verify_review/v7_covar_decision.out
+# for the whole visit), as measured by running ff56e5c's own decision function in batch 13
 FF56E5C = {"live, all three filled": "upload", "live, covariate removed": "clear",
            "navigation, nothing given again": "session", "navigation, only a new phenotype": "session",
            "navigation, only a new VCF": "clear"}
