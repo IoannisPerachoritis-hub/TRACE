@@ -163,9 +163,12 @@ def ld_analysis_page():
     geno_table = st.session_state["geno_table"]
     # The GWAS results are those of the last Run GWAS, whose table's identity the GWAS page
     # records with them. It rebuilds the session's table on every rerun, so a table built
-    # since with other settings has another identity, and the results are not its own.
-    if _gp.run_table_changed(st.session_state, geno_table):
-        st.warning(_gp.RUN_CHANGED_MESSAGE)
+    # since with other settings has another identity, and the results are not its own. The
+    # message says what happened: the last Run GWAS did not finish, or the settings changed
+    # since it (gwas.guipost.results_message).
+    _not_this_table = _gp.results_message(st.session_state, geno_table)
+    if _not_this_table:
+        st.warning(_not_this_table)
         st.stop()
 
     # ---- Resolve phenotype (STRICT: use GWAS-aligned phenotype if available) ----
@@ -214,7 +217,7 @@ def ld_analysis_page():
     # holds the last finished Run's results of its trait, and without a finished Run the check
     # above stopped the page.)
     if gwas_df is None and st.session_state.get("gwas_df") is not None:
-        st.warning(_gp.RUN_CHANGED_MESSAGE)
+        st.warning(_gp.RUN_NOT_FINISHED_MESSAGE)
         st.stop()
 
     # 3) Final sanity check

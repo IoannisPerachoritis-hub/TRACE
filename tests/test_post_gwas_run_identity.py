@@ -6,7 +6,8 @@ contract between the two pages, batch 13).
   (gwas_run_identity), and rebuilds the session's table (geno_table) on every rerun. After a
   settings change without a new Run, the page computed with the last Run's p-values on the new
   table. It now says so plainly and stops when the identities differ, or when results come
-  without an identity.
+  without an identity. The message says what happened: the last Run GWAS did not finish, or
+  the settings changed since it.
 - The trait: the last finished Run's (active_trait, written with its results and identity). A
   Run writes trait_col_locked before its results, so after a later Run that did not finish the
   page took that trait's results of an earlier Run, on another table.
@@ -44,6 +45,8 @@ PAGE = str(ROOT / "pages" / "Post_GWAS_Analysis.py")
 # the plain message of a table whose settings changed since the last Run GWAS (cc59/FIXES.md)
 MESSAGE = ("The genotype table's settings changed since the last Run GWAS on the GWAS page: "
            "run GWAS again (or set the settings back) to use this page.")
+# the plain message of a Run GWAS that did not finish (cc59/FIXES_R3.md: the wording by case)
+NOT_FINISHED = "The last Run GWAS on the GWAS page did not finish: run GWAS again to use this page."
 N, M = 40, 30
 TRAIT = "t"
 
@@ -151,14 +154,48 @@ _FRAME = pd.DataFrame({"SNP": ["SL25ch02p1040000"], "PValue": [1e-9], "Chr": ["2
 
 
 def test_a_frame_without_an_identity_counts_as_results_without_one(run_page):
-    """The re-check's rc3 case: a first Run GWAS that did not finish (a page switch during
-    MLMM) leaves only its MLM frame (gwas_df), without an identity; the settings then change.
-    The page took that frame, the earlier table's p-values, on the new table. It now stops with
-    the run-again message, before it reads any result."""
+    """The re-check's rc3 case, and round 2's re-check F1 and F2: a first Run GWAS that did not
+    finish (a page switch during MLMM) leaves only its MLM frame (gwas_df), without an identity,
+    whether the settings then change or not. The page took that frame, the earlier table's
+    p-values, on the new table. It now stops before it reads any result and says what happened:
+    the last Run GWAS did not finish (round 2 said the settings changed, which they need not
+    have, and no finished Run's settings can be set back)."""
     run, _ = run_page
-    shown, ctx, _ = run(gwas_results=None, gwas_run_identity=None, gwas_df=_FRAME)
+    shown, ctx, _ = run(gwas_results=None, gwas_run_identity=None, gwas_df=_FRAME,
+                        trait_col_locked=TRAIT, active_trait=None)
     assert ctx is None, "the page went on with a frame of another table"
-    assert ("warning", MESSAGE) in shown
+    assert [m for kind, m in shown if kind == "warning"] == [NOT_FINISHED], shown
+
+
+def test_a_later_run_that_did_not_finish_is_named(run_page):
+    """Round 2's re-check, F3 and F6b with the settings not set back: the last finished Run was
+    on another table (T0), and a later Run, with the settings the table has now, did not finish.
+    It locked another trait (F3), or wrote its MLM frame over the finished Run's frame (F6b). The
+    page said the settings changed since the last Run GWAS, which they did not after that Run;
+    it now says the last Run GWAS did not finish. Without such a mark (only the settings
+    changed) it keeps the settings message."""
+    run, _ = run_page
+    frame = run()[2]["gwas_results"][TRAIT].copy()   # the finished Run's results
+    for case, extra in {"F3, another trait locked": dict(trait_col_locked="u"),
+                        "F6b, its MLM frame": dict(trait_col_locked=TRAIT, gwas_df=_FRAME)}.items():
+        shown, ctx, _ = run(gwas_run_identity="T0", **extra)
+        assert ctx is None, case
+        assert [m for kind, m in shown if kind == "warning"] == [NOT_FINISHED], (case, shown)
+    # the finished Run's own frame beside its results and its own trait locked: only the
+    # settings changed since it
+    shown, ctx, _ = run(gwas_run_identity="T0", trait_col_locked=TRAIT, gwas_df=frame)
+    assert ctx is None
+    assert [m for kind, m in shown if kind == "warning"] == [MESSAGE], shown
+
+
+def test_a_frame_beside_no_results_of_the_trait_is_not_taken(run_page):
+    """The frame gwas_df beside no results of the page's trait, a state the GWAS page does not
+    leave (a finished Run writes its trait's results with the frame), is never taken: the page
+    stops and says the last Run GWAS did not finish."""
+    run, _ = run_page
+    shown, ctx, _ = run(gwas_results={"u": _FRAME}, gwas_df=_FRAME)
+    assert ctx is None, "the page went on with a frame that is not the trait's results"
+    assert [m for kind, m in shown if kind == "warning"] == [NOT_FINISHED], shown
 
 
 def _two_traits():
@@ -246,10 +283,22 @@ def test_the_contract_helpers():
     assert gp.meff_for_table({"meff_val": 5, gp.MEFF_IDENTITY: "T1"}, t1) == 5
     assert gp.meff_for_table({"meff_val": 5, gp.MEFF_IDENTITY: "T0"}, t1) is None
     assert gp.meff_for_table({"meff_val": 5}, t1) is None
+    # the message by case (cc59/FIXES_R3.md): none for this table's results, else what happened
+    assert gp.results_message({"gwas_results": {}, gp.RUN_IDENTITY: "T1"}, t1) is None
+    assert gp.results_message({"gwas_results": {}, gp.RUN_IDENTITY: "T0"}, t1) == MESSAGE
+    assert gp.results_message({"gwas_results": {}}, t1) == MESSAGE     # results without an identity
+    assert gp.results_message({"gwas_df": _FRAME}, t1) == NOT_FINISHED   # no Run finished
+    assert gp.results_message({"gwas_df": _FRAME, gp.RUN_IDENTITY: "T1"}, t1) is None
+    done = {"gwas_results": {"t": _FRAME}, gp.RUN_IDENTITY: "T0", "active_trait": "t"}
+    assert gp.results_message(dict(done, gwas_df=_FRAME.copy(), trait_col_locked="t"), t1) == MESSAGE
+    assert gp.results_message(dict(done, trait_col_locked="u"), t1) == NOT_FINISHED
+    assert gp.results_message(dict(done, gwas_df=_FRAME.assign(PValue=0.5)), t1) == NOT_FINISHED
+    assert not gp.run_unfinished(done) and not gp.run_unfinished({})
     # the exact keys both pages rely on and the message (cc59/FIXES.md, the contract)
     assert (gp.RUN_IDENTITY, gp.MEFF_IDENTITY, gp.BLOCKS_FINAL_KEY) == (
         "gwas_run_identity", "meff_identity", "ld_blocks_final_key")
     assert gp.RUN_CHANGED_MESSAGE == MESSAGE
+    assert gp.RUN_NOT_FINISHED_MESSAGE == NOT_FINISHED
     assert gp.BLOCKS_FINAL_KEY in gp.POST_GWAS_SESSION_KEYS
 
 

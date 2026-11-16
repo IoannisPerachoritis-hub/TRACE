@@ -263,6 +263,8 @@ BLOCKS_FINAL_KEY = "ld_blocks_final_key"  # with ld_blocks_final: (trait, table 
 
 RUN_CHANGED_MESSAGE = ("The genotype table's settings changed since the last Run GWAS on the "
                        "GWAS page: run GWAS again (or set the settings back) to use this page.")
+RUN_NOT_FINISHED_MESSAGE = ("The last Run GWAS on the GWAS page did not finish: run GWAS again "
+                            "to use this page.")
 
 
 def run_table_changed(state, session_table):
@@ -276,6 +278,41 @@ def run_table_changed(state, session_table):
     if ran_on is None:
         return "gwas_results" in state or state.get("gwas_df") is not None
     return str(ran_on) != str(getattr(session_table, "identity", ""))
+
+
+def run_unfinished(state):
+    """True when the GWAS page's last Run GWAS is known not to have finished. During a Run that
+    page writes trait_col_locked (when it locks the Run's trait) and then gwas_df (the MLM
+    frame); only when the Run ends does it write gwas_results[trait], RUN_IDENTITY, gwas_df again
+    (a copy of the same frame as gwas_results[trait]) and active_trait. So without RUN_IDENTITY
+    (no Run finished in this session) a gwas_df frame is a Run's that did not finish; with it, a
+    trait_col_locked that is not active_trait, or a gwas_df that is not gwas_results[active_trait],
+    was left by a later Run that did not finish. A later Run of the same trait that stopped before
+    its MLM frame leaves no such mark."""
+    frame = state.get("gwas_df")
+    if state.get(RUN_IDENTITY) is None:
+        return frame is not None
+    trait = state.get("active_trait")
+    locked = state.get("trait_col_locked")
+    if locked is not None and str(locked) != str(trait):
+        return True
+    if frame is None:
+        return False
+    done = (state.get("gwas_results") or {}).get(trait)
+    return not (isinstance(frame, pd.DataFrame) and isinstance(done, pd.DataFrame)
+                and frame.equals(done))
+
+
+def results_message(state, session_table):
+    """The plain message the Post-GWAS page stops with when the session's GWAS results are not
+    this table's (run_table_changed), chosen by what happened, or None when they are: when the
+    last Run GWAS is known not to have finished (run_unfinished), RUN_NOT_FINISHED_MESSAGE (no
+    setting needs to have changed then, and without a finished Run setting the settings back
+    cannot help); else RUN_CHANGED_MESSAGE, the table's settings changed since the last Run GWAS
+    (another identity, or results without one)."""
+    if not run_table_changed(state, session_table):
+        return None
+    return RUN_NOT_FINISHED_MESSAGE if run_unfinished(state) else RUN_CHANGED_MESSAGE
 
 
 def run_trait(state):
