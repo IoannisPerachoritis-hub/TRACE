@@ -259,9 +259,9 @@ The script compares every file of the two ZIPs byte for byte, leaving out only t
 `run_metadata.json` keys above and the report's "Generated" time.
 
 To compare the GUI's One-Click ZIP with the CLI's ZIP of the same analysis (the same options),
-add `--one-click`. The two runs name their input files and the pipeline differently, so those
-three run-information keys (`VCF`, `Phenotype`, `Pipeline`) and the report's run-information
-block are left out too; everything else is compared:
+give `compare_result_zips.py` the option `--one-click`. The two runs name their input files and
+the pipeline differently, so those three run-information keys (`VCF`, `Phenotype`, `Pipeline`)
+and the report's run-information block are left out too; everything else is compared:
 
 ```bash
 python scripts/compare_result_zips.py --one-click GWAS_one_click.zip run_cli/GWAS_*.zip

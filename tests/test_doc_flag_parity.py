@@ -17,6 +17,8 @@ Exemptions (documented, deliberate):
     useradd / streamlit / uv / conda / ...) -- those are that tool's flags shown
     in an install/run example, not trace-gwas flags. The trace-gwas flag
     documentation (parity table, help prose) never lives on such lines.
+  * Flags on a line that names one of the repository's helper scripts with options of its
+    own (``scripts/compare_result_zips.py --one-click``): those are the script's options.
   * Flags under a CHANGELOG ``### Removed`` heading (naming a removed flag there
     is correct).
   * Tokens ending in ``-`` -- a line-wrap artifact of the generated help text
@@ -45,6 +47,8 @@ _THIRD_PARTY = (
     "streamlit run", "uv pip", "uv venv", "uv ", "python -m pip",
     "conda", "chmod", "chown", "gunicorn", "run ", "--no-cache-dir",
 )
+# Lines naming one of the repository's helper scripts -> that script's own options are exempt.
+_REPO_SCRIPTS = ("compare_result_zips",)
 
 
 def _valid_flags() -> set[str]:
@@ -69,7 +73,7 @@ def _iter_doc_flag_tokens():
             if in_removed:
                 continue
             low = line.lower()
-            if any(m in low for m in _THIRD_PARTY):
+            if any(m in low for m in _THIRD_PARTY) or any(s in low for s in _REPO_SCRIPTS):
                 continue
             for flag in _FLAG_RE.findall(line):
                 if flag.endswith("-"):
