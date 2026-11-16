@@ -217,8 +217,12 @@ def test_a_failed_copy_leaves_nothing_and_is_not_tried_again(tmp_path):
     state = {}
     first = gt.vcf_input(state, "", _FailingUpload(), work)
     assert first.error.startswith(f"The upload cannot be saved in the work folder {work}")
-    again = gt.vcf_input(state, "", _FailingUpload(), work)                 # the next rerun
-    assert again.error == first.error and list(work.iterdir()) == []
+    rerun = _FailingUpload()
+    again = gt.vcf_input(state, "", rerun, work)                            # the next rerun: not tried
+    assert again.error == first.error and rerun.n == 0 and list(work.iterdir()) == []
+    uploaded_again = _FailingUpload()
+    uploaded_again.file_id = "f-full-2"                                     # the file uploaded again: tried
+    assert gt.vcf_input(state, "", uploaded_again, work).error and uploaded_again.n > 0
     other = tmp_path / "other"                                              # another work folder: tried
     elsewhere = gt.vcf_input(state, "", _FailingUpload(), other)
     assert str(other) in elsewhere.error and list(other.iterdir()) == []

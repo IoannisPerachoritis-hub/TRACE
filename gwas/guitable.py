@@ -668,7 +668,8 @@ VCF_KEYS = ("_persist_vcf_path", "_persist_vcf_name", "_vcf_source")
 # whether the VCF came from a box this visit (vcf_input's ``live``).
 VCF_LIVE_KEY = "_vcf_live"
 # The upload whose copy failed: (its token, the work folder, the message). It is not copied
-# again into that folder on every rerun; another work folder tries again.
+# again into that folder on every rerun; another work folder tries again, and so does the file
+# uploaded again (a new upload, so a new token).
 VCF_SAVE_FAILED_KEY = "_vcf_save_failed"
 # The page's upload boxes: each gets a new key (an empty box) by bumping "_<name>_widget".
 UPLOAD_BOXES = ("vcf_upload", "pheno_upload", "covar_upload")

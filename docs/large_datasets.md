@@ -132,8 +132,9 @@ file where it is. The upload box takes files up to 2 GB; an upload is held in th
 while it arrives (twice at its end), before TRACE can check anything, so bigger files should go
 through the location box. An uploaded file is written once to the work folder (below) and read
 from there; TRACE then removes the server's copy of the upload from memory and empties the upload
-box. A copy that fails (a full disk, for one) leaves nothing in the work folder and is not tried
-again until you choose another work folder.
+box. A copy that fails (a full disk, for one) leaves nothing in the work folder, and the page says
+why. It is not tried again on every rerun, only when you upload the file again or choose another
+work folder.
 
 A location that fails the check (a typo, another file type) stops the page with the reason; the
 file an earlier location gave is not used under the new text.
