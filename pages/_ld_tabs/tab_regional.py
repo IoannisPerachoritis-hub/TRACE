@@ -170,9 +170,12 @@ def render(ctx: LDContext, window):
         mask[near] = True
         capped = True
 
-    try:
+    # r2 to the lead when the lead is typed (the test compute_r2_to_lead makes itself), else
+    # every point grey. A read that fails, such as one of a table file closed meanwhile, is
+    # not taken for an untyped lead: its error reaches the page, which says what happened.
+    if bool(np.any(np.asarray(ctx.sid).astype(str) == str(window.lead_snp))):
         r2, _ = compute_r2_to_lead(ctx.geno_dosage_raw, ctx.sid, window.lead_snp, mask, min_pair_n=15)
-    except ValueError:
+    else:
         r2 = np.full(int(mask.sum()), np.nan)  # lead SNP not typed in the dosage matrix
 
     sid_arr = np.asarray(ctx.sid).astype(str)
