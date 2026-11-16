@@ -168,6 +168,55 @@ def plot_manhattan_static(
     return fig
 
 
+# The interactive Manhattan draws at most MANHATTAN_MAX_POINTS SNPs: above that, every SNP with
+# p <= MANHATTAN_KEEP_P and 1 in k of the others (manhattan_thinning). Streamlit sends a figure to the
+# browser in one message (server.maxMessageSize, 200 MB by default in Streamlit 1.50.0), and the
+# self-contained HTML of every SNP at 1,070,795 SNPs is far larger than one at 500,000 points.
+MANHATTAN_MAX_POINTS = 500_000
+MANHATTAN_KEEP_P = 0.01
+
+
+def manhattan_thinning(df, max_points=None, keep_p=None):
+    """(rows, k): the rows of ``df`` the interactive Manhattan draws, as positions in ``df``'s row
+    order, and k. Up to ``max_points`` SNPs (MANHATTAN_MAX_POINTS): every row, given as (None, 1).
+    Above: every SNP with p <= ``keep_p`` (MANHATTAN_KEEP_P), and every k-th of the others in genome
+    order (cumulative position, ties in the table's order), starting with the first, with k the
+    smallest whole number that keeps the drawing at or below ``max_points``. A SNP without a p-value
+    is among the others. When the SNPs with p <= keep_p alone are more than ``max_points`` they are
+    all drawn and none of the others (k is 0)."""
+    import pandas as pd
+
+    max_points = MANHATTAN_MAX_POINTS if max_points is None else int(max_points)
+    keep_p = MANHATTAN_KEEP_P if keep_p is None else float(keep_p)
+    n = len(df)
+    if n <= max_points:
+        return None, 1
+    p = pd.to_numeric(df["PValue"], errors="coerce").to_numpy(dtype=float)
+    keep = p <= keep_p
+    others = np.flatnonzero(~keep)
+    if "CumPos" in df.columns:                           # genome order
+        others = others[np.argsort(df["CumPos"].to_numpy()[others], kind="stable")]
+    budget = max_points - int(keep.sum())
+    if budget <= 0:
+        k, picked = 0, others[:0]
+    else:
+        k = max(1, -(-others.size // budget))           # ceil(others / budget)
+        picked = others[::k]
+    return np.sort(np.concatenate([np.flatnonzero(keep), picked])), k
+
+
+def manhattan_caption(df, max_points=None, keep_p=None):
+    """The sentence the page shows under an interactive Manhattan that does not draw every SNP
+    (manhattan_thinning), or None when it draws them all."""
+    rows, k = manhattan_thinning(df, max_points, keep_p)
+    if rows is None:
+        return None
+    keep_p = MANHATTAN_KEEP_P if keep_p is None else float(keep_p)
+    others = "none of the others" if k == 0 else f"1 in {k:,} of the others"
+    return (f"{rows.size:,} of {len(df):,} SNPs drawn: all with p ≤ {keep_p:g} and {others}. "
+            "The static Manhattan and the results table have every SNP.")
+
+
 def plot_manhattan_interactive(
     df,
     active_lod,
@@ -182,6 +231,10 @@ def plot_manhattan_interactive(
     is drawn as a dotted dark-grey line with annotation in the top-right
     (so it does not collide with the top-left primary annotation). Useful
     for showing both Bonferroni and M_eff thresholds simultaneously.
+
+    Above MANHATTAN_MAX_POINTS SNPs the figure draws the SNPs manhattan_thinning chooses (every
+    SNP with p <= 0.01 and 1 in k of the others); up to it, every SNP, as before. The chromosome
+    colours are those of the whole table either way.
     """
     # Build chromosome color map (alternating blue/cyan like static version)
     def _chr_key(x):
@@ -196,6 +249,9 @@ def plot_manhattan_interactive(
         ch: MANHATTAN_COLORS[i % 2] for i, ch in enumerate(chroms_unique)
     }
 
+    rows, _k = manhattan_thinning(df)
+    if rows is not None:
+        df = df.iloc[rows]
     df = df.copy()
     df["Chr"] = df["Chr"].astype(str)
 

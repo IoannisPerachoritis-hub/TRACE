@@ -51,7 +51,7 @@ from gwas.stability import _make_run_manifest
 from gwas.significance import add_significance_columns
 from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
-    plot_manhattan_interactive, plot_qq, compute_lambda_gc,
+    plot_manhattan_interactive, manhattan_caption, plot_qq, compute_lambda_gc,
     download_matplotlib_fig, download_plotly_fig,
     _build_gwas_results_zip, _append_metadata_to_zip, _combine_gwas_zips,
     PALETTE, PALETTE_CYCLE, export_matplotlib,
@@ -2715,6 +2715,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             height=500,
         )
         show_plot(fig_int, "wide")
+        if manhattan_caption(df_plot):          # above 500,000 SNPs: which SNPs are drawn
+            st.caption(manhattan_caption(df_plot))
         st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
         st.session_state["gwas_figures"][f"Interactive_Manhattan_MLM_{trait_col}.html"] = (
             plotly_html_bytes(fig_int))
@@ -2975,6 +2977,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 height=500,
             )
             show_plot(fig_plotly_mlmm, "wide")
+            if manhattan_caption(df_mlmm):
+                st.caption(manhattan_caption(df_mlmm))
             st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
             st.session_state["gwas_figures"][f"Interactive_Manhattan_MLMM_{trait_col}.html"] = (
                 plotly_html_bytes(fig_plotly_mlmm))
@@ -3086,6 +3090,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 height=500,
             )
             show_plot(fig_plotly_fc, "wide")
+            if manhattan_caption(df_fc):
+                st.caption(manhattan_caption(df_fc))
             st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
             st.session_state["gwas_figures"][f"Interactive_Manhattan_FarmCPU_{trait_col}.html"] = (
                 plotly_html_bytes(fig_plotly_fc))
