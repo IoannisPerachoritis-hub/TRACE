@@ -467,6 +467,10 @@ def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_p
         assert nxt.warning == guitable.UPLOAD_REMOVED_MESSAGE == (
             "The uploaded VCF was removed by Clear session data: upload it again.")
         assert not nxt.error and not guitable.inputs_kept(state)                # nothing is read
+        with pytest.raises(guigwas.VcfGone) as gone:          # the setup's hash, the file deleted since
+            guigwas.vcf_identity(path)                         # the page checked that it is there
+        assert str(gone.value) == guitable.UPLOAD_REMOVED_MESSAGE
+        assert guigwas.vcf_identity(vcf) == guitable.file_identity(vcf)        # a file there: its identity
 
         def reread():
             return guigwas.table(ident, "disk", path, work)
@@ -494,12 +498,13 @@ def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_p
     finally:
         guitable.get_registry().close_all()
         guitable.remove_saved_uploads()
-    # the page shows VcfGone's message where it reads the table: the setup, One-Click's table and its
-    # fresh table after a closed one; a Run that found its table closed says what happens next
+    # the page shows VcfGone's message where it reads the VCF: the setup's hash and its table, One-Click's
+    # table and its fresh table after a closed one; a Run that found its table closed says what happens
     page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
     handlers = [h for h in ast.walk(page) if isinstance(h, ast.ExceptHandler) and h.type is not None
                 and "_gg.VcfGone" in ast.unparse(h.type)]
-    assert len(handlers) == 3
+    assert len(handlers) == 4
+    assert "_gt.file_identity(vcf_path)" not in ast.unparse(page)            # the hash through vcf_identity
     assert "reads the VCF again" in guigwas.CLOSED_MESSAGE and "upload the VCF again" in guigwas.CLOSED_MESSAGE
 
 

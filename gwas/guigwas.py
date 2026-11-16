@@ -154,6 +154,21 @@ class VcfGone(Exception):
     gwas.guitable.vcf_gone_message)."""
 
 
+def vcf_identity(vcf_path):
+    """gwas.guitable.file_identity of the VCF in use (the page's vcf_hash); VcfGone instead of
+    FileNotFoundError when the file is no longer there, as when Clear session data in another
+    session deleted an upload after the page checked that its VCF is there."""
+    from gwas import guitable
+
+    try:
+        return guitable.file_identity(vcf_path)
+    except FileNotFoundError:
+        gone = guitable.vcf_gone_message(vcf_path)
+        if gone:
+            raise VcfGone(gone) from None
+        raise
+
+
 # The server builds one table at a time (gwas.guitable.TableRegistry), so a build may wait for
 # another session's: the page's check of the free memory and disk, made before the wait, is made
 # again when the build starts, and then counts what the builds before it used.

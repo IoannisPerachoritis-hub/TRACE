@@ -984,8 +984,13 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
 
     # --- Build stable cache keys ---
     # the file's content hash, read in pieces once per (path, size, modification time): the
-    # value hash_bytes gives the whole file, so every key and seed built on it is unchanged
-    vcf_hash = _gt.file_identity(vcf_path)
+    # value hash_bytes gives the whole file, so every key and seed built on it is unchanged. A VCF
+    # gone since the check above (an upload that Clear session data in another session deleted)
+    # is asked for plainly.
+    try:
+        vcf_hash = _gg.vcf_identity(vcf_path)
+    except _gg.VcfGone as _gone:
+        _rehydrate_or_stop(str(_gone), level="warning")
     # the raw table's fingerprint from the new-upload check above (the table has not
     # changed since: only an idempotent column-name strip ran in between)
     pheno_hash = _pheno_raw_fp
