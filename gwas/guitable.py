@@ -360,7 +360,8 @@ TRACE_MEMO_FUNCTION_KEYS = (
 )
 
 # The session keys the Post-GWAS page and its tabs write at ff56e5c (pages/Post_GWAS_Analysis.py,
-# pages/_ld_tabs/*): Clear drops them, together with gwas.guipost's lists (the page's keys now).
+# pages/_ld_tabs/*): Clear drops them, together with gwas.guipost's lists (the page's keys now;
+# the two overlap, and the old list also holds keys the page no longer writes).
 POST_GWAS_KEYS_FF56E5C = (
     "r2_cache", "ld_geno_hard", "ld_chroms", "ld_positions", "ld_sid", "geno_hard", "chroms", "positions",
     "sid", "_ld_prev_trait", "haplo_df_auto", "haplo_df_auto_hash", "ld_blocks_final", "ld_blocks",
@@ -420,16 +421,12 @@ def clear_cached_results():
 
 def session_keys_to_clear(keys=(), prefixes=()):
     """(keys, prefixes) Clear drops from the session: the caller's, the Post-GWAS page's at
-    ff56e5c, and gwas.guipost's when it exists."""
-    keys = set(keys) | set(POST_GWAS_KEYS_FF56E5C)
-    prefixes = tuple(prefixes) + POST_GWAS_PREFIXES_FF56E5C
-    try:
-        from gwas import guipost
-    except ImportError:
-        guipost = None
-    if guipost is not None:
-        keys |= set(getattr(guipost, "POST_GWAS_SESSION_KEYS", ()))
-        prefixes += tuple(getattr(guipost, "POST_GWAS_SESSION_PREFIXES", ()))
+    ff56e5c, and the Post-GWAS page's now (gwas.guipost's lists)."""
+    from gwas import guipost                # here: the GWAS page needs it only when Clear runs
+
+    keys = set(keys) | set(POST_GWAS_KEYS_FF56E5C) | set(guipost.POST_GWAS_SESSION_KEYS)
+    prefixes = (tuple(prefixes) + POST_GWAS_PREFIXES_FF56E5C
+                + tuple(guipost.POST_GWAS_SESSION_PREFIXES))
     return keys, prefixes
 
 

@@ -4,7 +4,7 @@ After it, none of this server's tables (in memory, or table files with their fol
 uploads or cached results (st.cache_data and st.cache_resource) remains; TRACE's .memo files are gone from
 Streamlit's cache folder (another app's file stays: Streamlit's own clear would delete the whole folder);
 and the session's keys are dropped, the GWAS page's and the Post-GWAS page's (ff56e5c's list, and
-gwas.guipost's when it exists), while the widget settings stay.
+gwas.guipost's), while the widget settings stay.
 """
 import io
 import logging
