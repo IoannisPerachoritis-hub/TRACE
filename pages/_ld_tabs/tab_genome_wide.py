@@ -654,11 +654,6 @@ def render(
                         "disjoint-block redesign; the block set is left unchanged. "
                         "Please report (see _occupancy_select's span_idx.size==0 short-circuit).")
 
-            if "haplo_df_auto" not in st.session_state:
-                st.session_state["haplo_df_auto"] = {}
-
-            guipost.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_df_auto,
-                                guipost.TRAIT_CACHE_MAX)
             st.session_state["ld_blocks"] = haplo_df_auto.copy()
 
             # --- LD metadata logging ---
@@ -677,9 +672,15 @@ def render(
                                     guipost.RESULT_CACHE_MAX)
         else:
             haplo_df_auto = st.session_state[ld_key]
-        # The blocks on screen, detected now or served from the tab's cache, are the final
-        # ones: the GWAS page's block stability aggregates them. A hit writes them too, so they
-        # are never an earlier detection's (other settings) under the same key.
+        # The blocks on screen, detected now or served from the tab's cache, are the trait's
+        # blocks the other tabs use (haplo_df_auto[trait]: they read the page's context, built
+        # from it before this tab, so from the next run on) and the final ones the GWAS page's
+        # block stability aggregates. A hit writes them too, so neither is ever an earlier
+        # detection's (other settings).
+        if "haplo_df_auto" not in st.session_state:
+            st.session_state["haplo_df_auto"] = {}
+        guipost.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_df_auto,
+                            guipost.TRAIT_CACHE_MAX)
         st.session_state["ld_blocks_final"] = haplo_df_auto.copy()
         # which trait and table they are of (the GWAS page's block stability checks)
         st.session_state["ld_blocks_final_key"] = (trait_col, ctx.table_identity)

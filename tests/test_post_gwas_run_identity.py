@@ -15,7 +15,8 @@ contract between the two pages, batch 13).
   (the rule's path without M_eff), as when it was never computed.
 - The final LD blocks: whenever the page or the LD Blocks tab writes ld_blocks_final, it also
   writes ld_blocks_final_key = (trait, the table's identity), which the GWAS page's block
-  stability checks before it aggregates those blocks.
+  stability checks before it aggregates those blocks. On a cache hit the tab writes the blocks
+  on screen there, and as the trait's blocks for the other tabs (haplo_df_auto[trait]), too.
 - The sample IDs: the table's own (geno_table.iid). The GWAS page writes geno_df before the
   table, so a run of it that stopped between the two left a geno_df beside an older table.
 - The PCs: those GWAS_CTX holds, which the GWAS page writes with the table. It writes the
@@ -362,6 +363,26 @@ def test_a_detection_served_from_the_tabs_cache_is_the_final_one(monkeypatch):
     the tab serves from its cache. ld_blocks_final stayed the 0.5 detection under the same key
     (trait, table), so the GWAS page's block stability aggregated blocks no longer on screen.
     On a cache hit the tab now writes the blocks on screen, and their key, too."""
+    after, at = _tab_r2_there_and_back(monkeypatch)
+    assert after["detected"] == [0.6, 0.5], "the last render was not served from the tab's cache"
+    pd.testing.assert_frame_equal(after["ld_blocks_final"], at[0.6])
+    assert after["ld_blocks_final_key"] == (TRAIT, "T1")
+
+
+def test_a_detection_served_from_the_tabs_cache_is_the_traits_blocks(monkeypatch):
+    """The same steps (round 2's re-check, its new problem 3): the tab wrote the trait's blocks,
+    which the page hands to the other tabs (haplo_df_auto[trait]: Significant SNPs, Regional,
+    the block heatmaps, the candidate intervals, the LD window), on a detection only, so after
+    the hit they stayed the r2 0.5 blocks while the tab showed the 0.6 ones. A hit now writes
+    the blocks on screen there too."""
+    after, at = _tab_r2_there_and_back(monkeypatch)
+    assert after["detected"] == [0.6, 0.5], "the last render was not served from the tab's cache"
+    pd.testing.assert_frame_equal(after["haplo_df_auto"][TRAIT], at[0.6])
+
+
+def _tab_r2_there_and_back(monkeypatch):
+    """The LD Blocks tab rendered at r2 0.6, 0.5 and 0.6 again (the last served from its cache).
+    Returns (what the session held after it, the blocks each r2 gives)."""
     import streamlit as st
 
     import pages._ld_tabs.tab_genome_wide as tgw
@@ -410,9 +431,11 @@ def test_a_detection_served_from_the_tabs_cache_is_the_final_one(monkeypatch):
             tgw.render(ctx, get_r2_cached=None, cached_extract_block_geno=None,
                        compute_block_qc_effects=None,
                        run_haplotype_block_gwas_cached_fn=lambda *a, **k: (pd.DataFrame(), {}))
-        assert detected == [0.6, 0.5], "the last render was not served from the tab's cache"
-        pd.testing.assert_frame_equal(st.session_state["ld_blocks_final"], at[0.6])
-        assert st.session_state["ld_blocks_final_key"] == (TRAIT, "T1")
+        after = {"detected": list(detected),
+                 "haplo_df_auto": dict(st.session_state.get("haplo_df_auto") or {})}
+        for k in ("ld_blocks_final", "ld_blocks_final_key"):
+            after[k] = st.session_state.get(k)
+        return after, at
     finally:
         for k in list(st.session_state.keys()):
             if k not in before:
