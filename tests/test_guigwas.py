@@ -288,17 +288,22 @@ def test_workers_fit_rule():
 
 
 @pytest.mark.parametrize("choice", ["auto", "memory", "disk"])
-def test_one_click_records_where_the_table_is_kept_as_the_cli_does(tmp_path, choice):
+def test_one_click_records_where_the_table_is_kept_as_the_cli_does(tmp_path, choice, monkeypatch):
     """One-Click's table is the registry's, in the mode of its own plan, and run_metadata.json gets the
     CLI's five keys for it (gwas.storeplan.Plan.metadata): the same values as a CLI run with
-    --geno-store <choice> on the same file and options, and the same results in both modes."""
+    --geno-store <choice> on the same file and options, and the same results in both modes. The free
+    memory both plans read is pinned high, so Automatic keeps this small table in memory whatever
+    else runs on the machine."""
     import io
     import json
     import zipfile
 
     import cli
     from gwas import pipeline as pl
+    from gwas import storeplan
     from gwas.storeplan import MODE_KEYS
+
+    monkeypatch.setattr(storeplan, "available_memory_bytes", lambda: 64 * 2 ** 30)
 
     vcf, ph = EX1
     opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
