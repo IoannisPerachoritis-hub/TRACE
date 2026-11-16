@@ -203,25 +203,37 @@ BUILD_CHECK_NOTE = ("TRACE checked the free memory and disk again just before re
 
 def build_check(vcf_path, plan, work_dir, file_identity, estimate=None):
     """The check a new table's build makes when it starts (table's ``check``): ``plan``
-    (gwas.storeplan.plan's decision for this VCF, made with ``estimate``) made again for the mode
-    it chose, on the memory and disk free now. Raises PlanStop, in the page's words, when that
-    plan stops: on disk when the drive is now too full, in memory when the estimate is now above
-    the free memory (for Automatic, whose next run then keeps the table on disk, it says so)."""
+    (gwas.storeplan.plan's decision for this VCF, made with ``estimate``) made again on the memory
+    and disk free now, by the rule that chose its mode. Raises PlanStop, in the page's words, when
+    that plan no longer holds: on disk when the drive is now too full; In memory when the estimate
+    is now above the free memory; Automatic in memory when Automatic's own plan would now keep the
+    table on disk (the estimate above AUTO_MEMORY_FRACTION of the free memory). The stop then says
+    that the next run keeps the table on disk, or gives that plan's own stop when the disk has no
+    room for it either."""
     from gwas import guitable, storeplan
 
+    def again_for(choice):
+        return storeplan.plan(vcf_path, choice=choice, store_base=work_dir, estimate=estimate,
+                              size_of=guitable.vcf_size_of(file_identity), **(plan.options or {}))
+
     def check():
-        again = storeplan.plan(vcf_path, choice=plan.mode, store_base=work_dir, estimate=estimate,
-                               size_of=guitable.vcf_size_of(file_identity), **(plan.options or {}))
-        if not again.stop:
-            return
-        if plan.choice == "auto" and again.stop_kind == "memory":
-            stop = (f"An in-memory run would now need about "
-                    f"{again.estimate_mib * storeplan.MIB / storeplan.GB:.1f} GB of memory, and "
-                    f"{again.available_bytes / storeplan.GB:.1f} GB are free. Run again: Automatic "
-                    "then keeps the table on disk.")
-        else:
-            stop = guitable.page_stop(again, work_dir)
-        raise PlanStop(BUILD_CHECK_NOTE + stop)
+        if plan.choice == "auto" and plan.mode == "memory":
+            again = again_for("auto")                  # Automatic's own rule, as its next plan
+            if again.mode == "memory":
+                return
+            short = (f"An in-memory run would now need about "
+                     f"{again.estimate_mib * storeplan.MIB / storeplan.GB:.1f} GB of memory, and "
+                     f"{again.available_bytes / storeplan.GB:.1f} GB are free (Automatic keeps the "
+                     f"table in memory up to {storeplan.AUTO_MEMORY_FRACTION:.0%} of the free memory)")
+            if again.stop:
+                stop = (f"{short}, so Automatic would now keep the table on disk. "
+                        + guitable.page_stop(again, work_dir))
+            else:
+                stop = f"{short}. Run again: Automatic then keeps the table on disk."
+            raise PlanStop(BUILD_CHECK_NOTE + stop)
+        again = again_for(plan.mode)
+        if again.stop:
+            raise PlanStop(BUILD_CHECK_NOTE + guitable.page_stop(again, work_dir))
 
     return check
 

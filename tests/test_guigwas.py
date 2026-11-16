@@ -513,9 +513,12 @@ def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_p
 def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_then(tmp_path, own_registry,
                                                                                   monkeypatch):
     """The server builds one table at a time, so a build may start after another session's: its check
-    (build_check) makes the plan again for the mode it chose, on the memory and disk free then, and stops
-    in the page's words when that plan stops, building nothing; One-Click's table too. A table already
-    there is not checked again. Every table the GWAS page reads passes the check."""
+    (build_check) makes the plan again on the memory and disk free then, by the rule that chose its mode,
+    and stops in the page's words when that plan no longer holds, building nothing; One-Click's table too.
+    Automatic in memory stops by Automatic's own rule (the estimate above 80% of the free memory), exactly
+    when Automatic's next plan keeps the table on disk, and says so; In memory by its own (the estimate
+    above the free memory). A table already there is not checked again. Every table the GWAS page reads
+    passes the check."""
     import ast
 
     from gwas import pipeline as pl
@@ -536,16 +539,42 @@ def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_th
     checks = {c: guigwas.build_check(vcf, p, work, ident, **gui) for c, p in plans.items()}
     for check in checks.values():
         check()                                                      # nothing changed: no stop
-    free.update(memory=[2**20], disk=[2**20])                        # another build used them meanwhile
+    need = plans["auto"].estimate_mib * storeplan.MIB
+
+    def automatic_next_plan_mode():
+        return storeplan.plan(vcf, choice="auto", store_base=work, models=("mlm", "mlmm", "farmcpu"),
+                              size_of=guitable.vcf_size_of(ident), **gui).mode
+
+    # the round 2 re-check's q6: between Automatic's 80% and all the free memory, Automatic's next plan
+    # keeps the table on disk, so its build stops and says so; In memory builds
+    for fraction, stops in ((0.79, False), (0.81, True), (0.9, True)):
+        free.update(memory=[int(need / fraction)], disk=[100 * 2**30])
+        assert (automatic_next_plan_mode() == "disk") == stops
+        checks["memory"]()                                           # In memory: it still fits
+        if not stops:
+            checks["auto"]()
+            continue
+        with pytest.raises(guigwas.PlanStop) as stop:
+            guigwas.table(ident, "memory", vcf, work, check=checks["auto"])
+        assert str(stop.value).startswith(guigwas.BUILD_CHECK_NOTE)
+        assert str(stop.value).endswith("are free (Automatic keeps the table in memory up to 80% of the free "
+                                        "memory). Run again: Automatic then keeps the table on disk.")
+        assert own_registry.keys() == []                             # nothing built
+    free.update(memory=[2**20], disk=[100 * 2**30])                 # another build used the memory meanwhile
+    with pytest.raises(guigwas.PlanStop) as stop:
+        guigwas.table(ident, "memory", vcf, work, check=checks["auto"])
+    assert str(stop.value).endswith("Run again: Automatic then keeps the table on disk.")
+    free.update(memory=[2**20], disk=[2**20])                        # ... and the disk
     said = {}
     for c, check in checks.items():
         with pytest.raises(guigwas.PlanStop) as stop:
             guigwas.table(ident, plans[c].mode, vcf, work, check=check)
         said[c] = str(stop.value)
     assert all(s.startswith(guigwas.BUILD_CHECK_NOTE) for s in said.values())
-    assert said["auto"].endswith("are free. Run again: Automatic then keeps the table on disk.")
+    assert "so Automatic would now keep the table on disk. The genotype table on disk needs" in said["auto"]
     assert "Choose On disk under Large datasets" in said["memory"]
     assert f"in {work}, and 0.0 GB are free there. Free some space" in said["disk"]
+    assert said["auto"].endswith(said["disk"][len(guigwas.BUILD_CHECK_NOTE):])     # the disk's own stop
     assert own_registry.keys() == [] and not list(work.glob(f"{guitable.GUI_STORE_PREFIX}_*"))
 
     free.update(memory=[64 * 2**30], disk=[100 * 2**30])
