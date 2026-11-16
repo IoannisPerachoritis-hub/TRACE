@@ -52,6 +52,61 @@ def _bytes(source):
     return source.getvalue()
 
 
+_BUILDS = ["SL3", "SL4"]       # the "Genome build" choices of a species that has builds
+
+
+def _species_options():
+    from utils.species_files import SPECIES_FILES
+
+    return list(SPECIES_FILES.keys()) + ["Other (upload files)"]
+
+
+def _has_builds(species):
+    from utils.species_files import SPECIES_FILES
+
+    return "gene_model_SL3" in SPECIES_FILES.get(species, {})
+
+
+def _builtin_files(species, build):
+    """The species' built-in gene model and descriptions file (for ``build`` when the species
+    has builds), each None when there is none on this computer."""
+    from utils.species_files import SPECIES_FILES
+
+    auto = SPECIES_FILES.get(species, {})
+    if _has_builds(species):
+        gm_auto, desc_auto = auto.get(f"gene_model_{build}"), auto.get(f"gene_desc_{build}")
+    else:
+        gm_auto, desc_auto = auto.get("gene_model"), auto.get("gene_desc")
+    gm_auto = gm_auto if gm_auto is not None and gm_auto.exists() else None
+    desc_auto = desc_auto if desc_auto is not None and desc_auto.exists() else None
+    return gm_auto, desc_auto
+
+
+def chosen_genes():
+    """The gene model chosen in Step 1 now, for the Regional Plot, which runs before this tab:
+    Step 1's widget values as the session holds them at the start of the run (their defaults
+    before this tab first ran), loaded by Step 1's cached loader. None without a gene model,
+    or when it does not load (Step 1 shows why)."""
+    state = st.session_state
+    options = _species_options()
+    species = state.get("ld_gene_species", options[0])
+    species = species if species in options else options[0]
+    build = None
+    if _has_builds(species):
+        build = state.get("ld_genome_build", _BUILDS[0])
+        build = build if build in _BUILDS else _BUILDS[0]
+    gm_auto, desc_auto = _builtin_files(species, build)
+    gm_up, desc_up = state.get("gene_model_upload"), state.get("gene_desc_upload")
+    gene_file = gm_up if gm_up is not None else gm_auto
+    desc_file = desc_up if desc_up is not None else desc_auto
+    if gene_file is None:
+        return None
+    try:
+        return _load_genes(_bytes(gene_file), _bytes(desc_file))
+    except Exception:
+        return None
+
+
 def render(ctx: LDContext):
     st.subheader("Gene Annotation")
 
@@ -70,8 +125,6 @@ def render(ctx: LDContext):
         chromosomes_without_genes,
         summarize_gene_model,
     )
-    from utils.species_files import SPECIES_FILES as _SPECIES_FILES
-
     st.markdown(
         "Every LD block and every unblocked significant SNP, with the genes inside its "
         "candidate interval: from the marker before the first SNP to the marker after the "
@@ -79,18 +132,15 @@ def render(ctx: LDContext):
     )
 
     # ── Step 1: the gene models ──
+    # (the Regional Plot, which runs before this tab, reads the same choice: chosen_genes)
     st.markdown("#### Step 1: Gene models")
-    _species_opts = list(_SPECIES_FILES.keys()) + ["Other (upload files)"]
+    _species_opts = _species_options()
     _species = st.selectbox("Species", _species_opts, key="ld_gene_species")
-    _auto = _SPECIES_FILES.get(_species, {})
-    if "gene_model_SL3" in _auto:
+    _build = None
+    if _has_builds(_species):
         _build = st.selectbox("Genome build", ["SL3", "SL4"], key="ld_genome_build",
                               help=_BUILD_HELP)
-        gm_auto, desc_auto = _auto.get(f"gene_model_{_build}"), _auto.get(f"gene_desc_{_build}")
-    else:
-        gm_auto, desc_auto = _auto.get("gene_model"), _auto.get("gene_desc")
-    gm_auto = gm_auto if gm_auto is not None and gm_auto.exists() else None
-    desc_auto = desc_auto if desc_auto is not None and desc_auto.exists() else None
+    gm_auto, desc_auto = _builtin_files(_species, _build)
     if gm_auto is not None:
         st.write(f"Built-in gene model: `{gm_auto.name}`"
                  + (f"; descriptions: `{desc_auto.name}`" if desc_auto is not None else ""))
@@ -111,13 +161,10 @@ def render(ctx: LDContext):
         except Exception as e:
             logging.exception("Gene file loading failed")
             st.error(f"Error loading gene file: {e}")
-    # the Regional Plot's gene track reads the gene model loaded here
     if genes_df is None:
-        st.session_state.pop("genes_df", None)
         if gene_file is None:
             st.info("Choose a species with a built-in gene model, or upload a gene file.")
         return
-    st.session_state["genes_df"] = genes_df
 
     summary = summarize_gene_model(genes_df)
     st.success(f"Loaded {len(genes_df):,} genes across {len(summary)} chromosomes.")

@@ -753,7 +753,6 @@ POST_GWAS_SESSION_KEYS = (
     "_hapgwas_order", "_lddetect_order",
     DETECTION_CACHE,                                      # SharedDetection's results
     SIGTABLE_CACHE,                                       # the Significant SNPs tab's tables
-    "genes_df",
 )
 # Families of keys named by their settings: each haplotype test (HAPGWAS::..., with its
 # "::tables" and "::assign" keys) and each LD-block detection (LDDETECT::...).

@@ -31,6 +31,7 @@ from gwas.plotting import (
 from gwas.significance import rule_from_streamlit
 from utils.pub_theme import export_matplotlib, show_plot
 from . import LDContext
+from . import tab_gene_annotation
 
 
 def _split_ids(raw):
@@ -205,7 +206,10 @@ def render(ctx: LDContext, window):
     is_flank = is_flank and block_interval is not None
 
     seed_threshold = float(st.session_state.get("ld_seed_p", 1e-5))
-    genes = _filter_genes(st.session_state.get("genes_df"), window.chr,
+    # the gene model chosen in the Gene Annotation tab now: that tab runs after this one, so
+    # the model it loaded last was the previous run's choice
+    gene_model = tab_gene_annotation.chosen_genes() if ctx.has_annotation else None
+    genes = _filter_genes(gene_model, window.chr,
                           window.start_bp, window.end_bp) if ctx.has_annotation else None
 
     # --- disclosures (the edge cases the design names) ---
@@ -293,7 +297,7 @@ def render(ctx: LDContext, window):
                            "for the full list. Bars show position, extent and strand.")
         else:
             gene_labels = True
-            st.caption(_absent_gene_track_caption(st.session_state.get("genes_df")))
+            st.caption(_absent_gene_track_caption(gene_model))
         fig_s = plot_regional_association_static(
             wdf, r2_final, window.lead_snp, sig_threshold,
             block_interval=block_interval, block_members=block_members,
