@@ -256,6 +256,39 @@ def test_forced_disk_and_its_stops(tmp_path):
     assert sp.plan(v, "disk", tmp_path, available=1, free_disk=need).stop is None
 
 
+def test_stop_kind_names_each_stop(tmp_path):
+    """The GUI words each stop for its page by stop_kind (no --flags there); the CLI keeps the
+    message itself."""
+    v = _gt_vcf(tmp_path)
+    est = sp.estimate_memory_mib(50, 400) * sp.MIB
+    assert sp.plan(v, "auto", tmp_path, available=16 * GB, free_disk=100 * GB).stop_kind == ""
+    assert sp.plan(v, "memory", tmp_path, available=est - 1, free_disk=100 * GB).stop_kind == "memory"
+    assert sp.plan(v, "disk", tmp_path, impute="ldknni", available=1, free_disk=100 * GB).stop_kind == "ldknni"
+    assert sp.plan(v, "auto", tmp_path, impute="ldknni", available=1, free_disk=100 * GB).stop_kind == "ldknni"
+    assert sp.plan(v, "disk", tmp_path, export_qc=True, available=1, free_disk=100 * GB,
+                   one_piece_cells=19_999).stop_kind == "export_qc"
+    need = sp.disk_need_bytes(sp.vcf_size(v, exact=True))
+    assert sp.plan(v, "disk", tmp_path, available=1, free_disk=need - 1).stop_kind == "disk"
+
+
+def test_estimate_hook_drives_the_choice_not_the_metadata(tmp_path):
+    """A caller's own rule (the GUI's) decides auto; run_metadata.json still gets the CLI's
+    estimate, so a GUI run and a CLI run of the same analysis record the same keys."""
+    v = _gt_vcf(tmp_path)
+    est = sp.estimate_memory_mib(50, 400) * sp.MIB
+    avail = 2 * est / sp.AUTO_MEMORY_FRACTION                 # the CLI's rule keeps it in memory
+    assert sp.plan(v, "auto", tmp_path, available=avail, free_disk=100 * GB).mode == "memory"
+
+    def bigger(n, m, **opts):
+        return 3 * sp.estimate_memory_mib(n, m, **opts)
+
+    p = sp.plan(v, "auto", tmp_path, available=avail, free_disk=100 * GB, estimate=bigger)
+    assert p.mode == "disk" and p.estimate_mib == pytest.approx(3 * est / sp.MIB)
+    cli = sp.plan(v, "disk", tmp_path, available=avail, free_disk=100 * GB)
+    assert p.metadata(50, 400)["Memory estimate, in-memory run (GB)"] == \
+        cli.metadata(50, 400)["Memory estimate, in-memory run (GB)"]
+
+
 def test_unreadable_vcf_leaves_the_message_to_the_reader(tmp_path):
     bad = tmp_path / "bad.vcf.gz"
     bad.write_bytes(b"\x1f\x8b not really gzip")

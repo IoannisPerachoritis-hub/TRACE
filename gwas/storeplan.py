@@ -264,6 +264,8 @@ class Plan:
     size: VcfSize
     reason: str = ""        # why, with no number in it (run_metadata.json)
     options: dict = None    # the options of the estimate (estimate_memory_mib's keywords)
+    stop_kind: str = ""     # "" or what stopped the run: "memory" (memory asked, will not fit),
+                            # "ldknni", "export_qc" or "disk" (too little space); the GUI words it
 
     def metadata(self, n_samples, n_snps):
         """The keys run_metadata.json gets (and only it: the report is the same either way).
@@ -294,7 +296,8 @@ def _calls_text(size):
 
 
 def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=False, boot_jobs=1,
-         export_qc=False, impute="mean", available=None, free_disk=None, one_piece_cells=None):
+         export_qc=False, impute="mean", available=None, free_disk=None, one_piece_cells=None,
+         estimate=None):
     """Where the table is kept for this run, decided before the VCF is read.
 
     auto: in memory when the estimate is at most AUTO_MEMORY_FRACTION of the free memory, else
@@ -302,7 +305,11 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
     disk. With the table on disk the run stops for --impute ldknni, for --export-qc above the
     one-piece size, and when the drive of the store folder has too little free space. When the
     record count is only a bound, it is counted exactly before any choice of disk or any stop.
-    ``available`` and ``free_disk`` (bytes) replace the measured values (tests)."""
+    ``available`` and ``free_disk`` (bytes) replace the measured values (tests). ``estimate``
+    replaces estimate_memory_mib for the choice (same signature; the GUI passes its own rule,
+    since an open GUI session keeps more than a CLI run). The plan's metadata() always records
+    the CLI's estimate, so run_metadata.json is the same whichever program made the run."""
+    estimate_fn = estimate_memory_mib if estimate is None else estimate
     if one_piece_cells is None:
         from gwas.storepipe import one_piece_cells as _opc
         one_piece_cells = _opc()
@@ -315,7 +322,7 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
                    export_qc=export_qc, impute=impute)
 
     def est(sz):
-        return estimate_memory_mib(sz.n_samples, sz.n_records, **options)
+        return estimate_fn(sz.n_samples, sz.n_records, **options)
 
     def refine():
         nonlocal size
@@ -328,6 +335,7 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
 
     e = est(size)
     stop = None
+    stop_kind = ""
     if choice == "auto":
         if e * MIB > AUTO_MEMORY_FRACTION * avail:
             e = refine()
@@ -337,6 +345,7 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
         if e * MIB > avail:
             e = refine()
         if e * MIB > avail:
+            stop_kind = "memory"
             stop = (f"An in-memory run of this dataset ({_calls_text(size)} genotype calls) would need "
                     f"about {e * MIB / GB:.1f} GB of memory, and {avail / GB:.1f} GB are free. "
                     "Use --geno-store disk (the same results with far less memory) or --geno-store auto.")
@@ -370,6 +379,7 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
 
     if mode == "disk" and stop is None:
         if impute == "ldknni":
+            stop_kind = "ldknni"
             if choice == "auto":
                 stop = (f"--impute ldknni ranks every SNP against all others and needs the whole genotype "
                         f"table in memory: about {e_gb:.1f} GB for this dataset, and {a_gb:.1f} GB are "
@@ -381,6 +391,7 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
         elif export_qc and _calls(size) > one_piece_cells:
             refine()
             if _calls(size) > one_piece_cells:
+                stop_kind = "export_qc"
                 stop = (f"--export-qc writes the whole genotype table as text ({_calls_text(size)} calls) "
                         f"and is not available above {one_piece_cells:,} calls with the table on disk; "
                         "this dataset does not fit in memory for it.")
@@ -390,11 +401,12 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
                 refine()
             need = disk_need_bytes(size)
             if need > free:
+                stop_kind = "disk"
                 stop = (f"The genotype table on disk needs about {need / GB:.1f} GB in {store_base}, and "
                         f"{free / GB:.1f} GB are free there. Free some space, or choose a folder on "
                         "another drive with --geno-store-dir.")
     return Plan(mode=mode, choice=choice, message=message, stop=stop, estimate_mib=e,
-                available_bytes=avail, size=size, reason=reason, options=options)
+                available_bytes=avail, size=size, reason=reason, options=options, stop_kind=stop_kind)
 
 
 def stale_store_folders(base, own=None):
