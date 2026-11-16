@@ -1,5 +1,7 @@
+import contextlib
 import logging
-import os
+import threading
+
 import numpy as np
 import pandas as pd
 try:
@@ -30,8 +32,28 @@ def _in_streamlit_page() -> bool:
         return False
 
 
+_WARN_SINK = threading.local()
+
+
+@contextlib.contextmanager
+def collect_warnings(messages):
+    """While active (in this thread), _log_or_warn appends its messages to ``messages`` instead of
+    showing them: the GWAS page keeps its preprocessing in the session and shows the warnings
+    again on every rerun, as Streamlit's cache replayed them when the preprocessing was cached."""
+    previous = getattr(_WARN_SINK, "messages", None)
+    _WARN_SINK.messages = messages
+    try:
+        yield messages
+    finally:
+        _WARN_SINK.messages = previous
+
+
 def _log_or_warn(msg: str) -> None:
     """A warning of the pipeline: on the page in the GUI, in the log everywhere else (the CLI)."""
+    sink = getattr(_WARN_SINK, "messages", None)
+    if sink is not None:
+        sink.append(msg)
+        return
     if _in_streamlit_page():
         try:
             st.warning(msg)
@@ -769,84 +791,19 @@ def _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions):
 
 
 # ============================================================
-# Cached orchestrator (thin Streamlit wrapper)
+# The GWAS page's preprocessing (gwas.guigwas.preprocess calls it)
 # ============================================================
 
 def _impute_cached(_geno_df, vcf_hash, sample_set_hash, maf_thresh, miss_thresh,
                    mac_thresh, ind_miss_thresh, info_thresh, drop_alt, norm_option,
                    canonical, impute_method, impute_k, impute_l):
-    """Cached imputation, keyed on the RETAINED SAMPLE SET (sample_set_hash), NOT
-    the trait.  Imputation depends on which samples survived phenotype QC (LD-kNNi's
-    LD ranking and its k neighbours are both computed across them), so a per-trait
-    cache would be wrong -- but two traits with an identical retained sample set
-    (and identical VCF + QC + impute params) produce an identical matrix, so they
-    share the cache correctly.  ``_geno_df`` leads with an underscore so Streamlit
-    excludes it from the key; the remaining args fully determine it (same VCF +
-    sample set + QC params -> same post-QC geno_df).  The filters are NOT cached
-    (they cost ~91 ms and set the marker count / significance divisor).
-
-    CACHE-KEY CONTRACT: a future QC param that shapes the retained marker or
-    sample set -- e.g. the het-screen max_het / het_excess_p, today CLI-only and
-    never passed by gwas_pipeline -- MUST join this key when it is exposed, or the
-    imputation cache silently goes stale."""
+    """The imputation, no longer cached: until batch 13 this was an st.cache_data entry
+    (persist="disk") holding the raw and imputed tables, whose .memo files were never deleted.
+    The GWAS page now keeps one current preprocessing per session (gwas.guigwas.preprocess),
+    keyed by every setting, so no table sits in Streamlit's caches. The arguments other than
+    ``_geno_df`` are kept for the callers that name them; they do not change the result."""
     return _pipeline_build_geno_matrices(_geno_df, method=impute_method,
                                          impute_k=impute_k, impute_l=impute_l)
-
-
-if st is not None:
-    _impute_cached = st.cache_data(
-        persist="disk", max_entries=4,
-        show_spinner="Imputing genotypes (cached)…",
-    )(_impute_cached)
-
-
-def gwas_pipeline(
-    vcf_hash: str,
-    pheno_hash: str,
-    trait_col,
-    maf_thresh,
-    miss_thresh,
-    norm_option,
-    drop_alt,
-    ind_miss_thresh,
-    mac_thresh,
-    info_thresh=0.0,
-    canonical=None,
-    impute_method="mean",
-    impute_k=5,
-    impute_l=20,
-    covar_hash=None,
-    _vcf_path=None,
-):
-    """
-    Cached preprocessing pipeline.
-    The VCF is read from ``_vcf_path`` (the location the user typed, or the upload saved in the
-    work folder; the leading underscore keeps the path out of the cache key, which names the
-    file's content by ``vcf_hash``); the phenotype and covariate tables come from
-    st.session_state via stable hashes. ``covar_hash`` names the uploaded covariate table (None
-    without one): its samples without a value are dropped.
-    """
-    # -- Streamlit coupling: resolve session state --
-    pheno = st.session_state.get(f"PHENO_DF::{pheno_hash}", None)
-
-    if not _vcf_path or not os.path.isfile(_vcf_path):
-        raise RuntimeError(f"The VCF file is not there any more: {_vcf_path}. Upload it again or "
-                           "type its location.")
-    if pheno is None:
-        raise RuntimeError("Phenotype table missing from session_state (hash key not found).")
-    covar_df = None
-    if covar_hash is not None:
-        covar_df = st.session_state.get(f"COVAR_DF::{covar_hash}", None)
-        if covar_df is None:
-            raise RuntimeError("Covariate table missing from session_state (hash key not found).")
-
-    with open(_vcf_path, "rb") as fh:          # read here, never kept in the session
-        vcf_bytes = fh.read()
-    return _gwas_pipeline_impl(
-        vcf_bytes, pheno, trait_col, maf_thresh, miss_thresh, norm_option, drop_alt,
-        ind_miss_thresh, mac_thresh, info_thresh=info_thresh, canonical=canonical,
-        impute_method=impute_method, impute_k=impute_k, impute_l=impute_l,
-        covar_df=covar_df, vcf_hash=vcf_hash)
 
 
 def _gwas_pipeline_impl(
@@ -867,21 +824,67 @@ def _gwas_pipeline_impl(
     covar_df=None,
     vcf_hash="",
 ):
-    """The GWAS page's preprocessing (gwas_pipeline without the session lookups): VCF
-    parse, ID harmonisation, phenotype QC, the covariate drop (the CLI's, by the same
-    helper and at the same stage), SNP QC, imputation and kinship."""
-    callset = load_vcf_cached(vcf_bytes)
+    """The GWAS page's preprocessing of VCF bytes (the tests' entry): the VCF parsed as
+    gwas.pipeline.ParsedGenotypes, then _gwas_pipeline_stages."""
+    from gwas.pipeline import ParsedGenotypes
 
-    genotypes, samples, chroms, positions, vid, ref, alt, info_scores, info_field = \
-        _pipeline_parse_vcf_biallelic(callset)
+    parsed = ParsedGenotypes.from_callset(load_vcf_cached(vcf_bytes))
+    return _gwas_pipeline_stages(
+        parsed, pheno, trait_col, maf_thresh, miss_thresh, norm_option, drop_alt,
+        ind_miss_thresh, mac_thresh, info_thresh=info_thresh, canonical=canonical,
+        impute_method=impute_method, impute_k=impute_k, impute_l=impute_l, covar_df=covar_df)
+
+
+def _gwas_pipeline_stages(
+    parsed,
+    pheno,
+    trait_col,
+    maf_thresh,
+    miss_thresh,
+    norm_option,
+    drop_alt,
+    ind_miss_thresh,
+    mac_thresh,
+    info_thresh=0.0,
+    canonical=None,
+    impute_method="mean",
+    impute_k=5,
+    impute_l=20,
+    covar_df=None,
+):
+    """The GWAS page's preprocessing of one trait on the parsed VCF: ID harmonisation,
+    phenotype QC, the covariate drop (the CLI's, by the same helper and at the same stage),
+    SNP QC, imputation, kinship and the QC report.
+
+    ``parsed`` is the server's table (gwas.guitable's registry): gwas.pipeline.ParsedGenotypes
+    with the table in memory, or gwas.genostore.StoreParsed with the table on disk. On disk the
+    stages are the store's (gwas.storepipe.TraitStore), at the same places as in
+    gwas.pipeline._run_trait: the same arguments and results, with the genotype frame a column
+    of store rows and the two tables gwas.genostore.LazyColumns that stay on disk (``fill`` is
+    the per-SNP mean of the imputed one, ``rows`` its store rows). In memory the stages are
+    this module's, as the page ran them at ff56e5c."""
+    harmonize, phenotype_qc, snp_qc = (_pipeline_harmonize_ids, _pipeline_phenotype_qc,
+                                       _pipeline_snp_qc)
+    build_matrices, build_kinship = _pipeline_build_geno_matrices, _pipeline_build_kinship
+    store = None
+    if getattr(parsed, "is_store", False):
+        from gwas.storepipe import TraitStore
+        store = TraitStore(parsed)
+        harmonize, phenotype_qc, snp_qc = store.harmonize_ids, store.phenotype_qc, store.snp_qc
+        build_matrices, build_kinship = store.build_geno_matrices, store.build_kinship
+
+    genotypes, samples, chroms, positions = (
+        parsed.genotypes, parsed.samples, parsed.chroms, parsed.positions)
+    vid, ref, alt = parsed.vid, parsed.ref, parsed.alt
+    info_scores, info_field = parsed.info_scores, parsed.info_field
 
     geno_df, pheno, chroms, positions, sid, info_scores, allele_map = \
-        _pipeline_harmonize_ids(genotypes, samples, chroms, positions,
-                                vid, ref, alt, pheno, info_scores)
+        harmonize(genotypes, samples, chroms, positions,
+                  vid, ref, alt, pheno, info_scores)
 
     geno_df, pheno, y = \
-        _pipeline_phenotype_qc(geno_df, pheno, trait_col,
-                               norm_option, ind_miss_thresh)
+        phenotype_qc(geno_df, pheno, trait_col,
+                     norm_option, ind_miss_thresh)
 
     # samples without a covariate value are dropped here, before SNP QC, imputation,
     # kinship and the PCs, as the CLI does (gwas.pipeline._run_trait, same helper)
@@ -896,42 +899,44 @@ def _gwas_pipeline_impl(
                 + " No sample remains: check that the covariate file's sample IDs match "
                 "the VCF's.")
 
-    # CACHE-KEY CONTRACT (see _impute_cached): _pipeline_snp_qc also accepts
-    # max_het / het_excess_p (het-screen filter) -- NOT threaded here, so the args
-    # keyed in _impute_cached fully determine the retained marker set. Expose either
-    # (gwas_pipeline signature / GUI) -> add it to the _impute_cached key too.
+    # _pipeline_snp_qc also accepts max_het / het_excess_p (the het-screen filter): not
+    # threaded here. Exposing either on the page means adding it to the table's identity
+    # (gwas.guigwas.trait_identity), which keys this preprocessing and every cache after it.
     geno_df, chroms, chroms_num, positions, sid, n_initial_snps, qc_snp, info_scores = \
-        _pipeline_snp_qc(geno_df, chroms, positions, sid,
-                         maf_thresh, miss_thresh, mac_thresh, drop_alt,
-                         info_scores, info_thresh, canonical=canonical)
+        snp_qc(geno_df, chroms, positions, sid,
+               maf_thresh, miss_thresh, mac_thresh, drop_alt,
+               info_scores, info_thresh, canonical=canonical)
 
-    from gwas.utils import hash_bytes
-    sample_set_hash = hash_bytes(repr(tuple(sorted(geno_df.index.astype(str)))).encode())
-    # the phenotype's normalisation is applied after every sample filter and only to
-    # y, so it never reaches the imputed matrix: its key slot stays "none" (one
-    # imputation per sample set, whatever transformation the GWAS page applies)
-    geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = _impute_cached(
-        geno_df, vcf_hash, sample_set_hash, maf_thresh, miss_thresh, mac_thresh,
-        ind_miss_thresh, info_thresh, drop_alt, "none", canonical,
-        impute_method, impute_k, impute_l)
+    # the phenotype's normalisation is applied after every sample filter and only to y, so
+    # it never reaches the tables
+    geno_dosage_raw, snp_imputation_rate, geno_imputed, iid = build_matrices(
+        geno_df, method=impute_method, impute_k=impute_k, impute_l=impute_l)
     qc_snp["Imputation method"] = impute_method
 
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
-        _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions)
+        build_kinship(geno_df, geno_imputed, chroms, positions)
 
     # QC report (P1-P5): report-only; never removes a sample/marker, never raises.
     try:
         from gwas import qc_report as _qcr
         _qc_trait = (pheno[trait_col].to_numpy()
                      if trait_col in getattr(pheno, "columns", []) else y.ravel())
-        qc_report = _qcr.compute_qc_report(
+        qc_report = (store.qc_report if store is not None else _qcr.compute_qc_report)(
             geno_df, _qc_trait, trait_col, qc_snp=qc_snp,
             geno_dosage_raw=geno_dosage_raw, geno_imputed=geno_imputed,
             impute_method=impute_method, impute_k=impute_k, impute_l=impute_l)
     except Exception:
         qc_report = None
 
+    if store is not None:
+        from gwas.storepipe import ROW_COL
+        mode = {"mode": "disk", "fill": store.fill,
+                "rows": geno_df[ROW_COL].to_numpy(dtype=np.int64)}
+    else:
+        mode = {"mode": "memory", "fill": None, "rows": None}
     return {
+        **mode,
+        "parsed": parsed,
         "geno_imputed": geno_imputed,
         "geno_dosage_raw": geno_dosage_raw,
         "snp_imputation_rate": snp_imputation_rate,
@@ -958,8 +963,3 @@ def _gwas_pipeline_impl(
         "covar_dropped": covar_dropped,   # samples dropped for a missing covariate value
         "covar_n_before": covar_n_before,
     }
-
-if st is not None:
-    gwas_pipeline = st.cache_data(
-        show_spinner="Preparing data & running GWAS (cached)…", max_entries=8
-    )(gwas_pipeline)

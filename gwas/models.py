@@ -294,39 +294,34 @@ def _run_gwas_impl(
 
 
 def run_gwas_cached(
-    geno_imputed,
-    y,
-    pcs_full,
+    table_key,
     n_pcs,
-    sid,
-    positions,
-    chroms,
-    chroms_num,
-    iid,
-    _K0,
-    _K_by_chr,
-    _pheno_reader_key,
+    use_loco=True,
     trait_name=None,
-    user_covar=None,
-    user_covar_names=None,
+    _geno_imputed=None,
+    _y=None,
+    _pcs_full=None,
+    _sid=None,
+    _positions=None,
+    _chroms=None,
+    _chroms_num=None,
+    _iid=None,
+    _K0=None,
+    _K_by_chr=None,
+    _pheno_reader=None,
+    _user_covar=None,
+    _user_covar_names=None,
 ):
-    """Cached wrapper: resolves session-state keys, delegates to _run_gwas_impl."""
-    if isinstance(geno_imputed, str) and geno_imputed.startswith("ARRKEY::"):
-        arr = st.session_state.get(geno_imputed)
-        if arr is None:
-            raise RuntimeError(
-                "Cached genotype array missing from session_state. Re-run preprocessing."
-            )
-        geno_imputed = arr
+    """The GWAS page's MLM scan (_run_gwas_impl), cached.
 
-    pheno_reader = st.session_state.get(_pheno_reader_key)
-    if pheno_reader is None:
-        raise RuntimeError("Cached phenotype reader missing from session_state.")
-
+    The key is ``table_key`` (the trait table's identity, gwas.guigwas.trait_identity: it names the
+    genotypes, y, the samples, the covariates, the PCs' input and the kinship), the PC count, the
+    LOCO choice (the caller passes K0 for every chromosome without LOCO) and the trait. Everything
+    else is an underscore argument, never hashed by Streamlit."""
     return _run_gwas_impl(
-        geno_imputed, y, pcs_full, n_pcs, sid, positions, chroms,
-        chroms_num, iid, _K0, _K_by_chr, pheno_reader, trait_name,
-        user_covar=user_covar, user_covar_names=user_covar_names,
+        _geno_imputed, _y, _pcs_full, n_pcs, _sid, _positions, _chroms,
+        _chroms_num, _iid, _K0, _K_by_chr, _pheno_reader, trait_name,
+        user_covar=_user_covar, user_covar_names=_user_covar_names,
     )
 
 if st is not None:
@@ -336,35 +331,36 @@ if st is not None:
 
 
 def run_mlmm_core_cached(
-    geno_key: str, y_key: str,
-    iid, sid, chroms, chroms_num, positions,
-    K0_key, pheno_reader_key, covar_reader_key,
-    gwas_df_mlm,
-    p_enter=1e-4, max_cof=10, window_kb=500
+    table_key, n_pcs,
+    p_enter=1e-4, max_cof=10, window_kb=500,
+    _geno_imputed=None, _sid=None, _chroms=None, _chroms_num=None, _positions=None, _iid=None,
+    _K0=None, _pheno_reader=None, _covar_reader=None,
 ):
-    pheno_reader = st.session_state.get(pheno_reader_key)
-    if pheno_reader is None:
-        raise RuntimeError("Missing pheno_reader in session_state.")
-    covar_reader = st.session_state.get(covar_reader_key)
-    G = st.session_state.get(geno_key)
-    Y = st.session_state.get(y_key)
+    """The GWAS page's MLMM (run_mlmm_research_grade_fast), cached by ``table_key`` (the trait
+    table's identity), the PC count of its covariates and its settings; the tables and readers are
+    underscore arguments, never hashed by Streamlit.
 
-    K0 = st.session_state.get(K0_key)
-    if K0 is None:
-        raise RuntimeError("Kinship matrix K0 missing from session_state.")
-    if G is None or Y is None:
-        raise RuntimeError("Missing cached arrays in session_state.")
+    The table: in memory a C-ordered float32 copy, as at ff56e5c; on disk the LazyColumns
+    themselves, as the CLI passes them, so run_mlmm_research_grade_fast's own lazy branch
+    standardises C-ordered float32 blocks, the operand the copy gives in memory."""
+    if _pheno_reader is None:
+        raise RuntimeError("MLMM needs the phenotype reader.")
+    if _K0 is None:
+        raise RuntimeError("MLMM needs the kinship matrix K0.")
+    if _geno_imputed is None:
+        raise RuntimeError("MLMM needs the genotype table.")
 
     return run_mlmm_research_grade_fast(
-        geno_imputed=np.asarray(G, dtype=np.float32, order="C"),
-        sid=np.asarray(sid).astype(str),
-        chroms=np.asarray(chroms).astype(str),
-        chroms_num=np.asarray(chroms_num).astype(int),
-        positions=np.asarray(positions).astype(int),
-        iid=np.asarray(iid).astype(str),
-        pheno_reader=pheno_reader,
-        K0=K0,
-        covar_reader=covar_reader,
+        geno_imputed=(_geno_imputed if _is_lazy(_geno_imputed)
+                      else np.asarray(_geno_imputed, dtype=np.float32, order="C")),
+        sid=np.asarray(_sid).astype(str),
+        chroms=np.asarray(_chroms).astype(str),
+        chroms_num=np.asarray(_chroms_num).astype(int),
+        positions=np.asarray(_positions).astype(int),
+        iid=np.asarray(_iid).astype(str),
+        pheno_reader=_pheno_reader,
+        K0=_K0,
+        covar_reader=_covar_reader,
         p_enter=float(p_enter),
         max_cof=int(max_cof),
         window_kb=int(window_kb),
@@ -1915,29 +1911,34 @@ def run_farmcpu(
 
 
 def run_farmcpu_cached(
-    geno_key, y_key, iid, sid, chroms, chroms_num, positions,
-    K0_key, pheno_reader_key, covar_reader_key,
+    table_key, n_pcs,
     p_threshold=0.01, max_iterations=10, max_pseudo_qtns=15,
     final_scan="ols", use_loco=True,
+    _geno_imputed=None, _sid=None, _chroms=None, _chroms_num=None, _positions=None, _iid=None,
+    _K0=None, _pheno_reader=None, _covar_reader=None,
 ):
-    """Cached wrapper: resolves session-state keys, delegates to run_farmcpu."""
-    G = st.session_state.get(geno_key)
-    Y = st.session_state.get(y_key)
-    K0 = st.session_state.get(K0_key)
-    pheno_reader = st.session_state.get(pheno_reader_key)
-    covar_reader = st.session_state.get(covar_reader_key)
-    if G is None or Y is None or K0 is None or pheno_reader is None:
-        raise RuntimeError("Missing cached data in session_state.")
+    """The GWAS page's FarmCPU (run_farmcpu), cached by ``table_key`` (the trait table's identity),
+    the PC count of its covariates and its settings; the tables and readers are underscore
+    arguments, never hashed by Streamlit (at ff56e5c a different table under the same key strings
+    was served the first table's p-values).
+
+    The table: in memory a C-ordered float32 copy, as at ff56e5c; on disk the LazyColumns, as the
+    CLI passes them: run_farmcpu turns them into a C-layout view whose OLS chunks are strided
+    slices of that copy's layout, the last one included (gwas.genostore.LazyColumns.block)."""
+    if _geno_imputed is None or _K0 is None or _pheno_reader is None:
+        raise RuntimeError("FarmCPU needs the genotype table, the kinship matrix and the "
+                           "phenotype reader.")
     return run_farmcpu(
-        geno_imputed=np.asarray(G, dtype=np.float32, order="C"),
-        sid=np.asarray(sid).astype(str),
-        chroms=np.asarray(chroms).astype(str),
-        chroms_num=np.asarray(chroms_num).astype(int),
-        positions=np.asarray(positions).astype(int),
-        iid=np.asarray(iid).astype(str),
-        pheno_reader=pheno_reader,
-        K0=K0,
-        covar_reader=covar_reader,
+        geno_imputed=(_geno_imputed if _is_lazy(_geno_imputed)
+                      else np.asarray(_geno_imputed, dtype=np.float32, order="C")),
+        sid=np.asarray(_sid).astype(str),
+        chroms=np.asarray(_chroms).astype(str),
+        chroms_num=np.asarray(_chroms_num).astype(int),
+        positions=np.asarray(_positions).astype(int),
+        iid=np.asarray(_iid).astype(str),
+        pheno_reader=_pheno_reader,
+        K0=_K0,
+        covar_reader=_covar_reader,
         p_threshold=float(p_threshold),
         max_iterations=int(max_iterations),
         max_pseudo_qtns=int(max_pseudo_qtns),

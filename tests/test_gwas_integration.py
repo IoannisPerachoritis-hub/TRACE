@@ -39,6 +39,17 @@ def _mock_streamlit(monkeypatch):
 
 
 # ── run_gwas_cached ──────────────────────────────────────────
+# The page's cached MLM wrapper: keyed by the trait table's identity, the PC count and the
+# LOCO choice; the tables and readers are underscore arguments (never hashed by Streamlit), so
+# every call with other data has its own key here, as every table has its own identity on the page.
+
+def _mlm(key, geno, y, pcs, meta, iid, K0, K_by_chr, pheno_reader, **kw):
+    from gwas.models import run_gwas_cached
+    return run_gwas_cached(
+        key, 3, _geno_imputed=geno, _y=y, _pcs_full=pcs, _sid=meta["sid"],
+        _positions=meta["positions"], _chroms=meta["chroms"], _chroms_num=meta["chroms_num"],
+        _iid=iid, _K0=K0, _K_by_chr=K_by_chr, _pheno_reader=pheno_reader, **kw)
+
 
 class TestRunGwasCached:
 
@@ -47,26 +58,8 @@ class TestRunGwasCached:
         gwas_geno, gwas_phenotype, gwas_pcs, gwas_snp_metadata,
         gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader,
     ):
-        from gwas.models import run_gwas_cached
-        meta = gwas_snp_metadata
-
-        # Store pheno_reader in mock session state
-        _mock_streamlit["pheno_reader_key"] = gwas_pheno_reader
-
-        df = run_gwas_cached(
-            geno_imputed=gwas_geno,
-            y=gwas_phenotype,
-            pcs_full=gwas_pcs,
-            n_pcs=3,
-            sid=meta["sid"],
-            positions=meta["positions"],
-            chroms=meta["chroms"],
-            chroms_num=meta["chroms_num"],
-            iid=gwas_iid,
-            _K0=gwas_K0,
-            _K_by_chr=gwas_K_by_chr,
-            _pheno_reader_key="pheno_reader_key",
-        )
+        df = _mlm("fixture-table", gwas_geno, gwas_phenotype, gwas_pcs, gwas_snp_metadata,
+                  gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader)
 
         assert isinstance(df, pd.DataFrame)
         for col in ["SNP", "Chr", "Pos", "PValue", "ChrNum"]:
@@ -77,17 +70,8 @@ class TestRunGwasCached:
         gwas_geno, gwas_phenotype, gwas_pcs, gwas_snp_metadata,
         gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader,
     ):
-        from gwas.models import run_gwas_cached
-        meta = gwas_snp_metadata
-        _mock_streamlit["pheno_reader_key"] = gwas_pheno_reader
-
-        df = run_gwas_cached(
-            geno_imputed=gwas_geno, y=gwas_phenotype, pcs_full=gwas_pcs,
-            n_pcs=3, sid=meta["sid"], positions=meta["positions"],
-            chroms=meta["chroms"], chroms_num=meta["chroms_num"],
-            iid=gwas_iid, _K0=gwas_K0, _K_by_chr=gwas_K_by_chr,
-            _pheno_reader_key="pheno_reader_key",
-        )
+        df = _mlm("fixture-table", gwas_geno, gwas_phenotype, gwas_pcs, gwas_snp_metadata,
+                  gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader)
 
         pvals = df["PValue"].values
         assert np.all(pvals > 0), "All p-values should be > 0"
@@ -98,17 +82,9 @@ class TestRunGwasCached:
         gwas_geno, gwas_phenotype, gwas_pcs, gwas_snp_metadata,
         gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader,
     ):
-        from gwas.models import run_gwas_cached
         meta = gwas_snp_metadata
-        _mock_streamlit["pheno_reader_key"] = gwas_pheno_reader
-
-        df = run_gwas_cached(
-            geno_imputed=gwas_geno, y=gwas_phenotype, pcs_full=gwas_pcs,
-            n_pcs=3, sid=meta["sid"], positions=meta["positions"],
-            chroms=meta["chroms"], chroms_num=meta["chroms_num"],
-            iid=gwas_iid, _K0=gwas_K0, _K_by_chr=gwas_K_by_chr,
-            _pheno_reader_key="pheno_reader_key",
-        )
+        df = _mlm("fixture-table", gwas_geno, gwas_phenotype, gwas_pcs, meta,
+                  gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader)
 
         # All 100 SNPs should be in the result
         assert len(df) == len(meta["sid"])
@@ -118,17 +94,8 @@ class TestRunGwasCached:
         gwas_geno, gwas_phenotype, gwas_pcs, gwas_snp_metadata,
         gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader,
     ):
-        from gwas.models import run_gwas_cached
-        meta = gwas_snp_metadata
-        _mock_streamlit["pheno_reader_key"] = gwas_pheno_reader
-
-        df = run_gwas_cached(
-            geno_imputed=gwas_geno, y=gwas_phenotype, pcs_full=gwas_pcs,
-            n_pcs=3, sid=meta["sid"], positions=meta["positions"],
-            chroms=meta["chroms"], chroms_num=meta["chroms_num"],
-            iid=gwas_iid, _K0=gwas_K0, _K_by_chr=gwas_K_by_chr,
-            _pheno_reader_key="pheno_reader_key",
-        )
+        df = _mlm("fixture-table", gwas_geno, gwas_phenotype, gwas_pcs, gwas_snp_metadata,
+                  gwas_iid, gwas_K0, gwas_K_by_chr, gwas_pheno_reader)
 
         result_chroms = set(df["Chr"].unique())
         assert {"1", "2", "3"} == result_chroms
@@ -139,7 +106,6 @@ class TestRunGwasCached:
         gwas_iid, gwas_K0, gwas_K_by_chr,
     ):
         """Inject a strong signal: y = 5*G[:,0] + noise. SNP 0 should have smallest p."""
-        from gwas.models import run_gwas_cached
         from gwas.utils import PhenoData
         meta = gwas_snp_metadata
         rng = np.random.default_rng(999)
@@ -148,15 +114,9 @@ class TestRunGwasCached:
         y = 5.0 * gwas_geno[:, 0] + rng.normal(0, 0.5, gwas_geno.shape[0])
         y = y.astype(np.float32)
         pheno_reader = PhenoData(iid=gwas_iid, val=y)
-        _mock_streamlit["pheno_reader_key"] = pheno_reader
 
-        df = run_gwas_cached(
-            geno_imputed=gwas_geno, y=y, pcs_full=gwas_pcs,
-            n_pcs=3, sid=meta["sid"], positions=meta["positions"],
-            chroms=meta["chroms"], chroms_num=meta["chroms_num"],
-            iid=gwas_iid, _K0=gwas_K0, _K_by_chr=gwas_K_by_chr,
-            _pheno_reader_key="pheno_reader_key",
-        )
+        df = _mlm("signal-y", gwas_geno, y, gwas_pcs, meta, gwas_iid, gwas_K0, gwas_K_by_chr,
+                  pheno_reader)
 
         # The causal SNP should be among the top hits
         top_snp = df.sort_values("PValue").iloc[0]["SNP"]
@@ -168,23 +128,17 @@ class TestRunGwasCached:
     ):
         """run_gwas_cached forwards user_covar to _run_gwas_impl: a covariate
         (near-)collinear with the phenotype absorbs the planted signal."""
-        from gwas.models import run_gwas_cached
         from gwas.utils import PhenoData
         meta = gwas_snp_metadata
         rng = np.random.default_rng(2024)
         n = gwas_geno.shape[0]
         y = (2.0 * gwas_geno[:, 0].astype(float) + rng.normal(0, 1.0, n)).astype(np.float32)
-        _mock_streamlit["pr"] = PhenoData(iid=gwas_iid, val=y)
+        pr = PhenoData(iid=gwas_iid, val=y)
         sid0 = str(meta["sid"][0])
-        common = dict(
-            geno_imputed=gwas_geno, y=y, pcs_full=gwas_pcs, n_pcs=3,
-            sid=meta["sid"], positions=meta["positions"], chroms=meta["chroms"],
-            chroms_num=meta["chroms_num"], iid=gwas_iid, _K0=gwas_K0,
-            _K_by_chr=gwas_K_by_chr, _pheno_reader_key="pr",
-        )
-        base = run_gwas_cached(**common).set_index("SNP")
+        common = (gwas_geno, y, gwas_pcs, meta, gwas_iid, gwas_K0, gwas_K_by_chr, pr)
+        base = _mlm("covar-y", *common).set_index("SNP")
         covar = (y.astype(float) + rng.normal(0, 0.05 * float(np.std(y)), n)).reshape(-1, 1)
-        withc = run_gwas_cached(**common, user_covar=covar).set_index("SNP")
+        withc = _mlm("covar-y-with-covariate", *common, _user_covar=covar).set_index("SNP")
         p_base = float(base.loc[sid0, "PValue"])
         p_cov = float(withc.loc[sid0, "PValue"]) if sid0 in withc.index else 1.0
         assert p_base < 1e-2

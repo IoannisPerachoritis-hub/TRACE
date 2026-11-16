@@ -18,12 +18,13 @@ import json
 from scipy import stats
 from gwas.utils import (
     PhenoData, CovarData, hash_bytes, hash_df,
-    put_array_in_session, put_kernel_in_session, put_object_in_session,
+    put_array_in_session,
     stable_seed, bump_data_version,
 )
-from gwas.io import load_vcf_cached, _clean_chr_series
-from gwas.qc import gwas_pipeline, allele_freq_from_called_dosage
+from gwas.io import _clean_chr_series
+from gwas.pipeline import is_phenotype_qc_stop
 from gwas import guitable as _gt
+from gwas import guigwas as _gg
 from gwas import storeplan as _storeplan
 from pathlib import Path as _Path
 from gwas.windows import ld_window_kb
@@ -50,15 +51,13 @@ from gwas.stability import _make_run_manifest
 from gwas.significance import add_significance_columns
 from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
-    plot_manhattan_interactive, plot_qq, compute_lambda_gc,
+    plot_manhattan_interactive, manhattan_caption, plot_qq, compute_lambda_gc,
     download_matplotlib_fig, download_plotly_fig,
     _build_gwas_results_zip, _append_metadata_to_zip, _combine_gwas_zips,
-    compute_meff_li_ji,
     PALETTE, PALETTE_CYCLE, export_matplotlib,
 )
 from annotation import (ASSEMBLY_NOTE, DESCRIPTIONS_FILE_HELP, GENE_FILE_HELP,
-                        chromosomes_without_genes, compute_ld_decay_by_chromosome,
-                        load_gene_model)
+                        chromosomes_without_genes, load_gene_model)
 
 # -----------------
 # Helper functions for user-friendly display
@@ -195,43 +194,6 @@ def _gene_override_problem(data, chroms):
     return None
 
 
-@st.cache_data(show_spinner="Computing LD decay (per-chromosome)…", max_entries=8)
-def _compute_ld_decay_for_gwas_page(geno_key: str, chroms_tuple: tuple,
-                                    positions_tuple: tuple):
-    """
-    Accurate LD decay using compute_ld_decay_by_chromosome (the CLI's
-    function; Post-GWAS shows the result in the LD Blocks & Haplotypes
-    Settings). Returns (decay_df, summary_df,
-    median_decay_kb). median_decay_kb may be None if no chromosome yielded
-    a valid decay curve.
-
-    Cached by geno_key + chroms + positions, stays hot across one-click
-    and manual Run GWAS paths within a session, and across re-runs with
-    the same VCF/QC result.
-    """
-    geno = st.session_state.get(geno_key)
-    if geno is None:
-        return None, None, None
-    chroms_arr = np.asarray(chroms_tuple, dtype=str)
-    positions_arr = np.asarray(positions_tuple, dtype=int)
-    decay_df, summary_df = compute_ld_decay_by_chromosome(
-        chroms=chroms_arr,
-        positions=positions_arr,
-        geno_imputed=geno,
-        max_snps_per_chr=1500,   # aligned to the CLI's per-chromosome subsample cap (cli.py, the `if len(pos_ch) > 1500`
-        # in the "Estimating LD decay" loop, not ld_decay's MAX_LD_SNPS safety net)
-        max_dist_kb=5000.0,
-        n_bins=40,   # standardised onto the CLI ld_decay bin count (LD-decay Tier 1a)
-    )
-    median_decay = None
-    if summary_df is not None and not summary_df.empty \
-            and "decay_kb_r2_0.2" in summary_df.columns:
-        _m = summary_df["decay_kb_r2_0.2"].median()
-        if pd.notna(_m) and np.isfinite(_m):
-            median_decay = float(_m)
-    return decay_df, summary_df, median_decay
-
-
 # -----------------
 # Streamlit App UI
 # -----------------
@@ -357,24 +319,18 @@ def _rehydrate_or_stop(msg=None, level="error"):
     st.stop()
 
 
-_CLEAR_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_",
-                   "BOOT_GWAS::")
-_CLEAR_KEYS = (
-    "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
-    "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
-    "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
-    "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
-    "pheno_reader", "covar_reader", "pheno_aligned", "pheno", "y", "iid",
-    "sid", "chroms", "chroms_num", "positions", "GWAS_CTX", "geno_table", "pheno_raw",
-    "pheno_applied_transforms", "_pheno_raw_fp", "subsampling_gwas_summary",
-)
+# the session keys "Clear session data" drops (gwas.guigwas.SESSION_KEYS / SESSION_PREFIXES, with the
+# Post-GWAS page's, gwas.guitable.session_keys_to_clear)
+_CLEAR_PREFIXES = _gg.SESSION_PREFIXES
+_CLEAR_KEYS = _gg.SESSION_KEYS
 
 
 def _clear_session_data():
-    """Release the genotype/phenotype held in memory and reset all run outputs."""
-    for _k in list(st.session_state.keys()):
-        if isinstance(_k, str) and (_k.startswith(_CLEAR_PREFIXES) or _k in _CLEAR_KEYS):
-            st.session_state.pop(_k, None)
+    """"Clear session data" (gwas.guitable.clear_all): this server's genotype tables (in memory,
+    and the table files with their folders on disk) and the uploads it saved are closed and
+    deleted, every cached result is emptied, TRACE's .memo files are removed from Streamlit's cache
+    folder, and this session's data and results are dropped, the Post-GWAS page's included."""
+    return _gt.clear_all(st.session_state, keys=_CLEAR_KEYS, prefixes=_CLEAR_PREFIXES)
 # =========================
 # 1. Data upload & basic QC
 # =========================
@@ -522,8 +478,10 @@ LA1589,12.8,7.3
     with col_qc:
         if st.button(
             "Clear session data",
-            help="Release the genotype/phenotype held in memory and reset all results "
-                 "(frees RAM; you will need to re-upload to run again).",
+            help="Frees this server's genotype tables (in memory, and the table files on disk), "
+                 "the uploads it saved, every cached result and TRACE's cache files, and this "
+                 "session's data and results, the Post-GWAS page's too. Upload the files, or type "
+                 "the VCF's location, again to run.",
         ):
             _clear_session_data()
             st.success("Session data cleared.")
@@ -1051,22 +1009,18 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     "the space.")
     if _geno_plan.stop:
         _rehydrate_or_stop(_gt.page_stop(_geno_plan, geno_work_dir))
-    if _geno_plan.mode == "disk":
-        _rehydrate_or_stop(
-            "The genotype table of this dataset is kept on disk (see the line above). The "
-            "page's analyses read it in pieces once the next change of this batch is in; "
-            "until then, keep it in memory under Large datasets, or run the CLI with "
-            "--geno-store auto.", level="info")
 
-    # --- Store heavy inputs in session_state under those keys ---
-    st.session_state[f"PHENO_DF::{pheno_hash}"] = pheno.copy()
     # the covariate table: the preprocessing drops its incomplete samples, as the CLI
-    _covar_hash = None
-    if covar_df is not None:
-        _covar_hash = hash_df(covar_df)
-        st.session_state[f"COVAR_DF::{_covar_hash}"] = covar_df
+    _covar_hash = hash_df(covar_df) if covar_df is not None else None
 
-    # --- Call cached preprocessing using hashes only ---
+    # --- The genotype table: the server's, in the plan's mode (gwas.guitable's registry) ---
+    # In memory the parsed genotypes (read-only, shared by the sessions); on disk a table file
+    # in the work folder, read in pieces. The same results either way.
+    with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
+                    else "Reading the VCF…"):
+        _parsed = _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+
+    # --- The preprocessing of one trait, kept in the session (one current entry) ---
     # The setup (and the detailed view below) uses the first selected trait that
     # passes phenotype QC. A trait that does not (e.g. a constant phenotype) no
     # longer stops the page: One-Click still runs every selected trait and reports
@@ -1074,35 +1028,27 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     results = None
     _setup_failed = {}
     for _setup_trait in selected_traits:
+        _prep_key = _gt.table_identity(
+            vcf_hash, mode=_geno_plan.mode, pheno=pheno_hash, trait=_setup_trait,
+            norm=_norm_for(_setup_trait), maf=maf_thresh, miss=miss_thresh,
+            ind_miss=ind_miss_thresh, mac=mac_thresh, info=info_thresh, drop_alt=int(drop_alt),
+            impute=impute_method, impute_k=impute_k, impute_l=impute_l, covar=_covar_hash,
+            canonical=None)
         try:
-            results = gwas_pipeline(
-                vcf_hash=vcf_hash,
-                pheno_hash=pheno_hash,
-                trait_col=_setup_trait,
-                maf_thresh=maf_thresh,
-                miss_thresh=miss_thresh,
-                norm_option=_norm_for(_setup_trait),
-                drop_alt=drop_alt,
-                ind_miss_thresh=ind_miss_thresh,
-                mac_thresh=mac_thresh,
-                info_thresh=info_thresh,
-                impute_method=impute_method,
-                impute_k=impute_k,
-                impute_l=impute_l,
-                covar_hash=_covar_hash,
-                _vcf_path=vcf_path,
-            )
+            results = _gg.preprocess(
+                st.session_state, _prep_key, _parsed, pheno.copy(), _setup_trait,
+                maf_thresh, miss_thresh, _norm_for(_setup_trait), drop_alt, ind_miss_thresh,
+                mac_thresh, info_thresh=info_thresh, impute_method=impute_method,
+                impute_k=impute_k, impute_l=impute_l, covar_df=covar_df, show=st.warning)
         except _CovariateDropError as _cov_err:
             # no sample keeps its covariate values: the same for every trait
             _rehydrate_or_stop(str(_cov_err))
         except ValueError as _setup_err:
-            # Skip only a phenotype-QC refusal, which is about this trait. Any other
-            # error (e.g. unrecognised chromosome names) would fail the same way for
-            # every trait, so raise it as before.
-            _tb = _setup_err.__traceback__
-            while _tb.tb_next is not None:
-                _tb = _tb.tb_next
-            if (_tb.tb_frame.f_code.co_name != "_pipeline_phenotype_qc"
+            # Skip only a phenotype-QC refusal, which is about this trait (raised in
+            # gwas.qc._pipeline_phenotype_qc, or in TraitStore.phenotype_qc with the table on
+            # disk). Any other error (e.g. unrecognised chromosome names) would fail the same
+            # way for every trait, so raise it as before.
+            if (not is_phenotype_qc_stop(_setup_err)
                     # the per-sample missingness cut-off removes the same samples
                     # whichever trait is chosen
                     or "All samples removed by missingness filter" in str(_setup_err)):
@@ -1118,6 +1064,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             + "; ".join(f"{t}: {e}" for t, e in _setup_failed.items()))
     # the detailed view's trait: its normalisation keys the caches and the records below
     norm_option = _norm_for(trait_col)
+    # One identity for this trait's table (gwas.guigwas.trait_identity): the VCF's identity and
+    # every setting that changes the genotype table or y, with the retained samples. Every cache
+    # and session key below that depends on the table is built on it.
+    _table_id = _gg.trait_identity(
+        vcf_hash, pheno=pheno_hash, trait=trait_col, norm=norm_option, maf=maf_thresh,
+        miss=miss_thresh, ind_miss=ind_miss_thresh, mac=mac_thresh, info=info_thresh,
+        drop_alt=int(drop_alt), impute=impute_method, impute_k=impute_k, impute_l=impute_l,
+        covar=_covar_hash, canonical=None,
+        samples=_gg.sample_set_hash(results["geno_df"].index))
     if _setup_failed:
         st.warning(
             "Not usable for the detailed view: "
@@ -1136,8 +1091,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # Force numpy dtype: chroms_grm may be ArrowStringArray on newer pandas,
     # which Streamlit @st.cache_data cannot hash (build_loco_kernels_cached fails).
     st.session_state["chroms_grm"] = np.asarray(results["chroms_grm"], dtype=str)
-    # ---- PCA computed separately, cached, then sliced ----
-    pcs_full, pca_eigenvalues = compute_pcs_full_cached(results["Z_for_pca"], max_pcs=20)
+    # ---- PCA computed separately, cached by the table's identity, then sliced ----
+    pcs_full, pca_eigenvalues = compute_pcs_full_cached(_table_id, results["Z_for_pca"], max_pcs=20)
     # --- SAFE PCA alignment fix ---
     if pcs_full is not None:
         if pcs_full.shape[0] != results["geno_df"].shape[0]:
@@ -1181,16 +1136,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         st.caption(
             f"Covariate: {_covar_source} · columns: {', '.join(user_covar_names)}"
         )
-    # y depends on the trait's normalisation, which pheno_hash (raw table) does not
-    # carry: it keys the string-keyed MLMM / FarmCPU caches
-    y_key = put_array_in_session(
-        np.asarray(y),
-        "Y_VEC",
-        vcf_hash,
-        pheno_hash,
-        trait_col,
-        norm_option,
-    )
+    # y under the table's identity (it names the trait, its normalisation and the samples); one
+    # entry: the previous identity's vector is dropped
+    for _old_y in [k for k in list(st.session_state.keys()) if isinstance(k, str)
+                   and k.startswith("ARRKEY::Y_VEC::") and k != f"ARRKEY::Y_VEC::{_table_id}"]:
+        del st.session_state[_old_y]
+    put_array_in_session(np.asarray(y), "Y_VEC", _table_id)
 
     # Kernel reader
     K0 = PSKernelData(iid=iid, val=K)
@@ -1204,25 +1155,9 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     iid = results["iid"]
     chroms_num = results["chroms_num"]
 
-    # ------------------------------------------------------------
-    # Canonical, cache-safe storage for large arrays (genotypes)
-    # ------------------------------------------------------------
-    geno_key = put_array_in_session(
-        geno_imputed,
-        "GENO_IMPUTED",
-        vcf_hash, pheno_hash,
-        maf_thresh, miss_thresh, ind_miss_thresh, mac_thresh,
-        int(drop_alt)
-    )
-
-    # (Optional but recommended) also store raw dosage if you pass it around a lot
-    dos_key = put_array_in_session(
-        results["geno_dosage_raw"],
-        "GENO_DOSAGE_RAW",
-        vcf_hash, pheno_hash,
-        maf_thresh, miss_thresh, ind_miss_thresh, mac_thresh,
-        int(drop_alt)
-    )
+    # The tables are not stored under keys of their own any more (they were named by a few QC
+    # settings, so every earlier setting kept two stale tables): the cached computations below
+    # take them as arguments Streamlit does not hash, and are keyed by the table's identity.
 
     # put core objects into session_state before building LOCO cache
     # Force numpy dtype on chroms: ArrowStringArray (newer pandas) cannot be
@@ -1234,10 +1169,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     st.session_state["K"] = results["K"]
 
     K0, K_by_chr, loco_diag = build_loco_kernels_cached(
-        iid=iid,
-        Z_grm=st.session_state["Z_grm"],
-        chroms_grm=st.session_state["chroms_grm"],
-        K_base=results["K"],
+        _table_id,
+        _iid=iid,
+        _Z_grm=st.session_state["Z_grm"],
+        _chroms_grm=st.session_state["chroms_grm"],
+        _K_base=results["K"],
     )
     # Override LOCO kernels with global K0 if user disabled LOCO
     if not use_loco:
@@ -1259,22 +1195,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 "for SNPs on those chromosomes.\n\n" + "\n".join(_fallback_lines)
             )
 
-    # Store final kinship kernel for MLMM caching
-    K0_key = put_kernel_in_session(K0, "K0", vcf_hash, pheno_hash)
     st.session_state["K0"] = K0
     st.session_state["K_by_chr"] = K_by_chr
     st.session_state["loco_diagnostics_by_chr"] = loco_diag
 
     # Phenotype reader
     pheno_reader = PhenoData(iid=iid, val=y)
-    pheno_reader_key = put_object_in_session(
-        pheno_reader,
-        "PHENO_READER",
-        vcf_hash,
-        pheno_hash,
-        trait_col,
-        norm_option,
-    )
 
     # Covariates (PCs + optional user covariates)
     if user_covar_mat is None:
@@ -1332,7 +1258,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         # Headline: the QC outcome at a glance, so a user learns it without opening
         # anything. "0 excluded" is load-bearing -- the report-only diagnostics
         # (heterozygosity, relatedness) flag samples but never remove them.
-        _n_final = int(results["geno_df"].shape[1])
+        _n_final = _gg.n_snps(results)
         _n_alt = int(_qc.get("ALT chromosomes", 0))
         _n_flag_het = int((_qc_report or {}).get("sample_het", {}).get("n_flagged", 0))
         st.markdown(
@@ -1354,7 +1280,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 st.caption(f"{_n_alt:,} markers on unplaced/scaffold sequences excluded "
                            "(no valid genomic position).")
             _geno_imp = results["geno_imputed"]
-            _freq = _geno_imp.mean(axis=0) / 2.0
+            _freq = _gg.column_means(_geno_imp) / 2.0     # read in pieces on disk
             _maf_vals = np.minimum(_freq, 1.0 - _freq)
             _fig_maf = plot_maf_histogram(_maf_vals, maf_threshold=maf_thresh)
             show_plot(_fig_maf, "small", data=histogram_bins(_fig_maf), data_name="MAF_histogram")
@@ -1524,15 +1450,14 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # (gwas.guitable.SessionTable): its identity, the in-memory table (or the view of a
     # table on disk), the row selection, the fill vector and the SNP and sample labels.
     st.session_state["geno_table"] = _gt.SessionTable(
-        identity=_gt.table_identity(
-            vcf_hash, pheno=pheno_hash, trait=trait_col, norm=norm_option, maf=maf_thresh,
-            miss=miss_thresh, ind_miss=ind_miss_thresh, mac=mac_thresh, info=info_thresh,
-            drop_alt=int(drop_alt), impute=impute_method, impute_k=impute_k,
-            impute_l=impute_l, covar=_covar_hash),
+        identity=_table_id,
         file_identity=vcf_hash,
-        mode=_geno_plan.mode,
+        mode=results["mode"],
+        parsed=_parsed,
         view=st.session_state["geno_imputed"],
         raw=st.session_state.get("geno_dosage_raw"),
+        rows=results["rows"],
+        fill=results["fill"],
         sid=st.session_state["sid"],
         chroms=st.session_state["chroms"],
         positions=st.session_state["positions"],
@@ -1797,15 +1722,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # samples: sample alignment, QC, imputation, kinship, PCs, models, LD
             # blocks, haplotype tests, figures, report and ZIP are all built from that
             # trait's data, and nothing is resolved from session keys (the reason
-            # 822610f had to refuse multi-trait runs). Only the parsed VCF and the gene
+            # 822610f had to refuse multi-trait runs). Only the genotype table and the gene
             # models are shared. A trait that fails is reported and the others run.
             import tempfile as _tempfile
             import time as _time_mod
 
-            from gwas.io import load_vcf_cached
-            from gwas.pipeline import (
-                ParsedGenotypes, cli_default_options, failed_traits_report, run_traits,
-            )
+            from gwas.pipeline import cli_default_options, failed_traits_report, run_traits
 
             def _fmt_secs(_s):
                 _s = max(0.0, float(_s))
@@ -1905,8 +1827,20 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 covar_frame=covar_df,  # samples without a value are dropped, as in the CLI
             )
 
-            with open(vcf_path, "rb") as _vcf_fh:      # read from its file, not the session
-                _parsed = ParsedGenotypes.from_callset(load_vcf_cached(_vcf_fh.read()))
+            # The genotype table: the server's (gwas.guitable's registry), in the mode One-Click's
+            # own plan chooses for its options (the detailed view's table when the modes agree),
+            # never parsed again and never closed here; on disk run_traits reads it in pieces, as
+            # the CLI's run does. Where it is kept, and the CLI's estimate for these options, go
+            # into run_metadata.json as in a CLI run (gwas.storeplan.Plan.metadata).
+            try:
+                _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
+                    vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts)
+            except _gg.PlanStop as _oc_stop:
+                _gm_tmp.cleanup()
+                st.error(str(_oc_stop))
+                st.stop()
+            if _oc_plan.mode != _geno_plan.mode:
+                st.caption("One-Click: " + _gt.page_message(_oc_plan))
             _n_total = len(selected_traits)
             _done, _failed, _elapsed = {}, {}, []
             _clock = {"t0": _time_mod.time(), "trait": ""}
@@ -1940,7 +1874,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         _elapsed.append(_time_mod.time() - _clock["t0"])
                     del _res
                 _gm_tmp.cleanup()
-                del _parsed
+                del _parsed      # the registry keeps the table (it is shared, never closed here)
                 if _failed:
                     _status.update(label=(f"Full analysis finished: {len(_failed)} of "
                                           f"{_n_total} traits failed"), state="error")
@@ -2043,8 +1977,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     if _run_clicked:
         st.session_state["gwas_triggered"] = True
     # Input fingerprint for the stale-result guard below: every input that changes the
-    # scan. _covar_fp is duplicated here (also computed for the MLMM/FarmCPU readers) so a
-    # covariate change is caught before the guard.
+    # scan (a covariate change is caught before the guard).
     _covar_fp = (
         "nocov" if user_covar_mat is None
         else f"cov{hash_bytes(user_covar_mat.tobytes(), digest_size=8)}"
@@ -2079,22 +2012,26 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # Core GWAS (needed BEFORE λGC and QQ)
     # ============================================================
     try:
+        # cached by the table's identity, the PC count and the LOCO choice (the kernels are
+        # arguments Streamlit does not hash, so the key must name LOCO)
         gwas_df = run_gwas_cached(
-            geno_imputed=geno_key,
-            y=y,
-            pcs_full=pcs_full,
-            n_pcs=n_pcs,
-            sid=sid,
-            positions=positions,
-            chroms=chroms,
-            chroms_num=chroms_num,
-            iid=iid,
+            _table_id,
+            n_pcs,
+            use_loco=bool(use_loco),
+            trait_name=trait_col,
+            _geno_imputed=geno_imputed,
+            _y=y,
+            _pcs_full=pcs_full,
+            _sid=sid,
+            _positions=positions,
+            _chroms=chroms,
+            _chroms_num=chroms_num,
+            _iid=iid,
             _K0=K0,
             _K_by_chr=K_by_chr,
-            _pheno_reader_key=pheno_reader_key,
-            trait_name=trait_col,
-            user_covar=user_covar_mat,
-            user_covar_names=user_covar_names,
+            _pheno_reader=pheno_reader,
+            _user_covar=user_covar_mat,
+            _user_covar_names=user_covar_names,
         )
     except np.linalg.LinAlgError:
         logging.exception("MLM GWAS failed (singular matrix)")
@@ -2173,14 +2110,14 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # Multiple testing
     bonf_thresh = 0.05 / len(gwas_df)
 
-    # M_eff (Li & Ji 2005), computed once, cached by SNP count
+    # M_eff (Li & Ji 2005) by the CLI's function, once per table identity (kept in the session)
     meff_val = None
     meff_thresh = None
     _meff_computed = False
     if sig_rule.startswith("M_eff"):
         with st.spinner("Computing M_eff (Li & Ji): eigendecomposition of SNP correlations…"):
             try:
-                meff_val, _meff_eigs = compute_meff_li_ji(geno_imputed)
+                meff_val, _meff_eigs = _gg.meff(st.session_state, _table_id, geno_imputed)
                 st.session_state["meff_val"] = meff_val
                 meff_thresh = 0.05 / meff_val
                 _meff_computed = True
@@ -2357,7 +2294,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         sig_rule=sig_rule,
         lambda_gc=lambda_gc if "lambda_gc" in locals() else np.nan,
         n_samples=int(geno_df.shape[0]),
-        n_snps=int(geno_df.shape[1]),
+        n_snps=_gg.n_snps(results),
         qc_snp=results.get("qc_snp", {}) if isinstance(results, dict) else {},
         pheno_zero_handling=st.session_state.get("pheno_zero_handling", {}),
         # this trait's applied transformation only ({} when it uses raw values)
@@ -2446,12 +2383,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 ),
             )
 
-            # Stable cache key for subsampling results. _scan_fp carries every input of
-            # the scan (the trait's normalisation, the phenotype table, the genotypes,
-            # PCs, covariates, QC and imputation settings), so an Apply / Remove in the
-            # phenotype QC panel or a new upload is a miss.
+            # Stable cache key for subsampling results: the table's identity (the genotypes,
+            # the trait and its normalisation, the samples, covariates, QC and imputation
+            # settings), so an Apply / Remove in the phenotype QC panel or a new upload is a
+            # miss; then the PC count and the subsampling settings.
             boot_cache_key = (
-                f"BOOT_GWAS::{trait_col}::{_scan_fp}"
+                f"BOOT_GWAS::{trait_col}::{_table_id}::pcs{int(n_pcs)}"
                 f"::reps{boot_n_reps}::frac{boot_sample_frac:.2f}"
                 f"::thresh{boot_disc_thresh:.1e}::seed{boot_seed}"
                 f"::loco{boot_use_loco}"
@@ -2489,7 +2426,10 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 progress_placeholder = st.empty()
                 progress_bar = st.progress(0)
 
-                _use_parallel = int(boot_n_jobs) > 1
+                # in parallel only with the table in memory and when the workers' memory fits;
+                # else one iteration after another, with the same results (gwas.guigwas)
+                _boot_plan = _gg.subsampling_plan(geno_imputed, int(boot_n_jobs))
+                _use_parallel = _boot_plan[0] > 1
 
                 def _boot_progress(rep, total):
                     progress_bar.progress((rep + 1) / total)
@@ -2504,7 +2444,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     )
 
                 with st.spinner("Running subsampling GWAS resampling…"):
-                    boot_disc_df, boot_raw_pvals, boot_meta = subsample_gwas_resampling(
+                    boot_disc_df, boot_raw_pvals, boot_meta, boot_note = _gg.subsampling(
                         geno_imputed=geno_imputed,
                         y=y,
                         sid=sid,
@@ -2519,10 +2459,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         sample_frac=float(boot_sample_frac),
                         discovery_thresh=float(boot_disc_thresh),
                         seed=int(boot_seed),
-                        progress_callback=_boot_progress if not _use_parallel else None,
+                        progress_callback=_boot_progress,
                         n_jobs=int(boot_n_jobs),
                         use_loco=boot_use_loco,
                         chroms_grm=st.session_state.get("chroms_grm") if boot_use_loco else None,
+                        plan=_boot_plan,
                     )
 
                 progress_placeholder.success(
@@ -2534,12 +2475,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     "disc_df": boot_disc_df,
                     "raw_pvals": boot_raw_pvals,
                     "meta": boot_meta,
+                    "note": boot_note,
                 }
 
             else:
                 boot_disc_df = st.session_state[boot_cache_key]["disc_df"]
                 boot_raw_pvals = st.session_state[boot_cache_key]["raw_pvals"]
                 boot_meta = st.session_state[boot_cache_key]["meta"]
+            if st.session_state[boot_cache_key].get("note"):
+                st.info(st.session_state[boot_cache_key]["note"])
 
             # ---- Display results ----
 
@@ -2771,6 +2715,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             height=500,
         )
         show_plot(fig_int, "wide")
+        if manhattan_caption(df_plot):          # above 500,000 SNPs: which SNPs are drawn
+            st.caption(manhattan_caption(df_plot))
         st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
         st.session_state["gwas_figures"][f"Interactive_Manhattan_MLM_{trait_col}.html"] = (
             plotly_html_bytes(fig_int))
@@ -2894,11 +2840,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # (the CLI's function and settings; Post-GWAS shows this estimate in the LD Blocks &
     # Haplotypes Settings, next to the window it sets: gwas.windows.ld_window_kb)
     try:
-        _manual_decay_df, _manual_summary_df, _manual_median = _compute_ld_decay_for_gwas_page(
-            geno_key=geno_key,
-            chroms_tuple=tuple(np.asarray(chroms, dtype=str).tolist()),
-            positions_tuple=tuple(int(p) for p in positions),
-        )
+        _manual_decay_df, _manual_summary_df, _manual_median = _gg.ld_decay(
+            _table_id, geno_imputed, chroms, positions)
         if _manual_median is not None:
             ld_decay_kb = float(_manual_median)
             st.session_state["ld_decay_df"] = _manual_decay_df
@@ -2929,15 +2872,6 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     gwas_mlm["Model"] = "MLM"
     results_all_models = [gwas_mlm]
     cofactor_logs = {}
-    pheno_reader_key = put_object_in_session(
-        pheno_reader, "PHENO_READER",
-        vcf_hash, pheno_hash, trait_col, norm_option
-    )
-    # MLM covar key (used by downstream helpers that reference the MLM PC set).
-    covar_reader_key = put_object_in_session(
-        covar_reader, "COVAR_READER",
-        vcf_hash, pheno_hash, trait_col, int(n_pcs)
-    )
 
     # --- Per-model covariate readers (manual Run GWAS path) ---
     # MLMM and FarmCPU may use different PC counts than MLM. Build dedicated
@@ -2958,38 +2892,30 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         _names = ([f"PC{i + 1}" for i in range(_pc.shape[1])] if _pc is not None else []) + list(user_covar_names)
         return CovarData(iid=iid, val=_val, names=_names)
 
-    # covariate fingerprint so the cached reader key changes when covars change
-    _covar_fp = "nocov" if user_covar_mat is None else f"cov{hash_bytes(user_covar_mat.tobytes(), digest_size=8)}"
+    # each model's covariates are the table identity's PCs and covariates, with its own PC count
+    # (which keys the cached runs below)
     covar_reader_mlmm = _build_covar_for_model(int(n_pcs_mlmm))
     covar_reader_farmcpu = _build_covar_for_model(int(n_pcs_farmcpu))
-    covar_reader_mlmm_key = put_object_in_session(
-        covar_reader_mlmm, "COVAR_READER",
-        vcf_hash, pheno_hash, trait_col, int(n_pcs_mlmm), _covar_fp,
-    )
-    covar_reader_farmcpu_key = put_object_in_session(
-        covar_reader_farmcpu, "COVAR_READER",
-        vcf_hash, pheno_hash, trait_col, int(n_pcs_farmcpu), _covar_fp,
-    )
 
     if "MLMM (iterative cofactors)" in model_choices:
         with _tab_map["MLMM"]:
             _mlmm_ph = st.empty()
             _mlmm_ph.info("Computing MLMM (iterative cofactors)...")
         gwas_mlmm, cof_tbl = run_mlmm_core_cached(
-            geno_key=geno_key,
-            y_key=y_key,
-            iid=iid,
-            sid=sid,
-            chroms=chroms,
-            chroms_num=chroms_num,
-            positions=positions,
-            K0_key=K0_key,
-            pheno_reader_key=pheno_reader_key,
-            covar_reader_key=covar_reader_mlmm_key,
-            gwas_df_mlm=gwas_df,
+            _table_id,
+            int(n_pcs_mlmm),
             p_enter=mlmm_p_enter,
             max_cof=mlmm_max_cof,
             window_kb=flank_kb,
+            _geno_imputed=geno_imputed,
+            _sid=sid,
+            _chroms=chroms,
+            _chroms_num=chroms_num,
+            _positions=positions,
+            _iid=iid,
+            _K0=K0,
+            _pheno_reader=pheno_reader,
+            _covar_reader=covar_reader_mlmm,
         )
         # Enrich MLMM results to match MLM CSV format
         gwas_mlmm["PValue"] = np.clip(gwas_mlmm["PValue"].astype(float), 1e-300, 1.0)
@@ -3051,6 +2977,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 height=500,
             )
             show_plot(fig_plotly_mlmm, "wide")
+            if manhattan_caption(df_mlmm):
+                st.caption(manhattan_caption(df_mlmm))
             st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
             st.session_state["gwas_figures"][f"Interactive_Manhattan_MLMM_{trait_col}.html"] = (
                 plotly_html_bytes(fig_plotly_mlmm))
@@ -3082,19 +3010,20 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             _fc_ph = st.empty()
             _fc_ph.info("Computing FarmCPU (multi-locus)...")
         gwas_farmcpu, pqtn_tbl, conv_info = run_farmcpu_cached(
-            geno_key=geno_key,
-            y_key=y_key,
-            iid=iid,
-            sid=sid,
-            chroms=chroms,
-            chroms_num=chroms_num,
-            positions=positions,
-            K0_key=K0_key,
-            pheno_reader_key=pheno_reader_key,
-            covar_reader_key=covar_reader_farmcpu_key,
+            _table_id,
+            int(n_pcs_farmcpu),
             max_iterations=farmcpu_max_iter,
             final_scan=farmcpu_final_scan,
             use_loco=use_loco,
+            _geno_imputed=geno_imputed,
+            _sid=sid,
+            _chroms=chroms,
+            _chroms_num=chroms_num,
+            _positions=positions,
+            _iid=iid,
+            _K0=K0,
+            _pheno_reader=pheno_reader,
+            _covar_reader=covar_reader_farmcpu,
         )
         # Enrich FarmCPU results to match MLM CSV format
         gwas_farmcpu["PValue"] = np.clip(gwas_farmcpu["PValue"].astype(float), 1e-300, 1.0)
@@ -3161,6 +3090,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 height=500,
             )
             show_plot(fig_plotly_fc, "wide")
+            if manhattan_caption(df_fc):
+                st.caption(manhattan_caption(df_fc))
             st.caption('Data: the per-SNP results table in "Download GWAS results (ZIP)" at the end of the page.')
             st.session_state["gwas_figures"][f"Interactive_Manhattan_FarmCPU_{trait_col}.html"] = (
                 plotly_html_bytes(fig_plotly_fc))
@@ -3460,14 +3391,14 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         "MAC threshold": mac_thresh,
         "Missingness threshold": miss_thresh,
         "Samples used": int(geno_df.shape[0]),
-        "SNPs used": int(geno_df.shape[1]),
+        "SNPs used": _gg.n_snps(results),
         "PCs used": int(n_pcs),
         "LOCO enabled": use_loco,
         "λGC (final model)": round(lambda_gc, 3) if "lambda_gc" in locals() else None,
         "Kinship mean ± SD": f"{np.nanmean(K):.4f} ± {np.nanstd(K):.4f}",
         "QC steps": {
             "Initial SNPs": int(results["n_snps_raw"]),
-            "After QC SNPs": int(geno_df.shape[1]),
+            "After QC SNPs": _gg.n_snps(results),
             "Final samples": int(geno_df.shape[0]),
         },
     }
@@ -3507,7 +3438,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         farmcpu_df=cofactor_logs.get("FarmCPU") if "cofactor_logs" in locals() else None,
         lambda_gc=lambda_gc if "lambda_gc" in locals() else None,
         n_samples=int(geno_df.shape[0]),
-        n_snps=int(geno_df.shape[1]),
+        n_snps=_gg.n_snps(results),
         info_field=results.get("info_field"),
         sig_label=active_label,
         n_significant_override=_n_sig_for_report,

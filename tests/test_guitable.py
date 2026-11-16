@@ -235,12 +235,13 @@ def test_shared_kinship_and_pcs_are_read_only():
     Z = rng.standard_normal((n, m)).astype(np.float32)
     iid = np.array([[f"S{i}", f"S{i}"] for i in range(n)])
     chroms = np.repeat(np.array(["1", "2", "3"]), m // 3)
-    K0, K_by_chr, _ = kinship.build_loco_kernels_cached(iid=iid, Z_grm=Z, chroms_grm=chroms)
+    K0, K_by_chr, _ = kinship.build_loco_kernels_cached("shared-kinship-test", _iid=iid, _Z_grm=Z,
+                                                        _chroms_grm=chroms)
     for kd in [K0, *K_by_chr.values()]:
         assert not kd.val.flags.writeable
     with pytest.raises(ValueError):
         K0.val[0, 0] = 0.0
-    pcs, eig = kinship.compute_pcs_full_cached(Z, max_pcs=3)
+    pcs, eig = kinship.compute_pcs_full_cached("shared-kinship-test", _Z_for_pca=Z, max_pcs=3)
     assert not pcs.flags.writeable and not eig.flags.writeable
     with pytest.raises(ValueError):
         pcs[0, 0] = 1.0

@@ -12,8 +12,10 @@ itself (cli.run_pipeline, and gwas.pipeline.run_trait_pipeline for the phenotype
 vector y): One-Click's ZIP for a trait equals the CLI's ZIP with the same options and
 that trait's --norm, member for member, apart from the run's provenance (the input
 file names and the "Pipeline" label in run_metadata.json and in the report's metadata
-block, and the CLI's keys for where the genotype table was kept, in its run_metadata.json
-only) and the report's "Generated" time. The detailed view's y equals the CLI's y.
+block) and the report's "Generated" time. The CLI runs with --geno-store set to the GUI's
+choice (TRACE_GENO_STORE, else auto), so where the genotype table was kept is recorded the
+same in both run_metadata.json files (and, in both, only there: the report's metadata block
+leaves those keys out). The detailed view's y equals the CLI's y.
 gwas.pipeline.run_traits is wrapped only to record what One-Click passes; it runs the
 real analysis where a test needs the ZIPs.
 
@@ -49,6 +51,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 import cli  # noqa: E402
 import gwas.pipeline as pl  # noqa: E402
 import gwas.reports as reports  # noqa: E402
+from gwas.guitable import default_choice  # noqa: E402
 from gwas.io import load_vcf_cached  # noqa: E402
 from gwas.storeplan import MODE_KEYS  # noqa: E402
 from pages._pheno_qc.stats import (  # noqa: E402
@@ -73,6 +76,8 @@ _PIPE = {"pipe_models": [], "pipe_subsampling": False, "pipe_generate_ld_heatmap
          "pipe_ld_r2": 0.1, "pipe_ld_flank_mode": "Manual (fixed kb)", "pipe_ld_flank": 200,
          "pipe_hap_perms": 100}
 _CLI_ARGS = ["--ld-r2", "0.1", "--ld-flank-kb", "200", "--hap-perms", "100"]
+# the CLI keeps the genotype table where the GUI does: the GUI's choice (TRACE_GENO_STORE, else auto)
+_GENO_STORE = ["--geno-store", default_choice()]
 _PROVENANCE = ("VCF", "Phenotype", "Pipeline")
 _GENERATED = re.compile(rb"^[^\n]*<strong>Generated:</strong>[^\n]*\n", re.M)
 _META_BLOCK = re.compile(rb'<div class="metadata">(.*?)</div>', re.S)
@@ -246,7 +251,7 @@ def _cli_zip(tmp, trait, norm):
     out = tmp / f"cli_{trait}_{norm}"
     cli.run_pipeline(cli._build_parser().parse_args(
         ["--vcf", str(_VCF), "--pheno", str(_PHENO), "--trait", trait, "--norm", norm,
-         *_CLI_ARGS, "--output", str(out)]))
+         *_CLI_ARGS, *_GENO_STORE, "--output", str(out)]))
     zips = sorted(out.rglob("*.zip"))
     assert len(zips) == 1, zips
     return zips[0].read_bytes()
@@ -270,18 +275,22 @@ def _assert_matches_cli(gui_zip, cli_zip):
         if name == "run_metadata.json":
             g, c = json.loads(data), json.loads(ref[name])
             assert g["Pipeline"] == "One-Click Full Analysis" and "Pipeline" not in c
-            # where the CLI kept the genotype table: in the CLI's metadata only (the GUI's
-            # pages get the option in batch 13)
-            assert not set(MODE_KEYS) & set(g) and set(MODE_KEYS) <= set(c)
-            skip = set(_PROVENANCE) | set(MODE_KEYS)
-            assert ({k: v for k, v in g.items() if k not in skip}
-                    == {k: v for k, v in c.items() if k not in skip})
+            # where the genotype table was kept is recorded by both, and the same
+            assert set(MODE_KEYS) <= set(g)
+            assert ({k: v for k, v in g.items() if k not in _PROVENANCE}
+                    == {k: v for k, v in c.items() if k not in _PROVENANCE})
         elif name.endswith("report.html"):
             def _bare(html):
                 return _META_BLOCK.sub(b"", _GENERATED.sub(b"", html))
             assert _bare(data) == _bare(ref[name])
-            # the report's metadata block is the ZIP's run_metadata.json
-            assert _report_meta(data) == json.loads(gui["run_metadata.json"])
+            # the report's metadata block is the ZIP's run_metadata.json without the keys for
+            # where the genotype table was kept: those go into run_metadata.json only, in the
+            # GUI's run as in the CLI's (gwas/pipeline.py, _geno_store_meta)
+            for members in (gui, ref):
+                meta = json.loads(members["run_metadata.json"])
+                assert set(MODE_KEYS) <= set(meta)
+                assert _report_meta(members[name]) == {k: v for k, v in meta.items()
+                                                       if k not in MODE_KEYS}
         else:
             assert data == ref[name], name
 

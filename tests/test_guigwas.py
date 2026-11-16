@@ -1,0 +1,331 @@
+"""The GWAS page's computations on the genotype table (gwas/guigwas.py), with the table in memory and on
+disk: the same results, byte for byte, at function level.
+
+The page's preprocessing (gwas.qc._gwas_pipeline_stages: on disk through gwas.storepipe.TraitStore), the
+models as the page calls them (MLM, MLMM and FarmCPU through their cached wrappers, which pass the
+LazyColumns on disk), OLS effects, LD decay, M_eff, the QC report's MAF histogram and subsampling, on the two
+bundled examples; FarmCPU also on the audit's 2,001-SNP input, whose last OLS chunk is one column wide.
+Also: one current preprocessing per session, its warnings shown again on every reuse, a phenotype-QC stop
+recognised in both modes, and the subsampling workers' memory check (one worker, the same numbers).
+Memory against ff56e5c (and tomato) is the harness's (batch 13, track A evidence).
+"""
+import logging
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from gwas import guigwas, guitable, kinship, models
+from gwas.genostore import is_lazy
+from gwas.pipeline import is_phenotype_qc_stop
+from gwas.utils import CovarData, PhenoData
+
+REPO = Path(__file__).resolve().parents[1]
+EX1 = (REPO / "tests" / "data" / "example_v1" / "example.vcf.gz",
+       REPO / "tests" / "data" / "example_v1" / "example_pheno.csv")
+EX2 = (REPO / "examples" / "example.vcf.gz", REPO / "examples" / "example_pheno.csv")
+QC = dict(maf_thresh=0.05, miss_thresh=0.10, norm_option="none", drop_alt=True, ind_miss_thresh=0.20,
+          mac_thresh=5)
+
+
+@pytest.fixture(autouse=True)
+def _quiet():
+    logging.getLogger("streamlit").setLevel(logging.ERROR)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        yield
+
+
+def _page_pheno(path):
+    pheno = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
+    pheno.columns = pheno.columns.astype(str).str.strip()
+    acc = pheno.columns[0]
+    pheno[acc] = pheno[acc].astype(str).str.strip()
+    pheno = pheno.set_index(acc)
+    pheno.index = pheno.index.astype(str).str.strip()
+    return pheno
+
+
+@pytest.fixture(scope="module")
+def tables(tmp_path_factory):
+    """Each example in memory and on disk, in a registry of its own."""
+    reg = guitable.TableRegistry(max_entries=4)
+    work = tmp_path_factory.mktemp("guigwas_work")
+    out = {}
+    for name, (vcf, _ph) in (("ex1", EX1), ("ex2", EX2)):
+        ident = guitable.file_identity(vcf)
+        out[name] = {mode: reg.get(ident, mode, vcf, work) for mode in ("memory", "disk")}
+    yield out
+    reg.close_all()
+
+
+def _prep(parsed, pheno, trait, covar_df=None, **qc):
+    state = {}
+    return guigwas.preprocess(state, "k", parsed, pheno.copy(), trait, **{**QC, **qc}, covar_df=covar_df)
+
+
+def _eq_array(a, b, name):
+    a = np.asarray(a)
+    b = np.asarray(b)
+    assert a.dtype == b.dtype and a.shape == b.shape, name
+    assert (a.flags.c_contiguous, a.flags.f_contiguous) == (b.flags.c_contiguous, b.flags.f_contiguous), name
+    assert a.tobytes() == b.tobytes(), name
+
+
+def _covariates(pheno):
+    rng = np.random.default_rng(7)
+    c = pd.DataFrame({"batch": rng.integers(0, 3, len(pheno)).astype(float),
+                      "env": np.round(rng.normal(0, 1, len(pheno)), 4)}, index=pheno.index)
+    c.iloc[[1, 5, 9], 1] = np.nan
+    return c
+
+
+CASES = [("ex1", "Trait1", {}), ("ex2", "Trait2", {}), ("ex2", "Trait1", {"maf_thresh": 0.10, "mac_thresh": 3}),
+         ("ex1", "Trait2", {"covar": True})]
+
+
+@pytest.mark.parametrize("name,trait,extra", CASES)
+def test_preprocessing_on_disk_equals_memory(tables, name, trait, extra):
+    pheno = _page_pheno((EX1 if name == "ex1" else EX2)[1])
+    extra = dict(extra)
+    cov = _covariates(pheno) if extra.pop("covar", False) else None
+    mem = _prep(tables[name]["memory"], pheno, trait, covar_df=cov, **extra)
+    dsk = _prep(tables[name]["disk"], pheno, trait, covar_df=cov, **extra)
+    assert mem["mode"] == "memory" and dsk["mode"] == "disk"
+    assert is_lazy(dsk["geno_imputed"]) and is_lazy(dsk["geno_dosage_raw"])
+    assert mem["fill"] is None and mem["rows"] is None
+    assert dsk["fill"].dtype == np.float32 and dsk["rows"].size == len(dsk["iid"])
+    # the tables (read whole here, in the test only): the in-memory arrays exactly
+    _eq_array(mem["geno_imputed"], np.asarray(dsk["geno_imputed"]), "geno_imputed")
+    _eq_array(mem["geno_dosage_raw"], np.asarray(dsk["geno_dosage_raw"]), "geno_dosage_raw")
+    for k in ("snp_imputation_rate", "K", "Z_for_pca", "y", "iid", "sid", "chroms", "chroms_num", "positions",
+              "chroms_grm", "positions_grm"):
+        _eq_array(mem[k], dsk[k], k)
+    assert mem["qc_snp"] == dsk["qc_snp"] and mem["allele_map"] == dsk["allele_map"]
+    for k in ("n_snps_raw", "kinship_model", "info_field", "covar_dropped", "covar_n_before", "warnings"):
+        assert mem[k] == dsk[k], k
+    assert list(mem["geno_df"].index) == list(dsk["geno_df"].index)
+    assert guigwas.n_snps(mem) == guigwas.n_snps(dsk) == mem["geno_df"].shape[1]
+    assert mem["pheno"].to_csv() == dsk["pheno"].to_csv()
+    qm, qd = mem["qc_report"], dsk["qc_report"]
+    assert qm["sample_het"]["per_sample"].to_csv() == qd["sample_het"]["per_sample"].to_csv()
+    assert qm["dup_pairs"] == qd["dup_pairs"] and qm["imputation"] == qd["imputation"]
+    _eq_array(qm["variant_fis"]["fis"], qd["variant_fis"]["fis"], "fis")
+    # the QC report's MAF histogram: the column means, read in pieces on disk
+    _eq_array(guigwas.column_means(mem["geno_imputed"]), guigwas.column_means(dsk["geno_imputed"]), "means")
+    _eq_array(guigwas.column_means(mem["geno_imputed"]), mem["geno_imputed"].mean(axis=0), "means vs numpy")
+
+
+def _page_models(r, tid, n_pcs=2):
+    """MLM, OLS effects, M_eff, LD decay, MLMM and FarmCPU as the page calls them."""
+    pcs_full, _e = kinship.compute_pcs_full_cached(tid, r["Z_for_pca"], max_pcs=20)
+    K0, K_by_chr, _d = kinship.build_loco_kernels_cached(
+        tid, _iid=r["iid"], _Z_grm=r["Z_for_pca"], _chroms_grm=np.asarray(r["chroms_grm"], dtype=str),
+        _K_base=r["K"])
+    chroms = np.asarray(r["chroms"], dtype=str)
+    reader = PhenoData(iid=r["iid"], val=r["y"])
+    covar = CovarData(iid=r["iid"], val=pcs_full[:, :n_pcs], names=[f"PC{i + 1}" for i in range(n_pcs)])
+    view = r["geno_imputed"]
+    common = dict(_geno_imputed=view, _sid=r["sid"], _chroms=chroms, _chroms_num=r["chroms_num"],
+                  _positions=r["positions"], _iid=r["iid"], _K0=K0, _pheno_reader=reader)
+    mlm = models.run_gwas_cached(tid, n_pcs, use_loco=True, trait_name="t", _y=r["y"], _pcs_full=pcs_full,
+                                 _K_by_chr=K_by_chr, **common)
+    mlm = models.add_ols_effects_to_gwas(mlm, view, r["y"], covar, r["sid"])
+    meff = guigwas.meff({}, tid, view)
+    decay = guigwas.ld_decay(tid, view, chroms, r["positions"])
+    mlmm = models.run_mlmm_core_cached(tid, n_pcs, p_enter=1e-3, max_cof=3, window_kb=200,
+                                       _covar_reader=covar, **common)
+    fc = models.run_farmcpu_cached(tid, n_pcs, max_iterations=10, final_scan="ols", use_loco=True,
+                                   _covar_reader=covar, **common)
+    return {"mlm": mlm.to_csv(index=False), "meff": (meff[0], meff[1].tobytes()),
+            "decay": (decay[0].to_csv(index=False), decay[1].to_csv(index=False), decay[2]),
+            "mlmm": (mlmm[0].to_csv(index=False), mlmm[1].to_csv(index=False)),
+            "farmcpu": (fc[0].to_csv(index=False), fc[1].to_csv(index=False), repr(fc[2]))}
+
+
+@pytest.mark.parametrize("name,trait", [("ex1", "Trait1"), ("ex2", "Trait2")])
+def test_models_and_their_inputs_on_disk_equal_memory(tables, name, trait):
+    pheno = _page_pheno((EX1 if name == "ex1" else EX2)[1])
+    for f in (models.run_gwas_cached, models.run_mlmm_core_cached, models.run_farmcpu_cached, guigwas.ld_decay,
+              kinship.compute_pcs_full_cached, kinship.build_loco_kernels_cached):
+        f.clear()
+    mem = _page_models(_prep(tables[name]["memory"], pheno, trait), f"{name}-memory")
+    dsk = _page_models(_prep(tables[name]["disk"], pheno, trait), f"{name}-disk")
+    for k in mem:
+        assert mem[k] == dsk[k], k
+
+
+def test_farmcpu_one_column_last_chunk_on_disk_equals_memory(tmp_path):
+    """The audit's input whose last OLS chunk is one column wide (2,001 SNPs): FarmCPU through the
+    page's wrapper gets, on disk, a strided view as that chunk, as the C-ordered copy's slice is in
+    memory, and gives the same p-values and pseudo-QTNs."""
+    from tests import _store_cases as sc
+
+    argv = sc.farmcpu_case("h2001_null", tmp_path)
+    vcf, ph = Path(argv[1]), Path(argv[3])
+    reg = guitable.TableRegistry()
+    try:
+        ident = guitable.file_identity(vcf)
+        pheno = _page_pheno(ph)
+        out = {}
+        for mode in ("memory", "disk"):
+            r = _prep(reg.get(ident, mode, vcf, tmp_path / "work"), pheno, "Tnull")
+            assert len(r["sid"]) % 2000 == 1                                # the last chunk: one column
+            models.run_farmcpu_cached.clear()
+            fc = models.run_farmcpu_cached(
+                f"h2001-{mode}", 0, max_iterations=10, final_scan="ols", use_loco=True,
+                _geno_imputed=r["geno_imputed"], _sid=r["sid"], _chroms=np.asarray(r["chroms"], dtype=str),
+                _chroms_num=r["chroms_num"], _positions=r["positions"], _iid=r["iid"],
+                _K0=kinship._build_loco_kernels_impl(r["iid"], r["Z_for_pca"], np.asarray(r["chroms_grm"],
+                                                     dtype=str), r["K"])[0],
+                _pheno_reader=PhenoData(iid=r["iid"], val=r["y"]), _covar_reader=None)
+            out[mode] = (fc[0].to_csv(index=False), fc[1].to_csv(index=False))
+            if mode == "disk":
+                lazy_c = r["geno_imputed"].astype(np.float32).as_layout("C").astype(float)
+                last = lazy_c[:, 2000:2001]
+                mem_c = np.asarray(np.asarray(out["mem_table"]), dtype=np.float32, order="C")
+                mem_c = np.asarray(mem_c, float)[:, 2000:2001]
+                assert not last.flags.c_contiguous and not mem_c.flags.c_contiguous     # both strided
+                assert last.tobytes() == np.ascontiguousarray(mem_c).tobytes()
+            else:
+                out["mem_table"] = r["geno_imputed"]
+        assert out["memory"] == out["disk"]
+    finally:
+        reg.close_all()
+
+
+def test_one_current_preprocessing_per_session(tables):
+    pheno = _page_pheno(EX1[1])
+    state = {}
+    mem = tables["ex1"]["memory"]
+    a = guigwas.preprocess(state, "key-a", mem, pheno.copy(), "Trait1", **QC)
+    assert guigwas.preprocess(state, "key-a", mem, pheno.copy(), "Trait1", **QC) is a      # reused
+    b = guigwas.preprocess(state, "key-b", mem, pheno.copy(), "Trait2", **QC)
+    assert state[guigwas.PREP_KEY][0] == "key-b" and state[guigwas.PREP_KEY][1] is b       # one entry
+    assert guigwas.preprocess(state, "key-a", mem, pheno.copy(), "Trait1", **QC) is not a  # replaced
+    # another table object under the same key (the registry rebuilt it): computed again
+    c = guigwas.preprocess(state, "key-c", tables["ex1"]["disk"], pheno.copy(), "Trait1", **QC)
+    assert guigwas.preprocess(state, "key-c", tables["ex1"]["memory"], pheno.copy(), "Trait1", **QC) is not c
+
+
+def test_a_failing_trait_keeps_the_current_preprocessing(tables):
+    pheno = _page_pheno(EX1[1])
+    pheno["Const"] = 1.0
+    state = {}
+    for mode in ("memory", "disk"):
+        good = guigwas.preprocess(state, f"good-{mode}", tables["ex1"][mode], pheno.copy(), "Trait1", **QC)
+        with pytest.raises(ValueError) as exc:
+            guigwas.preprocess(state, f"const-{mode}", tables["ex1"][mode], pheno.copy(), "Const", **QC)
+        assert is_phenotype_qc_stop(exc.value), mode           # the page skips this trait
+        assert state[guigwas.PREP_KEY][1] is good
+        with pytest.raises(ValueError, match="All samples removed by missingness filter"):
+            guigwas.preprocess(state, f"miss-{mode}", tables["ex1"][mode], pheno.copy(), "Trait1",
+                               **{**QC, "ind_miss_thresh": 0.0})
+
+
+def test_the_preprocessings_warnings_are_shown_again_on_reuse(tmp_path):
+    """A VCF with a split multi-allelic record: the collapse warning is shown when the preprocessing
+    runs and again on every reuse (Streamlit's cache replayed it at ff56e5c), in both modes."""
+    lines = ["##fileformat=VCFv4.2", '##FORMAT=<ID=GT,Number=1,Type=String,Description="GT">',
+             "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(f"S{i}" for i in range(30))]
+    rng = np.random.default_rng(3)
+    for ch in ("1", "2"):
+        for j in range(40):
+            pos = (j + 1) * 1000 if not (ch == "1" and j == 5) else 5000      # j=4 and j=5 share 1:5000
+            g = rng.choice(["0/0", "0/1", "1/1"], 30)
+            lines.append(f"{ch}\t{pos}\t.\tA\tT\t.\tPASS\t.\tGT\t" + "\t".join(g))
+    vcf = tmp_path / "dup.vcf"
+    vcf.write_text("\n".join(lines) + "\n")
+    pheno = pd.DataFrame({"T": rng.normal(size=30)}, index=[f"S{i}" for i in range(30)])
+    reg = guitable.TableRegistry()
+    try:
+        ident = guitable.file_identity(vcf)
+        for mode in ("memory", "disk"):
+            state, shown = {}, []
+            parsed = reg.get(ident, mode, vcf, tmp_path / "work")
+            guigwas.preprocess(state, "k", parsed, pheno.copy(), "T", **QC, show=shown.append)
+            guigwas.preprocess(state, "k", parsed, pheno.copy(), "T", **QC, show=shown.append)
+            assert len(shown) == 2 and "multi-allelic records collapsed" in shown[0] and shown[0] == shown[1]
+    finally:
+        reg.close_all()
+
+
+def test_subsampling_with_two_workers_falls_back_to_one_with_the_same_results(tables):
+    pheno = _page_pheno(EX1[1])
+    r = _prep(tables["ex1"]["memory"], pheno, "Trait1")
+    d = _prep(tables["ex1"]["disk"], pheno, "Trait1")
+    pcs_full, _e = kinship._compute_pcs_full_impl(r["Z_for_pca"], 20)
+
+    def run(res, **kw):
+        return guigwas.subsampling(
+            res["geno_imputed"], res["y"], res["sid"], np.asarray(res["chroms"], dtype=str), res["chroms_num"],
+            res["positions"], res["iid"], np.asarray(res["Z_for_pca"], dtype=np.float32), pcs_full, 1, 4, 0.8,
+            1e-4, 42, 2, **kw)
+
+    assert guigwas.subsampling_plan(r["geno_imputed"], 2) == (2, None)          # the workers fit
+    assert guigwas.subsampling_plan(d["geno_imputed"], 2) == (1, None)          # on disk: one by one
+    workers, note = guigwas.subsampling_plan(r["geno_imputed"], 2, available=1)
+    assert workers == 1 and note.startswith("The subsampling iterations run one after another instead "
+                                            "of on 2 cores") and note.endswith("The results are the same.")
+    par = run(r)                                    # two processes
+    seq = run(r, available=1)                       # one after another, under a worker's thread limits
+    dsk = run(d)                                    # on disk: one after another
+    assert par[3] is None and dsk[3] is None and seq[3] == note
+    for out in (seq, dsk):
+        assert out[0].to_csv(index=False) == par[0].to_csv(index=False)
+        assert out[1].tobytes() == par[1].tobytes()
+        assert pd.DataFrame(out[2]).to_csv(index=False) == pd.DataFrame(par[2]).to_csv(index=False)
+
+
+def test_workers_fit_rule():
+    fits, need, free = guigwas.subsampling_workers_fit(1000, 100_000, 4, available=100 * 2**30)
+    # three workers after the first: 300 MiB and 12 bytes per call each
+    assert fits and abs(need - (3 * 300 * 2**20 + 3 * 12 * 1000 * 100_000)) < 2**10
+    assert not guigwas.subsampling_workers_fit(1000, 100_000, 4, available=need)[0]
+    assert guigwas.subsampling_workers_fit(1000, 100_000, 1, available=1)[0]    # one worker: nothing extra
+
+
+@pytest.mark.parametrize("choice", ["auto", "memory", "disk"])
+def test_one_click_records_where_the_table_is_kept_as_the_cli_does(tmp_path, choice):
+    """One-Click's table is the registry's, in the mode of its own plan, and run_metadata.json gets the
+    CLI's five keys for it (gwas.storeplan.Plan.metadata): the same values as a CLI run with
+    --geno-store <choice> on the same file and options, and the same results in both modes."""
+    import io
+    import json
+    import zipfile
+
+    import cli
+    from gwas import pipeline as pl
+    from gwas.storeplan import MODE_KEYS
+
+    vcf, ph = EX1
+    opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
+                                  run_label="One-Click Full Analysis")
+    reg = guitable.TableRegistry()
+    try:
+        import gwas.guitable as gt_mod
+        real = gt_mod.get_registry
+        gt_mod.get_registry = lambda: reg                       # this test's own registry
+        try:
+            parsed, meta, plan = guigwas.one_click_table(guitable.file_identity(vcf), str(vcf), choice,
+                                                         tmp_path / "work", opts)
+        finally:
+            gt_mod.get_registry = real
+        assert plan.mode == ("disk" if choice == "disk" else "memory")
+        assert getattr(parsed, "is_store", False) == (plan.mode == "disk")
+        assert set(meta) == set(MODE_KEYS)
+        opts._geno_store_meta = meta
+        [(trait, res, err)] = list(pl.run_traits(parsed, pd.read_csv(ph, index_col=0), ["Trait1"], opts))
+        assert err is None
+        gui_meta = json.loads(zipfile.ZipFile(io.BytesIO(res.zip_bytes)).read("run_metadata.json"))
+        out = tmp_path / "cli"
+        cli.run_pipeline(cli._build_parser().parse_args(
+            ["--vcf", str(vcf), "--pheno", str(ph), "--trait", "Trait1", "--no-plots", "--no-report",
+             "--geno-store", choice, "--output", str(out)]))
+        (z,) = sorted(out.glob("*.zip"))
+        cli_meta = json.loads(zipfile.ZipFile(z).read("run_metadata.json"))
+        assert {k: gui_meta[k] for k in MODE_KEYS} == {k: cli_meta[k] for k in MODE_KEYS}
+    finally:
+        reg.close_all()
