@@ -292,3 +292,21 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
     meta = plan.metadata(len(parsed.samples), parsed.genotypes.shape[1])
     return parsed, meta, plan
 
+
+# ------------------------------------------------------------------------- Clear session data
+# The GWAS page's session keys "Clear session data" drops (gwas.guitable.clear_all adds the Post-GWAS
+# page's): its inputs, the preprocessing and tables, the run's records and results.
+SESSION_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_", "BOOT_GWAS::")
+SESSION_KEYS = (
+    "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
+    "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
+    "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
+    "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
+    "pheno_reader", "covar_reader", "pheno_aligned", "pheno", "y", "iid",
+    "sid", "chroms", "chroms_num", "positions", "GWAS_CTX", "geno_table", "pheno_raw",
+    "pheno_applied_transforms", "_pheno_raw_fp", "subsampling_gwas_summary", MEFF_KEY,
+    PREP_KEY, "meff_val", "ld_decay_df", "ld_decay_summary", "ld_decay_computed", "ld_decay_kb",
+    "ld_block_max_dist_bp", "downstream_model", "active_trait", "trait_col", "trait_col_locked",
+    "geno_row_ids", "pheno_used_for_hap", "loco_diagnostics_by_chr", "n_snps_raw", "qc_snp",
+    "one_click_results", "subsampling_block_stability", "_last_gwas_trait",
+)

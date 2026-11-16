@@ -24,6 +24,11 @@ Where the table is kept
     SessionTable        the small object the GWAS page leaves in the session for One-Click and the
                         Post-GWAS page
 
+"Clear session data"
+    clear_all           closes and deletes this server's tables and saved uploads, empties every cached
+                        result, removes TRACE's .memo files from Streamlit's cache folder and drops the
+                        session's keys (the GWAS page's and the Post-GWAS page's)
+
 Shared arrays are read-only (``flags.writeable`` False), so an in-place change fails loudly
 instead of altering another session's data.
 """
@@ -342,6 +347,114 @@ except ImportError:                         # pragma: no cover - streamlit is a 
 def own_folders():
     """The folders this server made (table files and saved uploads): never listed as stale."""
     return set(get_registry().folders()) | set(saved_upload_folders())
+
+
+# --------------------------------------------------------------------- Clear session data
+# TRACE's .memo files in Streamlit's cache folder (~/.streamlit/cache, written by st.cache_data
+# with persist="disk"): named <function key>-<value key>.memo. TRACE's one persisted cache was
+# gwas.qc._impute_cached until batch 13; these are the function keys of all its versions, from
+# Streamlit 1.50's _make_function_key over the git history of gwas/qc.py.
+TRACE_MEMO_FUNCTION_KEYS = (
+    "b3e084e866e81f46fac0e0291c06e77b",     # c359acf .. a585645 (the source did not change)
+    "1802ca04726892ccb1ead35e3a04d72e",     # 7c312e0, the first version
+)
+
+# The session keys the Post-GWAS page and its tabs write at ff56e5c (pages/Post_GWAS_Analysis.py,
+# pages/_ld_tabs/*): Clear drops them, together with gwas.guipost's lists (the page's keys now).
+POST_GWAS_KEYS_FF56E5C = (
+    "r2_cache", "ld_geno_hard", "ld_chroms", "ld_positions", "ld_sid", "geno_hard", "chroms", "positions",
+    "sid", "_ld_prev_trait", "haplo_df_auto", "haplo_df_auto_hash", "ld_blocks_final", "ld_blocks",
+    "ld_window_buffer_kb", "genes_df", "hap_tables", "hap_tables_vis", "pheno_vis", "sample_vis",
+    "_hap_pca_cache", "_hap_box_cache", "adj_r2_min", "ld_block_metadata_auto", "geno_row_ids",
+    "pheno_used_for_hap", "trait_col", "trait_col_locked", "pheno_used_for_hap_label",
+    "haplo_blocks_to_use", "pcs_for_hap", "hap_gwas_df", "hap_gwas_df_enriched", "_local_ld_cache",
+)
+POST_GWAS_PREFIXES_FF56E5C = ("LDDETECT::", "HAPGWAS::")
+
+
+def streamlit_cache_folder(environ=None):
+    """Where Streamlit 1.50 writes the files of the caches it keeps on disk: ~/.streamlit/cache
+    (TRACE_STREAMLIT_CACHE_DIR names another folder: the tests' own, never the home folder)."""
+    env = os.environ if environ is None else environ
+    if str(env.get("TRACE_STREAMLIT_CACHE_DIR", "") or "").strip():
+        return Path(env["TRACE_STREAMLIT_CACHE_DIR"])
+    from streamlit.runtime.caching.storage.local_disk_cache_storage import get_cache_folder_path
+
+    return Path(get_cache_folder_path())
+
+
+def trace_memo_files(folder=None):
+    """TRACE's .memo files in Streamlit's cache folder (other apps' files are not TRACE's)."""
+    folder = streamlit_cache_folder() if folder is None else Path(folder)
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.iterdir() if p.is_file() and p.name.endswith(".memo")
+                  and p.name.split("-", 1)[0] in TRACE_MEMO_FUNCTION_KEYS)
+
+
+def remove_trace_memo_files(folder=None):
+    """Delete TRACE's .memo files; returns (files, bytes) removed."""
+    n = size = 0
+    for p in trace_memo_files(folder):
+        try:
+            b = p.stat().st_size
+            p.unlink()
+        except OSError:
+            continue
+        n, size = n + 1, size + b
+    return n, size
+
+
+def clear_cached_results():
+    """Empty every st.cache_data and st.cache_resource cache of this server (all of them are
+    TRACE's), each function's cache on its own: st.cache_data.clear() would, on a running server,
+    delete Streamlit's whole cache folder, other apps' files too."""
+    from streamlit.runtime.caching import cache_data_api, cache_resource_api
+
+    for caches in (cache_data_api._data_caches, cache_resource_api._resource_caches):
+        with caches._caches_lock:
+            function_caches = list(caches._function_caches.values())
+        for cache in function_caches:
+            cache.clear()
+
+
+def session_keys_to_clear(keys=(), prefixes=()):
+    """(keys, prefixes) Clear drops from the session: the caller's, the Post-GWAS page's at
+    ff56e5c, and gwas.guipost's when it exists."""
+    keys = set(keys) | set(POST_GWAS_KEYS_FF56E5C)
+    prefixes = tuple(prefixes) + POST_GWAS_PREFIXES_FF56E5C
+    try:
+        from gwas import guipost
+    except ImportError:
+        guipost = None
+    if guipost is not None:
+        keys |= set(getattr(guipost, "POST_GWAS_SESSION_KEYS", ()))
+        prefixes += tuple(getattr(guipost, "POST_GWAS_SESSION_PREFIXES", ()))
+    return keys, prefixes
+
+
+def clear_all(state=None, keys=(), prefixes=(), memo_folder=None):
+    """The GWAS page's "Clear session data", in this order:
+    1. this server's tables (the registry: in memory, and the table files with their folders on
+       disk) are closed and deleted, and the uploads it saved are deleted;
+    2. every cached result (st.cache_data and st.cache_resource) is emptied;
+    3. TRACE's .memo files are removed from Streamlit's cache folder;
+    4. the session's keys (``keys``, ``prefixes`` and the Post-GWAS page's) are dropped from
+       ``state``.
+    Returns a summary dict (for the page's message and the tests)."""
+    folders = [str(f) for f in get_registry().folders()] + [str(f) for f in saved_upload_folders()]
+    get_registry().close_all()
+    remove_saved_uploads()
+    clear_cached_results()
+    n_memo, memo_bytes = remove_trace_memo_files(memo_folder)
+    dropped = []
+    if state is not None:
+        keys, prefixes = session_keys_to_clear(keys, prefixes)
+        for k in list(state.keys()):
+            if isinstance(k, str) and (k in keys or k.startswith(prefixes)):
+                state.pop(k, None)
+                dropped.append(k)
+    return {"folders": folders, "memo_files": n_memo, "memo_bytes": memo_bytes, "session_keys": dropped}
 
 
 # ------------------------------------------------------------------------ the session's table

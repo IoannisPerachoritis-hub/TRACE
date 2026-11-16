@@ -32,6 +32,23 @@ def _restore_stubbed_tab_functions():
             setattr(mod, name, fn)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _private_streamlit_cache_folder(tmp_path_factory):
+    """The GWAS page's "Clear session data" deletes TRACE's .memo files from Streamlit's cache folder
+    (~/.streamlit/cache): in tests it looks in a folder of their own instead
+    (TRACE_STREAMLIT_CACHE_DIR, gwas.guitable.streamlit_cache_folder), never in the home folder."""
+    import os
+
+    folder = tmp_path_factory.mktemp("streamlit_cache")
+    old = os.environ.get("TRACE_STREAMLIT_CACHE_DIR")
+    os.environ["TRACE_STREAMLIT_CACHE_DIR"] = str(folder)
+    yield folder
+    if old is None:
+        os.environ.pop("TRACE_STREAMLIT_CACHE_DIR", None)
+    else:
+        os.environ["TRACE_STREAMLIT_CACHE_DIR"] = old
+
+
 @pytest.fixture
 def rng():
     """Reproducible random number generator."""

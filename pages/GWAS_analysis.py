@@ -319,24 +319,18 @@ def _rehydrate_or_stop(msg=None, level="error"):
     st.stop()
 
 
-_CLEAR_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_",
-                   "BOOT_GWAS::")
-_CLEAR_KEYS = (
-    "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
-    "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
-    "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
-    "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
-    "pheno_reader", "covar_reader", "pheno_aligned", "pheno", "y", "iid",
-    "sid", "chroms", "chroms_num", "positions", "GWAS_CTX", "geno_table", "pheno_raw",
-    "pheno_applied_transforms", "_pheno_raw_fp", "subsampling_gwas_summary", _gg.MEFF_KEY,
-)
+# the session keys "Clear session data" drops (gwas.guigwas.SESSION_KEYS / SESSION_PREFIXES, with the
+# Post-GWAS page's, gwas.guitable.session_keys_to_clear)
+_CLEAR_PREFIXES = _gg.SESSION_PREFIXES
+_CLEAR_KEYS = _gg.SESSION_KEYS
 
 
 def _clear_session_data():
-    """Release the genotype/phenotype held in memory and reset all run outputs."""
-    for _k in list(st.session_state.keys()):
-        if isinstance(_k, str) and (_k.startswith(_CLEAR_PREFIXES) or _k in _CLEAR_KEYS):
-            st.session_state.pop(_k, None)
+    """"Clear session data" (gwas.guitable.clear_all): this server's genotype tables (in memory,
+    and the table files with their folders on disk) and the uploads it saved are closed and
+    deleted, every cached result is emptied, TRACE's .memo files are removed from Streamlit's cache
+    folder, and this session's data and results are dropped, the Post-GWAS page's included."""
+    return _gt.clear_all(st.session_state, keys=_CLEAR_KEYS, prefixes=_CLEAR_PREFIXES)
 # =========================
 # 1. Data upload & basic QC
 # =========================
@@ -484,8 +478,10 @@ LA1589,12.8,7.3
     with col_qc:
         if st.button(
             "Clear session data",
-            help="Release the genotype/phenotype held in memory and reset all results "
-                 "(frees RAM; you will need to re-upload to run again).",
+            help="Frees this server's genotype tables (in memory, and the table files on disk), "
+                 "the uploads it saved, every cached result and TRACE's cache files, and this "
+                 "session's data and results, the Post-GWAS page's too. Upload the files, or type "
+                 "the VCF's location, again to run.",
         ):
             _clear_session_data()
             st.success("Session data cleared.")
