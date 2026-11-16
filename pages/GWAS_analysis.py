@@ -302,10 +302,12 @@ def _stop_if_table_closed(table):
 
 
 def _rehydrate_or_stop(msg=None, level="error"):
-    """Show the persisted last-run results (if any) instead of blanking, then stop."""
+    """Show the persisted last-run results (if any) instead of blanking, then stop. The message
+    is then followed by "Showing your last completed run below instead." as a sentence of its own
+    (gwas.guigwas.with_last_run_note)."""
     if _has_persisted_gwas():
         if msg:
-            st.warning(f"{msg}; showing your last completed run below instead.")
+            st.warning(_gg.with_last_run_note(msg))
         _render_last_run_results()
     elif msg:
         getattr(st, level, st.error)(msg)
@@ -1091,7 +1093,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     if results is None:
         _rehydrate_or_stop(
             "No selected trait can be analysed: "
-            + "; ".join(f"{t}: {e}" for t, e in _setup_failed.items()))
+            + " ".join(_gg.as_sentence(f"{t}: {e}") for t, e in _setup_failed.items()))
     if _table_reread:
         st.caption(_gg.REREAD_MESSAGE)
     # the detailed view's trait: its normalisation keys the caches and the records below

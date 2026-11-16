@@ -26,8 +26,14 @@ The table, in memory or on disk (the same results either way)
     column_means        the imputed table's per-SNP means (the QC report's MAF histogram)
     subsampling         the page's subsampling; in memory with several workers, the workers'
                         memory is checked first
+
+The page's messages
+    with_last_run_note  a stop's message when the page shows the last completed run instead: the
+                        message, then "Showing your last completed run below instead." as a
+                        sentence of its own
 """
 import contextlib
+import re
 
 import numpy as np
 import pandas as pd
@@ -104,6 +110,25 @@ def ld_decay(table_key, _geno_imputed=None, _chroms=None, _positions=None):
 if st is not None:
     ld_decay = st.cache_data(show_spinner="Computing LD decay (per-chromosome)…",
                              max_entries=8)(ld_decay)
+
+
+# ----------------------------------------------------------------------- the page's messages
+LAST_RUN_NOTE = "Showing your last completed run below instead."
+
+
+def as_sentence(text):
+    """``text`` ending as a sentence: a full stop is added unless it ends with one already, or with
+    ! or ? (a closing quote or bracket may follow them)."""
+    text = str(text).strip()
+    if not text or re.search(r"[.!?][\"')\]]*$", text):
+        return text
+    return f"{text}."
+
+
+def with_last_run_note(msg):
+    """The message of a stop after which the page shows the last completed run (the page's
+    _rehydrate_or_stop): ``msg`` as a sentence, then LAST_RUN_NOTE as a sentence of its own."""
+    return f"{as_sentence(msg)} {LAST_RUN_NOTE}"
 
 
 # ----------------------------------------------------------------------------------- M_eff
