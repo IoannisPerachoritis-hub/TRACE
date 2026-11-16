@@ -834,7 +834,7 @@ def save_vcf_upload(state, work_dir, location_text=""):
         upload = state.get(box_key(state, "vcf_upload"))
     except Exception:                       # a box Streamlit cannot read back: nothing to save
         upload = None
-    if upload is None:
+    if upload is None or not hasattr(upload, "read"):   # empty, or a file Streamlit no longer holds
         return None
     inp = vcf_input(state, "", upload, work_dir)
     if inp.saved:

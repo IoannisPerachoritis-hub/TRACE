@@ -251,6 +251,8 @@ def test_the_upload_is_saved_in_its_boxs_callback_with_no_rerun(tmp_path):
         state = {"vcf_upload": held}
         assert gt.save_vcf_upload(state, work, str(EX1)) is None and state["vcf_upload"] is held   # a location
         assert gt.save_vcf_upload({}, work) is None                                              # an empty box
+        from streamlit.runtime.uploaded_file_manager import DeletedFile
+        assert gt.save_vcf_upload({"vcf_upload": DeletedFile("gone")}, work) is None   # a file no longer held
         blocked = tmp_path / "blocked"
         blocked.write_text("a file where the work folder should be")
         failed = gt.save_vcf_upload(state, blocked)                                              # a failed copy
