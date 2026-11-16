@@ -16,10 +16,11 @@ Where the table is kept
     page_message, page_stop
                         gwas.storeplan's message and stops in the page's words (no command-line
                         flags)
-    TableRegistry       at most two tables per server, keyed by (file identity, mode): the parsed
-                        genotypes in memory (read-only arrays) or a table file on disk in its own
-                        folder, _trace_geno_store_gui_<pid>_<random>. A folder is removed when its
-                        entry is evicted, by Clear and when the server stops normally
+    TableRegistry       at most two tables per server, and a third while a new one is built (one
+                        build at a time), keyed by (file identity, mode): the parsed genotypes in
+                        memory (read-only arrays) or a table file on disk in its own folder,
+                        _trace_geno_store_gui_<pid>_<random>. A folder is removed when its entry
+                        is evicted, by Clear and when the server stops normally
     get_registry        the server's registry, held under st.cache_resource
     SessionTable        the small object the GWAS page leaves in the session for One-Click and the
                         Post-GWAS page
@@ -360,10 +361,14 @@ class TableRegistry:
     disk    a table file built by gwas.genostore.ingest_vcf in its own new folder in the work
             folder (``_trace_geno_store_gui_<pid>_<random>``)
 
-    A new table is built first; only once it is open is the least recently used entry evicted
-    (a disk entry's table is closed and its folder deleted), so a VCF that cannot be read
-    closes nothing. A table is built outside the registry's lock, one build per key at a time:
-    other sessions' look-ups, other builds and the folder listing do not wait for it.
+    One table is built at a time, whichever its key, and outside the registry's lock: other
+    sessions' look-ups, the folder listing and Clear do not wait for a build. A session that
+    needs a new table while another is built waits for that build to end, then looks again: the
+    table it waited for may be the one it needs, and after a failed build it builds the table
+    itself, with no other build running. A new table is built first; only once it is open is the
+    least recently used entry evicted (a disk entry's table is closed and its folder deleted
+    before the next build starts), so a VCF that cannot be read closes nothing. So the registry
+    keeps at most ``max_entries`` tables, and one more while a new one is built.
     ``close_all`` (Clear, and the server's normal stop) drops everything.
 
     The limit counts the registry's own entries. An evicted in-memory table is not closed (it
@@ -376,7 +381,7 @@ class TableRegistry:
         self.max_entries = int(max_entries)
         self._lock = threading.RLock()       # the entries; never held while a table is built
         self._entries = OrderedDict()
-        self._builds = {}                    # key -> the lock its build holds
+        self._build_lock = threading.Lock()  # held by the one build that runs
         self._building_dirs = set()          # folders of disk tables being built
         atexit.register(self.close_all)
 
@@ -395,27 +400,21 @@ class TableRegistry:
             entry = self._hit(key)
             if entry is not None:
                 return entry["parsed"]
-            build = self._builds.setdefault(key, threading.Lock())
-        evicted = []
-        with build:                                   # one build per key
-            try:
-                with self._lock:
-                    entry = self._hit(key)            # built meanwhile by another session
-                    if entry is not None:
-                        return entry["parsed"]
-                entry = self._open(mode, vcf_path, work_dir, log)      # a failure evicts nothing
-                with self._lock:
-                    self._entries[key] = entry
-                    self._entries.move_to_end(key)
-                    self._building_dirs.discard(entry.get("dir"))
-                    while len(self._entries) > self.max_entries:
-                        evicted.append(self._entries.popitem(last=False)[1])
-            finally:
-                with self._lock:
-                    if self._builds.get(key) is build:
-                        del self._builds[key]
-        for old in evicted:
-            self._release(old)
+        with self._build_lock:                        # one build at a time
+            with self._lock:
+                entry = self._hit(key)                # built by the build this session waited for
+                if entry is not None:
+                    return entry["parsed"]
+            entry = self._open(mode, vcf_path, work_dir, log)      # a failure evicts nothing
+            with self._lock:
+                self._entries[key] = entry
+                self._entries.move_to_end(key)
+                self._building_dirs.discard(entry.get("dir"))
+                evicted = []
+                while len(self._entries) > self.max_entries:
+                    evicted.append(self._entries.popitem(last=False)[1])
+            for old in evicted:                       # outside the registry's lock
+                self._release(old)
         return entry["parsed"]
 
     def _open(self, mode, vcf_path, work_dir, log):

@@ -247,7 +247,7 @@ def test_a_vcf_that_cannot_be_opened_closes_nothing(tmp_path, mode):
         reg.close_all()
 
 
-def test_a_build_holds_neither_the_registry_nor_another_key(tmp_path, monkeypatch):
+def test_a_build_does_not_hold_the_registry(tmp_path, monkeypatch):
     """While one session builds a table, another session's look-up of a table already there and
     the folder listing return at once, and the folder being built is listed as this server's."""
     import threading
@@ -312,6 +312,122 @@ def test_one_build_per_table_when_sessions_ask_together(tmp_path, monkeypatch):
     try:
         assert len(calls) == 1 and len(got) == 3 and got[0] is got[1] is got[2]
         assert len(reg.folders()) == 1
+    finally:
+        reg.close_all()
+
+
+def _tables_in(work):
+    return sorted(work.glob(f"{gt.GUI_STORE_PREFIX}_*"))
+
+
+def test_a_failed_build_with_sessions_waiting_leaves_no_table_outside_the_registry(tmp_path, monkeypatch):
+    """The interleaving of the round 1 re-check (r1 j): session A's build fails (a transient full
+    disk) while B waits for it, and C asks while B builds again. B and C then hold the one table the
+    registry keeps: two builds ran (A's and B's), and no table folder is left outside the registry,
+    before or after close_all. With a build lock per key, which A's failure removed, B built again
+    under the old lock while C built the same table under a new one: three builds, and one table
+    and its folder left open outside the registry."""
+    import threading
+
+    reg = gt.TableRegistry()
+    work = tmp_path / "work"
+    ev = {n: threading.Event() for n in ("a_building", "b_asked", "b_building", "c_asked", "c_again")}
+    builds = []
+    real_open = gt.TableRegistry._open
+    real_hit = reg._hit
+    looks = {}
+
+    def flaky_open(self, mode, vcf_path, work_dir, log):
+        builds.append(threading.current_thread().name)
+        if len(builds) == 1:                        # A's build fails once B waits for it
+            ev["a_building"].set()
+            assert ev["b_asked"].wait(30)
+            raise OSError(28, "No space left on device (transient)")
+        ev["b_building"].set()                      # B builds again; C asks meanwhile
+        assert ev["c_asked"].wait(30)
+        ev["c_again"].wait(0.5)                     # C looking again at once: a build of its own
+        return real_open(self, mode, vcf_path, work_dir, log)
+
+    def watched_hit(key):
+        name = threading.current_thread().name
+        looks[name] = looks.get(name, 0) + 1
+        if name == "B" and looks[name] == 1:
+            ev["b_asked"].set()
+        if name == "C":
+            ev["c_asked" if looks[name] == 1 else "c_again"].set()
+        return real_hit(key)
+
+    monkeypatch.setattr(gt.TableRegistry, "_open", flaky_open)
+    monkeypatch.setattr(reg, "_hit", watched_hit)
+    got = {}
+
+    def session(name):
+        try:
+            got[name] = reg.get("id-j", "disk", EX1, work)
+        except Exception as exc:  # noqa: BLE001
+            got[name] = exc
+
+    threads = {n: threading.Thread(target=session, args=(n,), name=n) for n in "ABC"}
+    threads["A"].start()
+    assert ev["a_building"].wait(30)
+    threads["B"].start()
+    assert ev["b_building"].wait(30)
+    threads["C"].start()
+    for t in threads.values():
+        t.join(60)
+    try:
+        assert isinstance(got["A"], OSError) and not isinstance(got["B"], Exception)
+        assert got["C"] is got["B"]                                     # one table for both
+        assert builds == ["A", "B"]                                     # C built nothing
+        assert reg.keys() == [("id-j", "disk")] and reg._entries[("id-j", "disk")]["parsed"] is got["B"]
+        assert _tables_in(work) == reg.folders()                        # none outside the registry
+    finally:
+        reg.close_all()
+    assert _tables_in(work) == [] and got["B"].store.closed
+
+
+def test_one_table_is_built_at_a_time(tmp_path, monkeypatch):
+    """The round 1 re-check's r1 k: with two tables kept, two sessions ask for two new disk tables at
+    once. The second build starts only once the first table is in the registry and the table it
+    evicted is deleted, so at most three table folders exist (two kept, one being built), and each
+    build starts on the disk the build before it used. With builds of different keys side by side,
+    four folders existed."""
+    import threading
+
+    from gwas import genostore
+
+    reg = gt.TableRegistry()
+    work = tmp_path / "work"
+    reg.get("id-1", "disk", EX1, work)
+    reg.get("id-2", "disk", EX1, work)
+    real_ingest = genostore.ingest_vcf
+    seen, log_lock, second = [], threading.Lock(), threading.Event()
+
+    def watched_ingest(vcf_path, store_dir, **kw):
+        with log_lock:
+            first = not any(e[0] == "start" for e in seen)
+            seen.append(("start", len(_tables_in(work)), sorted(k for k, _m in reg.keys())))
+        if first:
+            second.wait(1.0)                        # a second build alongside would start meanwhile
+        else:
+            second.set()
+        out = real_ingest(vcf_path, store_dir, **kw)
+        with log_lock:
+            seen.append(("end", len(_tables_in(work)), sorted(k for k, _m in reg.keys())))
+        return out
+
+    monkeypatch.setattr(genostore, "ingest_vcf", watched_ingest)
+    asks = [threading.Thread(target=reg.get, args=(f"id-{i}", "disk", EX1, work)) for i in (3, 4)]
+    for t in asks:
+        t.start()
+    for t in asks:
+        t.join(60)
+    try:
+        assert [e[0] for e in seen] == ["start", "end", "start", "end"]      # never two at once
+        assert max(e[1] for e in seen) == 3                                  # two kept, one built
+        first_new = ({"id-3", "id-4"} & set(seen[2][2]))                     # the first build's table
+        assert len(first_new) == 1 and "id-1" not in seen[2][2]              # in, its evicted one out
+        assert len(reg.keys()) == 2 and len(_tables_in(work)) == 2
     finally:
         reg.close_all()
 

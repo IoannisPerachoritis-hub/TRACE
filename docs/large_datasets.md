@@ -172,8 +172,9 @@ HTML downloads only).
 variable `TRACE_GENO_STORE_DIR`, else a folder `trace_gui` in the system's temporary folder. The
 same section can change it, and the check includes its free space. Each table file gets its own
 folder, `_trace_geno_store_gui_<process>_<random>`, and each saved upload its own
-`_trace_upload_gui_<process>_<random>`; TRACE keeps at most two tables, and removes a folder
-when its table is no longer kept and when the server stops normally. Table folders and saved
+`_trace_upload_gui_<process>_<random>`; TRACE keeps at most two tables, and a third while a new
+one is built, and removes a folder when its table is no longer kept and when the server stops
+normally. Table folders and saved
 uploads left by a run or a server that did not stop are named on the page with their size; they
 are never deleted automatically.
 
@@ -198,9 +199,11 @@ meanwhile may then use fewer threads, and their last digits differ, as between t
 (see "Reproducibility" above).
 
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
-that open the same VCF with the same choice share one table, and the server keeps at most two.
-When a third is needed, the one used least recently is closed, once the new one is open (a file
-that cannot be read closes nothing). A session that still held a closed table (closed this way,
+that open the same VCF with the same choice share one table, and the server keeps at most two,
+and a third while a new one is built. It builds one table at a time: a session that needs a new
+table while another is built waits for that build. When a third is needed, the one used least
+recently is closed once the new one is open (a file that cannot be read closes nothing), before
+the next build starts. A session that still held a closed table (closed this way,
 or by Clear session data in another session) reads the VCF again: the GWAS page on its next run,
 One-Click for the trait it was running and the ones after it, each with a note on the page. A
 Run GWAS that was reading the table at that moment stops with a message, and the next run reads
