@@ -212,36 +212,20 @@ def _has_persisted_gwas():
 
 def _vcf_file_ready():
     """The VCF in use (a typed location, or the upload saved in the work folder) is there."""
-    _p = st.session_state.get("_persist_vcf_path")
-    return bool(_p) and os.path.isfile(_p)
+    return _gt.vcf_path_ready(st.session_state)
 
 
 def _has_persisted_upload():
     """The genotype file and the phenotype table of a prior run are still available (the
     VCF by its path, the phenotype in memory), so a re-run can proceed without
     re-uploading (Streamlit drops the uploaded-file buffers on page navigation)."""
-    return _vcf_file_ready() and "_persist_pheno" in st.session_state
+    return _gt.inputs_kept(st.session_state)
 
 
-def _covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):
-    """How to source the covariate when the uploader holds no file this rerun.
-
-    "upload"  -> a file is present; load it.
-    "session" -> run-from-memory rehydrate (the whole page is sourced from _persist_*);
-                 reuse the persisted covariate.
-    "clear"   -> live session with the uploader emptied; the user removed the covariate,
-                 so drop the persisted one (nothing else ever clears it, so it would
-                 otherwise apply silently to every later trait).
-    "none"    -> no file and nothing persisted.
-    Pure decision (no Streamlit / IO) so both branches are unit-testable without a
-    browser; `running_from_memory` is `phe_file is None` (the phenotype comes from the
-    session: the page is rehydrating; the VCF is always read from its file now).
-    """
-    if covar_file_present:
-        return "upload"
-    if not has_persisted_covar:
-        return "none"
-    return "session" if running_from_memory else "clear"
+# How to source the covariate when its box holds no file (gwas.guitable.covar_persist_decision):
+# "running from memory" is "the VCF was not given in this visit of the page", ff56e5c's
+# `vcf_file is None` (its upload box held the file for the whole visit).
+_covar_persist_decision = _gt.covar_persist_decision
 
 
 def _render_last_run_results(stale=False):
@@ -326,10 +310,14 @@ _CLEAR_KEYS = _gg.SESSION_KEYS
 
 
 def _clear_session_data():
-    """"Clear session data" (gwas.guitable.clear_all): this server's genotype tables (in memory,
-    and the table files with their folders on disk) and the uploads it saved are closed and
-    deleted, every cached result is emptied, TRACE's .memo files are removed from Streamlit's cache
-    folder, and this session's data and results are dropped, the Post-GWAS page's included."""
+    """"Clear session data", the button's callback (it runs before the page): the page's inputs
+    are reset (gwas.guitable.clear_inputs: the location box emptied, new empty upload boxes, no
+    trait selected), so the run after it builds nothing; and gwas.guitable.clear_all closes and
+    deletes this server's genotype tables (in memory, and the table files with their folders on
+    disk) and the uploads it saved, empties every cached result, removes TRACE's .memo files from
+    Streamlit's cache folder and drops this session's data and results, the Post-GWAS page's
+    included."""
+    _gt.clear_inputs(st.session_state)
     return _gt.clear_all(st.session_state, keys=_CLEAR_KEYS, prefixes=_CLEAR_PREFIXES)
 # =========================
 # 1. Data upload & basic QC
@@ -338,22 +326,13 @@ with st.container():
     col_files, col_qc = st.columns([2, 3])
 
     with col_files:
-        # the upload box gets a new key once its file is saved to the work folder, which
-        # empties it and lets Streamlit release its copy of the upload
-        _vcf_widget_n = int(st.session_state.get("_vcf_upload_widget", 0))
-        vcf_file = st.file_uploader(
-            "Upload Genotype (VCF)", type=["vcf", "vcf.gz"],
-            key="vcf_upload" if _vcf_widget_n == 0 else f"vcf_upload_{_vcf_widget_n}")
-        if vcf_file is not None:
-            _vcf_size_mb = vcf_file.size / (1024 * 1024)
-            if _vcf_size_mb > 200:
-                st.warning(
-                    f"VCF file is {_vcf_size_mb:.0f} MB. An upload is held in memory while "
-                    "it arrives, so for large files type the file's location below "
-                    "instead: TRACE then reads it from disk and holds nothing in memory "
-                    "for it. Before reading, TRACE checks the memory and keeps the "
-                    "genotype table on disk when it would not fit (see Large datasets)."
-                )
+        # the first run of a visit of this page (Streamlit has dropped its widgets): the VCF
+        # given in an earlier visit is read from the session (gwas.guitable.new_page_visit)
+        _gt.new_page_visit(st.session_state)
+        # once an upload is saved in the work folder, Streamlit's copy of it is removed and the
+        # box gets a new key, which empties it (gwas.guitable.vcf_input below)
+        _vcf_box = _gt.box_key(st.session_state, "vcf_upload")
+        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key=_vcf_box)
         _vcf_location = ""
         if not _gt.path_input_disabled():
             _vcf_location = st.text_input(
@@ -365,7 +344,8 @@ with st.container():
                      "so this suits files too big to upload. In Docker, give the location "
                      "inside the container (the mounted folder).",
             )
-        phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"], key="pheno_upload")
+        phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"],
+                                    key=_gt.box_key(st.session_state, "pheno_upload"))
         # ------------------------------------------------------------
         # Store phenotype file label for reproducible exports
         # ------------------------------------------------------------
@@ -382,7 +362,7 @@ with st.container():
 
         covar_file = st.file_uploader(
             "Upload covariates (optional; .csv/.tsv)",
-            type=["csv", "txt", "tsv"], key="covar_upload",
+            type=["csv", "txt", "tsv"], key=_gt.box_key(st.session_state, "covar_upload"),
             help="Numeric covariates (batch, environment, ...) added as fixed effects "
                  "to the single-trait models alongside the PCs. First column = sample "
                  "ID matching the VCF; remaining columns = numeric covariates. "
@@ -413,36 +393,26 @@ with st.container():
         geno_work_dir = _Path(_work_dir_text.strip() or str(_gt.default_work_dir()))
 
         # ---- The VCF in use: a typed location, else the upload saved once ----
-        if _vcf_location.strip():
-            _loc = _gt.check_vcf_location(_vcf_location)
-            if _loc.ok:
-                st.caption(f"Using {_loc.path} ({_gt.size_text(_loc.size)}).")
-                if st.session_state.get("_persist_vcf_path") != str(_loc.path):
-                    st.session_state["_persist_vcf_path"] = str(_loc.path)
-                    st.session_state["_persist_vcf_name"] = _loc.path.name
-                    st.session_state["_vcf_source"] = "location"
-            else:
-                st.error(_loc.message)
-        elif vcf_file is not None:
-            _token = _gt.new_upload_token(vcf_file)
-            if st.session_state.get("_vcf_upload_token") != _token:
-                try:
-                    _saved_path, _saved_id = _gt.save_upload(vcf_file, geno_work_dir)
-                except OSError as _save_err:
-                    st.error(f"The upload cannot be saved in the work folder {geno_work_dir} "
-                             f"({_save_err}). Choose another work folder under Large datasets.")
-                    st.stop()
-                st.session_state["_persist_vcf_path"] = str(_saved_path)
-                st.session_state["_persist_vcf_name"] = vcf_file.name
-                st.session_state["_vcf_upload_token"] = _token
-                st.session_state["_vcf_source"] = "upload"
-            # empty the upload box (new key) so Streamlit can release its copy
-            st.session_state["_vcf_upload_widget"] = _vcf_widget_n + 1
+        # A location that fails the check stops the page (an earlier location is dropped, so the
+        # earlier file is never used under the new text). A new upload is saved once, then
+        # Streamlit's copy of it is removed, the box's own reference to it dropped and the box
+        # given a new key (an empty box), and the page reruns: its bytes leave the server's
+        # memory with this run. A copy that fails is not tried again in that work folder.
+        _vcf_in = _gt.vcf_input(st.session_state, _vcf_location, vcf_file, geno_work_dir)
+        if _vcf_in.error:
+            st.error(_vcf_in.error)
+            st.stop()
+        if _vcf_in.rerun:
+            try:
+                st.session_state.pop(_vcf_box, None)
+            except Exception:
+                pass
+            st.session_state["_vcf_upload_widget"] = int(st.session_state.get("_vcf_upload_widget", 0)) + 1
             st.rerun()
-        elif _vcf_file_ready() and st.session_state.get("_vcf_source") == "upload":
-            st.caption(f"Genotype file: {st.session_state.get('_persist_vcf_name', '')} "
-                       f"(saved in the work folder, "
-                       f"{_gt.size_text(os.path.getsize(st.session_state['_persist_vcf_path']))}).")
+        if _vcf_in.caption:
+            st.caption(_vcf_in.caption)
+        if _vcf_in.warning:
+            st.warning(_vcf_in.warning)
 
     # ---- Data format guidance (collapsible) ----
     with st.expander("Data format requirements", expanded=False):
@@ -480,12 +450,13 @@ LA1589,12.8,7.3
             "Clear session data",
             help="Frees this server's genotype tables (in memory, and the table files on disk), "
                  "the uploads it saved, every cached result and TRACE's cache files, and this "
-                 "session's data and results, the Post-GWAS page's too. Upload the files, or type "
-                 "the VCF's location, again to run.",
+                 "session's data and results, the Post-GWAS page's too. It also empties the "
+                 "VCF location box, the upload boxes and the trait selection: give the files "
+                 "again to run. The tables are the server's, so on a shared server Clear frees "
+                 "every session's.",
+            on_click=_clear_session_data,
         ):
-            _clear_session_data()
             st.success("Session data cleared.")
-            st.rerun()
 
         st.markdown("**Genotype QC thresholds**")
 
@@ -812,8 +783,10 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     )
     covar_df = None
     _covar_source = None
+    # running from memory: the VCF in use was not given in this visit of the page (ff56e5c's
+    # `vcf_file is None`), whichever box the phenotype came from
     _covar_decision = _covar_persist_decision(
-        covar_file is not None, phe_file is None, "_persist_covar" in st.session_state
+        covar_file is not None, not _vcf_in.live, "_persist_covar" in st.session_state
     )
     if _covar_decision == "upload":
         try:
@@ -1000,9 +973,14 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                                  models=("mlm", "mlmm", "farmcpu"), impute=impute_method)
     st.caption(_gt.page_message(_geno_plan))
     if geno_work_dir.exists():
-        _own = _gt.own_folders()
-        for _stale_dir, _stale_bytes in _storeplan.stale_store_folders(geno_work_dir):
-            if _stale_dir not in _own:
+        # table folders and saved uploads that an earlier run or server left (never this server's)
+        for _stale_dir, _stale_bytes, _stale_kind in _gt.stale_folders(geno_work_dir):
+            if _stale_kind == "upload":
+                st.warning(
+                    f"An upload saved by an earlier TRACE server that did not stop is still "
+                    f"here: {_stale_dir} ({_stale_bytes / 1e9:.2f} GB). Delete it to free the "
+                    "space.")
+            else:
                 st.warning(
                     f"A genotype table folder of an earlier TRACE run that did not close is "
                     f"still here: {_stale_dir} ({_stale_bytes / 1e9:.2f} GB). Delete it to free "

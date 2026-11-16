@@ -128,10 +128,15 @@ by `auto`: a run that does not fit under the limit keeps its table on disk.
 **Opening a big VCF.** Next to the upload box, the GWAS page has a box "Or type the VCF's location
 on this computer". It takes a `.vcf` or `.vcf.gz` file on the computer that runs TRACE, checks
 that it exists and can be read, and shows its size. Nothing is uploaded or copied: TRACE reads the
-file where it is. The upload box takes files up to 2 GB; an upload is held in memory twice while it
-arrives, before TRACE can check anything, so bigger files should go through the location box. An
-uploaded file is written once to the work folder (below) and read from there; the upload box is
-then emptied so the browser's copy can be released.
+file where it is. The upload box takes files up to 2 GB; an upload is held in the server's memory
+while it arrives (twice at its end), before TRACE can check anything, so bigger files should go
+through the location box. An uploaded file is written once to the work folder (below) and read
+from there; TRACE then removes the server's copy of the upload from memory and empties the upload
+box. A copy that fails (a full disk, for one) leaves nothing in the work folder and is not tried
+again until you choose another work folder.
+
+A location that fails the check (a typo, another file type) stops the page with the reason; the
+file an earlier location gave is not used under the new text.
 
 On a shared server, whose users should not open the server's own files, set
 `TRACE_DISABLE_PATH_INPUT=1` to hide the location box. In Docker, the location is a path inside
@@ -148,9 +153,11 @@ so a server or a Docker image can force it.
 **Work folder.** Saved uploads and tables kept on disk go into the work folder: the environment
 variable `TRACE_GENO_STORE_DIR`, else a folder `trace_gui` in the system's temporary folder. The
 same section can change it, and the check includes its free space. Each table file gets its own
-folder, `_trace_geno_store_gui_<process>_<random>`; TRACE keeps at most two, and removes a folder
-when its table is no longer kept and when the server stops normally. Folders left by a server that
-did not stop are named on the page with their size; they are never deleted automatically.
+folder, `_trace_geno_store_gui_<process>_<random>`, and each saved upload its own
+`_trace_upload_gui_<process>_<random>`; TRACE keeps at most two tables, and removes a folder
+when its table is no longer kept and when the server stops normally. Table folders and saved
+uploads left by a run or a server that did not stop are named on the page with their size; they
+are never deleted automatically.
 
 **What the pages do with the table on disk.** The GWAS page runs its preprocessing (sample
 matching, phenotype and SNP QC, the fill of missing calls, kinship, the QC report) on the table
@@ -180,8 +187,10 @@ you to run the GWAS page again.
 **Clear session data** frees this server's genotype tables (in memory, and the table files with
 their folders on disk), the uploads it saved, every cached result, and the cache files that
 earlier versions of TRACE left in Streamlit's cache folder (`~/.streamlit/cache`; other apps' files
-there are not touched). It also drops this session's data and results on both pages; the widget
-settings stay. On a shared server Clear affects every session, since the tables are the server's.
+there are not touched). It also drops this session's data and results on both pages, and
+empties the VCF location box, the upload boxes and the trait selection, so nothing is read again
+until you give the files again; the other settings stay. On a shared server Clear affects every
+session, since the tables are the server's.
 
 **The interactive Manhattan.** Above 500,000 SNPs it draws every SNP with p ≤ 0.01 and one in k of
 the others, in genome order, with k the smallest whole number that keeps the drawing at 500,000

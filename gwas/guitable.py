@@ -165,7 +165,10 @@ _SAVED_LOCK = threading.Lock()
 def save_upload(uploaded, work_dir):
     """Write the upload (a Streamlit UploadedFile, or any file-like object with ``name`` and
     ``read``) once, in pieces, into a new folder of this server in ``work_dir``, under its own
-    name. The identity is computed while writing. Returns (path, identity)."""
+    name. The identity is computed while writing. Returns (path, identity). A copy that fails
+    (a full disk, for one) leaves nothing behind: its folder is deleted and forgotten."""
+    import shutil
+
     from gwas.genostore import new_store_dir
 
     name = Path(str(getattr(uploaded, "name", "") or "upload.vcf")).name
@@ -174,12 +177,19 @@ def save_upload(uploaded, work_dir):
         _SAVED_UPLOADS.add(folder)
     out = folder / name
     h = hashlib.blake2b(digest_size=32)
-    if hasattr(uploaded, "seek"):
-        uploaded.seek(0)
-    with open(out, "wb") as fh:
-        for chunk in iter(lambda: uploaded.read(HASH_PIECE), b""):
-            fh.write(chunk)
-            h.update(chunk)
+    try:
+        if hasattr(uploaded, "seek"):
+            uploaded.seek(0)
+        with open(out, "wb") as fh:
+            for chunk in iter(lambda: uploaded.read(HASH_PIECE), b""):
+                fh.write(chunk)
+                h.update(chunk)
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        if not folder.exists():
+            with _SAVED_LOCK:
+                _SAVED_UPLOADS.discard(folder)
+        raise
     identity = h.hexdigest()
     _remember(_id_key(out), identity)
     return out, identity
@@ -191,17 +201,46 @@ def saved_upload_folders():
 
 
 def remove_saved_uploads():
-    """Delete every upload this server saved (Clear, and when the server stops)."""
+    """Delete every upload this server saved (Clear, and when the server stops). A folder that
+    cannot be deleted now (a file in it is still open) stays this server's: the next Clear or the
+    server's stop tries again, and the page never names it as left by another server."""
     import shutil
 
     with _SAVED_LOCK:
         folders = list(_SAVED_UPLOADS)
         _SAVED_UPLOADS.clear()
+    left = []
     for f in folders:
         shutil.rmtree(f, ignore_errors=True)
+        if Path(f).exists():
+            left.append(f)
+    if left:
+        with _SAVED_LOCK:
+            _SAVED_UPLOADS.update(left)
 
 
 atexit.register(remove_saved_uploads)
+
+
+def release_upload(uploaded):
+    """Remove Streamlit's own record of an upload once TRACE has saved it, as Streamlit's chat
+    input does after reading its files (MemoryUploadedFileManager.remove_file). The record holds
+    the whole file in the server's memory, and the upload box, once it has a new key, would never
+    ask Streamlit to delete it: it would stay until the session ends. Returns True when a record
+    was removed (False outside a Streamlit run, or for an object that is not an upload)."""
+    file_id = getattr(uploaded, "file_id", None)
+    if not file_id:
+        return False
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+    except ImportError:                     # pragma: no cover - streamlit is a TRACE dependency
+        return False
+    ctx = get_script_run_ctx(suppress_warning=True)
+    mgr = getattr(ctx, "uploaded_file_mgr", None)
+    if mgr is None or not hasattr(mgr, "remove_file"):
+        return False
+    mgr.remove_file(session_id=ctx.session_id, file_id=file_id)
+    return True
 
 
 # ------------------------------------------------------------- storeplan in the page's words
@@ -554,3 +593,183 @@ def new_upload_token(uploaded):
     """What identifies one upload in the session (so a rerun does not save it again)."""
     return (str(getattr(uploaded, "name", "")), int(getattr(uploaded, "size", 0) or 0),
             str(getattr(uploaded, "file_id", "") or ""))
+
+
+# ------------------------------------------------------------- the GWAS page's input boxes
+# The session keys of the VCF in use (the page reads the file by its path, never its bytes).
+VCF_KEYS = ("_persist_vcf_path", "_persist_vcf_name", "_vcf_source")
+# The path of the VCF given in this visit of the page (a saved upload); dropped when a new visit
+# starts. ff56e5c's upload box held its file for the whole visit, and the covariate rule reads
+# whether the VCF came from a box this visit (vcf_input's ``live``).
+VCF_LIVE_KEY = "_vcf_live"
+# The upload whose copy failed: (its token, the work folder, the message). It is not copied
+# again into that folder on every rerun; another work folder tries again.
+VCF_SAVE_FAILED_KEY = "_vcf_save_failed"
+# The page's upload boxes: each gets a new key (an empty box) by bumping "_<name>_widget".
+UPLOAD_BOXES = ("vcf_upload", "pheno_upload", "covar_upload")
+# A widget drawn on every run of the GWAS page, before the VCF is chosen. Streamlit drops a
+# page's widget states when another page runs, as it dropped ff56e5c's uploads: when this key is
+# missing at the top of a run, a new visit of the page starts.
+VISIT_WIDGET_KEY = "geno_store_choice"
+LARGE_UPLOAD_BYTES = 200 * 2 ** 20
+
+
+def box_key(state, name):
+    """The current key of the upload box ``name`` ("vcf_upload", "pheno_upload", "covar_upload")."""
+    n = int(state.get(f"_{name}_widget", 0) or 0)
+    return name if n == 0 else f"{name}_{n}"
+
+
+def new_page_visit(state):
+    """True on the first run of a visit of the GWAS page (Streamlit has dropped its widgets'
+    states). The VCF given in an earlier visit is then no longer live: it is read from the
+    session, as ff56e5c read the bytes it kept when its upload box came back empty."""
+    if VISIT_WIDGET_KEY in state:
+        return False
+    state.pop(VCF_LIVE_KEY, None)
+    return True
+
+
+@dataclass
+class VcfInput:
+    """What the GWAS page does with its VCF boxes on one run (vcf_input)."""
+
+    caption: str = ""       # the file in use, under the boxes
+    warning: str = ""       # advice for a large upload
+    error: str = ""         # a stop: the page shows it and stops
+    rerun: bool = False     # an upload was saved: its box gets a new key and the page reruns
+    live: bool = False      # the VCF in use was given in this visit (ff56e5c: its box held it)
+
+
+def vcf_path_ready(state):
+    """The VCF in use (a typed location, or the upload saved in the work folder) is there."""
+    path = state.get("_persist_vcf_path")
+    return bool(path) and os.path.isfile(path)
+
+
+def inputs_kept(state):
+    """The VCF (by its path) and the phenotype table of an earlier run are still in the session,
+    so a run can go on without the files being given again."""
+    return vcf_path_ready(state) and "_persist_pheno" in state
+
+
+def vcf_input(state, location_text, upload, work_dir):
+    """The GWAS page's VCF in use, from its two boxes (the location box first).
+
+    A typed location that passes check_vcf_location becomes the VCF in use. One that fails stops
+    the page with the check's message, and a VCF the location box gave earlier is dropped, so the
+    earlier file is never used under the new text. A new upload is saved once into the work
+    folder (save_upload): then Streamlit's copy of it is removed (release_upload), and the page
+    gives the box a new key and reruns. A copy that fails is not tried again in that work folder.
+    With both boxes empty, the VCF given earlier (by its path) stays in use, named in the
+    caption."""
+    text = str(location_text or "").strip()
+    if text:
+        loc = check_vcf_location(text)
+        if not loc.ok:
+            if state.get("_vcf_source") == "location":
+                for k in VCF_KEYS:
+                    state.pop(k, None)
+            return VcfInput(error=loc.message)
+        if state.get("_persist_vcf_path") != str(loc.path):
+            state["_persist_vcf_path"] = str(loc.path)
+            state["_persist_vcf_name"] = loc.path.name
+            state["_vcf_source"] = "location"
+        return VcfInput(caption=f"Using {loc.path} ({size_text(loc.size)}).", live=True)
+    if upload is not None:
+        token = new_upload_token(upload)
+        if state.get("_vcf_upload_token") != token:
+            failed = state.get(VCF_SAVE_FAILED_KEY)
+            if failed is not None and tuple(failed[:2]) == (token, str(work_dir)):
+                return VcfInput(error=failed[2])
+            try:
+                path, _identity = save_upload(upload, work_dir)
+            except OSError as exc:
+                msg = (f"The upload cannot be saved in the work folder {work_dir} ({exc}). "
+                       "Choose another work folder under Large datasets.")
+                state[VCF_SAVE_FAILED_KEY] = (token, str(work_dir), msg)
+                return VcfInput(error=msg)
+            state.pop(VCF_SAVE_FAILED_KEY, None)
+            state["_persist_vcf_path"] = str(path)
+            state["_persist_vcf_name"] = str(getattr(upload, "name", "") or path.name)
+            state["_vcf_upload_token"] = token
+            state["_vcf_source"] = "upload"
+            state[VCF_LIVE_KEY] = str(path)
+        release_upload(upload)
+        return VcfInput(rerun=True, live=True)
+    if not vcf_path_ready(state):
+        return VcfInput()
+    path = state["_persist_vcf_path"]
+    live = state.get(VCF_LIVE_KEY) == path
+    size = os.path.getsize(path)
+    name = state.get("_persist_vcf_name", "") or Path(path).name
+    if state.get("_vcf_source") == "upload":
+        warning = ""
+        if size > LARGE_UPLOAD_BYTES:
+            warning = (f"The uploaded VCF is {size / 2 ** 20:.0f} MB. An upload is held in the "
+                       "server's memory while it arrives, so for large files type the file's "
+                       "location instead: TRACE then reads it where it is and holds nothing in "
+                       "memory for it.")
+        return VcfInput(caption=f"Genotype file: {name} (saved in the work folder, {size_text(size)}).",
+                        warning=warning, live=live)
+    return VcfInput(caption=f"Genotype file: {path} ({size_text(size)}), the location typed earlier.",
+                    live=live)
+
+
+def covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):
+    """How to source the covariate when the uploader holds no file this rerun.
+
+    "upload"  -> a file is present; load it.
+    "session" -> run-from-memory rehydrate (the VCF was not given in this visit of the page);
+                 reuse the persisted covariate.
+    "clear"   -> live session with the uploader emptied; the user removed the covariate,
+                 so drop the persisted one (nothing else ever clears it, so it would
+                 otherwise apply silently to every later trait).
+    "none"    -> no file and nothing persisted.
+    Pure decision (no Streamlit / IO). ``running_from_memory`` is ``not vcf_input(...).live``:
+    the VCF in use was not given in this visit, as ff56e5c's ``vcf_file is None`` (its upload
+    box held the file for the whole visit and was empty after a page navigation)."""
+    if covar_file_present:
+        return "upload"
+    if not has_persisted_covar:
+        return "none"
+    return "session" if running_from_memory else "clear"
+
+
+def clear_inputs(state):
+    """The reset of the GWAS page's inputs that "Clear session data" makes before the page runs
+    (the button's callback): the location box is emptied, each upload box gets a new key (an
+    empty box, and Streamlit's copy of a file still in it is removed) and the trait selection is
+    dropped. The run after Clear then finds no VCF and no phenotype file and builds nothing
+    until the user gives the files again."""
+    if "vcf_location" in state:
+        state["vcf_location"] = ""
+    for name in UPLOAD_BOXES:
+        try:
+            held = state.get(box_key(state, name))
+        except Exception:                       # a box Streamlit cannot read back: nothing held
+            held = None
+        if held is not None:
+            release_upload(held)
+        state[f"_{name}_widget"] = int(state.get(f"_{name}_widget", 0) or 0) + 1
+    for key in ("selected_traits_multiselect", VCF_LIVE_KEY, VCF_SAVE_FAILED_KEY):
+        state.pop(key, None)
+
+
+def stale_folders(work_dir):
+    """Folders in the work folder that an earlier TRACE run or GUI server left (killed, or not
+    stopped normally), with their sizes in bytes: table folders (gwas.storeplan's
+    stale_store_folders, which the CLI uses) and the GUI's saved uploads (_trace_upload_gui_*).
+    This server's own folders (own_folders) are left out. Returns [(folder, bytes, kind)], kind
+    "table" or "upload". The page names them; nothing is ever deleted here."""
+    from gwas import storeplan
+
+    def norm(p):
+        return os.path.normcase(os.path.abspath(str(p)))
+
+    own = {norm(f) for f in own_folders()}
+    out = [(d, b, "table") for d, b in storeplan.stale_store_folders(work_dir)]
+    for d in sorted(Path(work_dir).glob(f"{UPLOAD_PREFIX}_*")):
+        if d.is_dir():
+            out.append((d, sum(f.stat().st_size for f in d.rglob("*") if f.is_file()), "upload"))
+    return [(d, b, k) for d, b, k in out if norm(d) not in own]
