@@ -685,6 +685,21 @@ def box_key(state, name):
     return name if n == 0 else f"{name}_{n}"
 
 
+def empty_upload_box(state, name):
+    """Give the upload box ``name`` a new key, so the page draws it empty from then on, and drop
+    the old box's state (Streamlit's deserialized copy of its file)."""
+    try:
+        state.pop(box_key(state, name), None)
+    except Exception:                       # a box Streamlit cannot read back: nothing held
+        pass
+    state[f"_{name}_widget"] = int(state.get(f"_{name}_widget", 0) or 0) + 1
+
+
+def work_folder(text):
+    """The work folder the "Large datasets" section names (its text box), else default_work_dir."""
+    return Path(str(text or "").strip() or str(default_work_dir()))
+
+
 def new_page_visit(state):
     """True on the first run of a visit of the GWAS page (Streamlit has dropped its widgets'
     states). The VCF given in an earlier visit is then no longer live: it is read from the
@@ -700,9 +715,9 @@ class VcfInput:
     """What the GWAS page does with its VCF boxes on one run (vcf_input)."""
 
     caption: str = ""       # the file in use, under the boxes
-    warning: str = ""       # advice for a large upload
+    warning: str = ""       # advice for a large upload, or the VCF in use is gone
     error: str = ""         # a stop: the page shows it and stops
-    rerun: bool = False     # an upload was saved: its box gets a new key and the page reruns
+    saved: bool = False     # an upload was saved by this call: the caller empties its box
     live: bool = False      # the VCF in use was given in this visit (ff56e5c: its box held it)
 
 
@@ -741,11 +756,12 @@ def vcf_input(state, location_text, upload, work_dir):
     A typed location that passes check_vcf_location becomes the VCF in use. One that fails stops
     the page with the check's message, and a VCF the location box gave earlier is dropped, so the
     earlier file is never used under the new text. A new upload is saved once into the work
-    folder (save_upload): then Streamlit's copy of it is removed (release_upload), and the page
-    gives the box a new key and reruns. A copy that fails is not tried again in that work folder.
-    With both boxes empty, the VCF given earlier (by its path) stays in use, named in the
-    caption; when it is gone (an upload that Clear session data in another session deleted), the
-    warning says so (vcf_gone_message) and nothing is read."""
+    folder (save_upload): then Streamlit's copy of it is removed (release_upload), and the caller
+    empties the box (empty_upload_box; the box's own callback, save_vcf_upload, does all this
+    before the page runs). A copy that fails is not tried again in that work folder until the file
+    is uploaded again. With both boxes empty, the VCF given earlier (by its path) stays in use,
+    named in the caption; when it is gone (an upload that Clear session data in another session
+    deleted), the warning says so (vcf_gone_message) and nothing is read."""
     text = str(location_text or "").strip()
     if text:
         loc = check_vcf_location(text)
@@ -779,7 +795,7 @@ def vcf_input(state, location_text, upload, work_dir):
             state["_vcf_source"] = "upload"
             state[VCF_LIVE_KEY] = str(path)
         release_upload(upload)
-        return VcfInput(rerun=True, live=True)
+        return VcfInput(saved=True, live=True)
     if not vcf_path_ready(state):
         if state.get("_vcf_source") in ("upload", "location"):
             return VcfInput(warning=vcf_gone_message(state.get("_persist_vcf_path")))
@@ -801,6 +817,28 @@ def vcf_input(state, location_text, upload, work_dir):
         return VcfInput(caption=f"Genotype file: {path} ({size_text(size)}), the location typed "
                                 "earlier.", live=live)
     return VcfInput(live=live)
+
+
+def save_vcf_upload(state, work_dir, location_text=""):
+    """The VCF upload box's on_change callback, which Streamlit runs before the page: a new upload
+    is saved once into the work folder and Streamlit's copy of it removed (vcf_input), and the box
+    is emptied (empty_upload_box), so the page that follows reads the saved file. Nothing reruns:
+    a rerun from the page dropped the states of the widgets drawn after the box (the QC settings,
+    the sidebar), and the run after it used their defaults. A typed location comes first, as in
+    vcf_input: the upload is then left in its box. A copy that fails leaves the upload in its box,
+    and the page shows why (vcf_input). Returns vcf_input's result, or None (nothing to save)."""
+    if str(location_text or "").strip():
+        return None
+    try:
+        upload = state.get(box_key(state, "vcf_upload"))
+    except Exception:                       # a box Streamlit cannot read back: nothing to save
+        upload = None
+    if upload is None:
+        return None
+    inp = vcf_input(state, "", upload, work_dir)
+    if inp.saved:
+        empty_upload_box(state, "vcf_upload")
+    return inp
 
 
 def covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):

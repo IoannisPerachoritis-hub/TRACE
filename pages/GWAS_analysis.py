@@ -25,7 +25,6 @@ from gwas.pipeline import is_phenotype_qc_stop
 from gwas import guitable as _gt
 from gwas import guigwas as _gg
 from gwas import storeplan as _storeplan
-from pathlib import Path as _Path
 from gwas.windows import ld_window_kb
 from utils.pub_theme import plotly_html_bytes
 from gwas.utils import _mean_impute_cols
@@ -329,6 +328,17 @@ def _clear_session_data():
     included."""
     _gt.clear_inputs(st.session_state)
     return _gt.clear_all(st.session_state, keys=_CLEAR_KEYS, prefixes=_CLEAR_PREFIXES)
+
+
+def _save_vcf_upload():
+    """The VCF upload box's callback (it runs before the page): a new upload is saved once in the
+    work folder, Streamlit's copy of it is removed and the box emptied (gwas.guitable
+    .save_vcf_upload), so this run reads the saved file, with no rerun that would drop the states
+    of the widgets drawn after the box. The work folder and the location box are read from the
+    session, where their widgets keep their values."""
+    _gt.save_vcf_upload(
+        st.session_state, _gt.work_folder(st.session_state.get("geno_store_dir")),
+        "" if _gt.path_input_disabled() else st.session_state.get("vcf_location", ""))
 # =========================
 # 1. Data upload & basic QC
 # =========================
@@ -339,10 +349,11 @@ with st.container():
         # the first run of a visit of this page (Streamlit has dropped its widgets): the VCF
         # given in an earlier visit is read from the session (gwas.guitable.new_page_visit)
         _gt.new_page_visit(st.session_state)
-        # once an upload is saved in the work folder, Streamlit's copy of it is removed and the
-        # box gets a new key, which empties it (gwas.guitable.vcf_input below)
+        # a new upload is saved in the work folder by the box's callback, before this run: then
+        # Streamlit's copy of it is removed and the box gets a new key, which empties it
         _vcf_box = _gt.box_key(st.session_state, "vcf_upload")
-        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key=_vcf_box)
+        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key=_vcf_box,
+                                    on_change=_save_vcf_upload)
         _vcf_location = ""
         if not _gt.path_input_disabled():
             _vcf_location = st.text_input(
@@ -400,25 +411,25 @@ with st.container():
                      "The default comes from the environment variable TRACE_GENO_STORE_DIR, "
                      "else a folder in the system's temporary folder.",
             )
-        geno_work_dir = _Path(_work_dir_text.strip() or str(_gt.default_work_dir()))
+        geno_work_dir = _gt.work_folder(_work_dir_text)
 
         # ---- The VCF in use: a typed location, else the upload saved once ----
         # A location that fails the check stops the page (an earlier location is dropped, so the
-        # earlier file is never used under the new text). A new upload is saved once, then
-        # Streamlit's copy of it is removed, the box's own reference to it dropped and the box
-        # given a new key (an empty box), and the page reruns: its bytes leave the server's
-        # memory with this run. A copy that fails is not tried again in that work folder.
+        # earlier file is never used under the new text). A new upload was saved by the box's
+        # callback before this run (_save_vcf_upload): its bytes left the server's memory then.
+        # An upload saved here instead (one held while a location was typed, or tried again in
+        # another work folder after a failed copy) is freed the same way: Streamlit's copy is
+        # removed, the box emptied for the next run, and this run reads the saved file, with no
+        # rerun that would drop the states of the widgets below. A copy that fails is not tried
+        # again in that work folder until the file is uploaded again.
         _vcf_in = _gt.vcf_input(st.session_state, _vcf_location, vcf_file, geno_work_dir)
         if _vcf_in.error:
             st.error(_vcf_in.error)
             st.stop()
-        if _vcf_in.rerun:
-            try:
-                st.session_state.pop(_vcf_box, None)
-            except Exception:
-                pass
-            st.session_state["_vcf_upload_widget"] = int(st.session_state.get("_vcf_upload_widget", 0)) + 1
-            st.rerun()
+        if _vcf_in.saved:
+            _gt.empty_upload_box(st.session_state, "vcf_upload")
+            vcf_file = None
+            _vcf_in = _gt.vcf_input(st.session_state, _vcf_location, None, geno_work_dir)
         if _vcf_in.caption:
             st.caption(_vcf_in.caption)
         if _vcf_in.warning:
