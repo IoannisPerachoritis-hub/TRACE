@@ -185,8 +185,9 @@ subsampling read it in pieces. One-Click uses the same table, and its `run_metad
 where the table was kept, as the CLI's does. The Post-GWAS page reads only the window or block
 each tab shows. The results are the same as with the table in memory, byte for byte. Not
 available with the table on disk: LD-kNNi imputation (choose mean imputation, or keep the table
-in memory), and the haplotype PCA panel's own PCs when the GWAS run kept fewer than two PCs (the
-panel then says why).
+in memory), and the haplotype PCA panel in a session without the GWAS page's PCs, since the panel
+would then compute its own from the whole table (it says why). Every GWAS page run leaves those
+PCs (its PCA, up to 20 PCs, whatever number of PCs the models use).
 
 **Subsampling.** With the table on disk, the iterations run one after another. In memory with
 more than one core, the page first checks that the workers fit in the free memory (each worker
