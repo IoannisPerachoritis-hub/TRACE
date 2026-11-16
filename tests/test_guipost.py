@@ -580,6 +580,28 @@ def test_a_detection_with_other_inputs_is_not_shared(example_v1, change):
     assert len(runs) + len(runs2) == 2
 
 
+@pytest.mark.parametrize("mode", ["memory", "disk"])
+def test_a_raw_and_an_imputed_reader_of_one_table_never_share_a_detection(example_v1, mode):
+    """The key names which table a reader reads (imputed or raw) and its number format: in
+    memory a reader has no fill to tell the raw table from the imputed one, so before, both
+    readers of one identity gave one key, and a raw detection would have been served the
+    imputed one (or the other way round)."""
+    from gwas.ld import find_ld_clusters_genomewide
+
+    post = example_v1["posts"][mode]
+    shared = gp.SharedDetection({}, find_ld_clusters_genomewide, post.identity)
+    kw = _page_and_tab_calls(example_v1, post)[1]
+    imputed = shared.key(kw)
+    raw = shared.key(dict(kw, geno_imputed=post.raw))
+    float32 = shared.key(dict(kw, geno_imputed=post.ld.astype(np.float32)))
+    assert raw != imputed, "a raw and an imputed reader of one table share a key"
+    assert float32 != imputed, "two number formats of one table share a key"
+    # the page's reader (the aligned rows, all of them here) and the tab's still share
+    assert shared.key(dict(kw, geno_imputed=post.ld_aligned)) == imputed
+    assert (gp.table_kind(post.ld), gp.table_kind(post.ld_aligned), gp.table_kind(post.raw)) == (
+        "imputed", "imputed", "raw")
+
+
 def test_the_window_is_the_only_flank_use():
     """The key takes flank_kb as the base pairs int(round(float(flank_kb) * 1000.0)): pin that
     this is the detection's only use of it, and that equal base pairs share a key."""

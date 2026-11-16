@@ -81,9 +81,11 @@ class ArrayColumns(LazyColumns):
     F-ordered, a column slice of a C-ordered table strided, a single column 1-D. So the code
     that receives a block does today's arithmetic on today's operand (scaling audit, section
     8.6), and a whole-table read happens only if someone asks for it (np.asarray), logged and
-    refusable as on disk (TRACE_STORE_FORBID_MATERIALIZE)."""
+    refusable as on disk (TRACE_STORE_FORBID_MATERIALIZE). ``kind`` says which table the array
+    is, "imputed" or "raw" (the in-memory array has no fill to tell them apart, as a table on
+    disk does), or None when not given."""
 
-    def __init__(self, arr, dtype=None, layout=None):
+    def __init__(self, arr, dtype=None, layout=None, kind=None):
         a = arr if isinstance(arr, np.ndarray) else np.asarray(arr)
         if a.ndim != 2:
             raise ValueError("ArrayColumns takes a samples x SNPs array")
@@ -95,6 +97,7 @@ class ArrayColumns(LazyColumns):
         self.dtype = np.dtype(a.dtype if dtype is None else dtype)
         self.layout = layout or _layout_of(a)
         self.std = None
+        self.kind = kind
 
     def __repr__(self):
         return f"ArrayColumns(shape={self.shape}, dtype={self.dtype}, layout={self.layout})"
@@ -129,14 +132,24 @@ class ArrayColumns(LazyColumns):
         return out
 
 
-def reader(table, dtype=None):
+def reader(table, dtype=None, kind=None):
     """The table read in windows: a LazyColumns as it is (in ``dtype`` if given), an array
-    wrapped in an ArrayColumns; None stays None."""
+    wrapped in an ArrayColumns of that ``kind`` ("imputed" or "raw"); None stays None."""
     if table is None:
         return None
     if is_lazy(table):
         return table if dtype is None else table.astype(dtype)
-    return ArrayColumns(table, dtype=dtype)
+    return ArrayColumns(table, dtype=dtype, kind=kind)
+
+
+def table_kind(table):
+    """Which table a reader reads: "imputed" or "raw" (an ArrayColumns says so itself; a
+    LazyColumns on disk is imputed when it has a fill), or "unknown"."""
+    if isinstance(table, ArrayColumns):
+        return table.kind or "unknown"
+    if is_lazy(table):
+        return "imputed" if getattr(table, "fill", None) is not None else "raw"
+    return "unknown"
 
 
 class HardCalls:
@@ -205,14 +218,14 @@ def post_table(session_table, keep_mask, geno_encoding="dosage012", samples=None
     """The PostTable of a gwas.guitable.SessionTable: ``keep_mask`` the phenotype-aligned rows,
     ``geno_encoding`` the hard-call rule, ``samples`` the sample index (sample_index)."""
     view = session_table.view
-    ld = reader(view, np.float64)
+    ld = reader(view, np.float64, kind="imputed")
     keep = np.asarray(keep_mask, dtype=bool)
     if samples is None:
         samples = sample_index(iid=session_table.iid)
     return PostTable(
         identity=str(session_table.identity), mode=str(session_table.mode),
         ld=ld, ld_aligned=ld.lazy_rows(keep), hard=HardCalls(ld, geno_encoding),
-        raw=reader(session_table.raw), view=view,
+        raw=reader(session_table.raw, kind="raw"), view=view,
         samples=pd.DataFrame(index=samples), keep_mask=keep)
 
 
@@ -457,10 +470,11 @@ def _value(v):
 
 
 def _reads_of(table, identity=""):
-    """What reading ``table`` gives besides the table it names: a reader's class, whether it
-    is imputed (has a fill) and its rows (all, or a digest of the selected rows), and the
-    table's ``identity`` (without one, the reader's array or file object); a plain array by
-    its content."""
+    """What reading ``table`` gives besides the table it names: a reader's class, which table
+    it reads (imputed or raw: table_kind) and in which number format, its rows (all, or a
+    digest of the selected rows), and the table's ``identity`` (without one, the reader's array
+    or file object); a plain array by its content. So a raw and an imputed reader of one
+    identity, or two number formats of one table, never give the same key."""
     if table is None:
         return "none"
     if is_lazy(table):
@@ -471,7 +485,7 @@ def _reads_of(table, identity=""):
         else:
             r = digest(np.asarray(rows))
         source = table.arr if isinstance(table, ArrayColumns) else getattr(table, "store", None)
-        return (type(table).__name__, getattr(table, "fill", None) is None, r,
+        return (type(table).__name__, table_kind(table), str(np.dtype(table.dtype)), r,
                 str(identity) if identity else f"object:{id(source)}")
     return ("array", digest(np.asarray(table)))
 
