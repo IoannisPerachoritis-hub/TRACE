@@ -613,8 +613,12 @@ def render(
         if ld_key not in st.session_state:
             with st.spinner("Finding LD blocks around significant SNPs…"):
                 # the table is read window by window, each window the float64 copy the
-                # whole-table conversion gave
-                haplo_df_auto = find_ld_clusters_genomewide(
+                # whole-table conversion gave. At the defaults, with every sample aligned,
+                # this is the page's automatic detection, whose result is served
+                # (gwas.guipost.SharedDetection)
+                haplo_df_auto = guipost.SharedDetection(
+                    st.session_state, find_ld_clusters_genomewide, guipost.table_key(ctx),
+                ).find_ld_clusters_genomewide(
                     gwas_df=gwas_df,
                     chroms=chroms,
                     positions=positions,

@@ -28,11 +28,20 @@ Keys and caches: every Post-GWAS cache names the table's identity (SessionTable.
 the window, and keeps a fixed number of entries (r2_key, haplotype_key, detection_key,
 remember, keep_recent, remember_family).
 
+A table file closed after the GWAS page left it in the session (Clear session data, or the
+server's registry making room) ends the page with a plain message (RELEASED_MESSAGE,
+table_released, released_guard).
+
+SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
+result when their inputs are provably the same (the tab at its defaults, every sample
+phenotype-aligned), so a first visit detects once.
+
 POST_GWAS_SESSION_KEYS / POST_GWAS_SESSION_PREFIXES list every session key the page and its
 tabs write (widget keys excluded), for Clear (gwas.guitable).
 """
 import contextlib
 import hashlib
+import inspect
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -387,6 +396,105 @@ def remember_family(state, order_key, key, max_entries, suffixes=()):
     state[order_key] = order
 
 
+# ------------------------------------------------------- one LD-block detection, shared
+DETECTION_CACHE = "_ld_detect_cache"
+_TABLE_ARGS = ("gwas_df", "chroms", "positions", "sid", "geno_imputed")
+
+
+def _value(v):
+    """An argument as a key part: None, a bool, a whole number, a float or a string by kind
+    and value. Anything else is never shared (a key part equal to nothing)."""
+    if v is None or isinstance(v, str):
+        return (type(v).__name__, v)
+    if isinstance(v, (bool, np.bool_)):
+        return ("bool", bool(v))
+    if isinstance(v, (int, np.integer)):
+        return ("int", int(v))
+    if isinstance(v, (float, np.floating)):
+        return ("float", float(v))
+    return ("unshared", object())
+
+
+def _reads_of(table, identity=""):
+    """What reading ``table`` gives besides the table it names: a reader's class, whether it
+    is imputed (has a fill) and its rows (all, or a digest of the selected rows), and the
+    table's ``identity`` (without one, the reader's array or file object); a plain array by
+    its content."""
+    if table is None:
+        return "none"
+    if is_lazy(table):
+        rows = getattr(table, "rows", None)
+        n = int(getattr(getattr(table, "store", None), "N", -1))
+        if rows is None or (rows.size == n and np.array_equal(rows, np.arange(n))):
+            r = "all"
+        else:
+            r = digest(np.asarray(rows))
+        source = table.arr if isinstance(table, ArrayColumns) else getattr(table, "store", None)
+        return (type(table).__name__, getattr(table, "fill", None) is None, r,
+                str(identity) if identity else f"object:{id(source)}")
+    return ("array", digest(np.asarray(table)))
+
+
+def _labels_of(chroms, positions, sid):
+    """The SNP labels a detection reads, by their values (positions with their number
+    format)."""
+    def hashed(a):
+        return None if a is None else pd.util.hash_array(np.asarray(a, dtype=object))
+    return digest(None if positions is None else np.asarray(positions), hashed(chroms), hashed(sid))
+
+
+class SharedDetection:
+    """gwas.ld.find_ld_clusters_genomewide, its result shared between calls whose inputs are
+    provably the same.
+
+    The page's automatic blocks and the LD Blocks tab's detection at its defaults are one
+    computation when every sample is phenotype-aligned: the same function, the same table
+    (``table``, its identity) read on the same rows, the same SNP labels and GWAS results (by
+    their values), and every other argument equal, with the function's defaults filled in and
+    flank_kb taken as the base pairs it becomes (int(round(float(flank_kb) * 1000.0)), the
+    function's only use of it). The function reads the table only as ``[:, columns]`` windows
+    of as_columns(table, float), which a reader gives in the same values and layout whatever
+    its own layout, so a row selection of all rows reads what the table reads. Results are
+    kept in a bounded session cache (DETECTION_CACHE); each caller gets its own copy."""
+
+    def __init__(self, state, find, table):
+        self.state, self.find, self.table = state, find, str(table)
+
+    def key(self, kwargs):
+        params = {k: v for k, v in kwargs.items() if k not in _TABLE_ARGS}
+        try:
+            signature = inspect.signature(self.find)
+        except (TypeError, ValueError):          # a callable without a signature
+            signature = None
+        if signature is not None:
+            for name, p in signature.parameters.items():
+                if name not in _TABLE_ARGS and p.default is not inspect.Parameter.empty:
+                    params.setdefault(name, p.default)
+        if params.get("flank_kb") is not None:
+            try:
+                params["flank_bp"] = int(round(float(params["flank_kb"]) * 1000.0))
+                del params["flank_kb"]
+            except (TypeError, ValueError):
+                pass
+        f = self.find
+        return ("LDBLOCKS", (getattr(f, "__module__", None), getattr(f, "__qualname__", None), id(f)),
+                self.table, _reads_of(kwargs.get("geno_imputed"), self.table),
+                _labels_of(kwargs.get("chroms"), kwargs.get("positions"), kwargs.get("sid")),
+                frame_key(kwargs.get("gwas_df")),
+                tuple(sorted((k, _value(v)) for k, v in params.items())))
+
+    def find_ld_clusters_genomewide(self, **kwargs):
+        key = self.key(kwargs)
+        cache = bounded(self.state, DETECTION_CACHE)
+        hit = recall(cache, key)
+        if hit is not None:
+            return hit.copy()
+        res = self.find(**kwargs)
+        if isinstance(res, pd.DataFrame):
+            remember(cache, key, res.copy(), RESULT_CACHE_MAX)
+        return res
+
+
 # ------------------------------------------------------------ the haplotype tab's effects
 def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, pheno_for_hap,
                      trait_col, min_hap_count, min_group_size, compute_maf=True,
@@ -581,6 +689,7 @@ POST_GWAS_SESSION_KEYS = (
     "pheno_vis", "sample_vis",
     "_local_ld_cache", "_hap_pca_cache", "_hap_box_cache",
     "_hapgwas_order", "_lddetect_order",
+    DETECTION_CACHE,                                      # SharedDetection's results
     "genes_df",
 )
 # Families of keys named by their settings: each haplotype test (HAPGWAS::..., with its

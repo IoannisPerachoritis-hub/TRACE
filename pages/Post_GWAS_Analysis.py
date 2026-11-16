@@ -394,9 +394,13 @@ def ld_analysis_page():
     if needs_rebuild:
         with st.spinner("Auto-detecting LD blocks (first visit or GWAS changed)…"):
             # the phenotype-aligned rows, read window by window (the detector's bounded r2
-            # cache keeps the last windows)
+            # cache keeps the last windows). When every sample is aligned and the LD Blocks
+            # tab is at its defaults, the tab's detection is this one: SharedDetection keeps
+            # the result for it, so a first visit detects once.
             geno_ld_masked = post.ld_aligned
-            haplo_tmp = find_ld_clusters_genomewide(
+            haplo_tmp = _gp.SharedDetection(
+                st.session_state, find_ld_clusters_genomewide, post.identity,
+            ).find_ld_clusters_genomewide(
                 gwas_df=gwas_df,
                 chroms=chroms,
                 positions=positions,

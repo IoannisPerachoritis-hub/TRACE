@@ -10,6 +10,9 @@
 - Nothing reads the table whole (TRACE_STORE_FORBID_MATERIALIZE=1, and the read log).
 - The cache keys name the table's identity and the window; the caches are bounded; and
   POST_GWAS_SESSION_KEYS lists every session key the page and its tabs write.
+- A table file closed meanwhile (Clear) is found and ends the page plainly.
+- The page's automatic blocks and the LD Blocks tab's default detection share one result,
+  and only when every input is the same.
 """
 import re
 from pathlib import Path
@@ -450,6 +453,147 @@ def test_a_closed_disk_table_is_released(tmp_path):
             raise KeyError("not a read")
 
 
+# ---------------------------------------------------- one LD-block detection, shared
+def _counting(find):
+    """``find`` wrapped (its signature kept), counting its runs."""
+    import functools
+
+    runs = []
+
+    @functools.wraps(find)
+    def counted(**kw):
+        runs.append(kw)
+        return find(**kw)
+
+    return counted, runs
+
+
+def _page_and_tab_calls(example_v1, post):
+    """The page's automatic-block call and the LD Blocks tab's call at its defaults, with the
+    arguments each passes (pages/Post_GWAS_Analysis.py, pages/_ld_tabs/tab_genome_wide.py):
+    the page the aligned rows, the window as an int and no gap_factor; the tab all rows, the
+    window as a float and gap_factor written out. LD r2 0.1 and a 200 kb window, where
+    example_v1 forms blocks (it forms none at 0.6)."""
+    data = dict(gwas_df=example_v1["gwas_df"], chroms=example_v1["chroms"],
+                positions=example_v1["positions"], sid=example_v1["sid"])
+    page = dict(data, geno_imputed=post.ld_aligned, ld_threshold=0.1, flank_kb=200, min_snps=2,
+                top_n=10, sig_thresh=1e-5, max_dist_bp=None, ld_decay_kb=None, adj_r2_min=0.2)
+    tab = dict(data, geno_imputed=post.ld, ld_threshold=0.1, flank_kb=200.0, min_snps=2, top_n=10,
+               sig_thresh=1e-5, max_dist_bp=None, ld_decay_kb=None, adj_r2_min=0.2, gap_factor=10.0)
+    return page, tab
+
+
+@pytest.mark.parametrize("mode", ["memory", "disk"])
+def test_the_tabs_default_detection_is_the_pages(example_v1, mode):
+    """The page's automatic blocks and the LD Blocks tab's detection at its defaults are one
+    detection when every sample is aligned: the tab is served the page's result, equal to a
+    detection of its own (values, dtypes, attrs); after a detection with another r2, the
+    default is served again."""
+    from gwas.ld import find_ld_clusters_genomewide
+
+    post = example_v1["posts"][mode]
+    assert example_v1["keep"].all()                  # every sample has the trait
+    find, runs = _counting(find_ld_clusters_genomewide)
+    shared = gp.SharedDetection({}, find, post.identity)
+    page_kw, tab_kw = _page_and_tab_calls(example_v1, post)
+    assert shared.key(page_kw) == shared.key(tab_kw)
+    page = shared.find_ld_clusters_genomewide(**page_kw)
+    tab = shared.find_ld_clusters_genomewide(**tab_kw)
+    assert len(runs) == 1, "the tab's detection at its defaults ran again"
+    own = find_ld_clusters_genomewide(**tab_kw)
+    assert len(own) > 0, "no LD block: the comparison would be vacuous"
+    for got in (page, tab):
+        pd.testing.assert_frame_equal(got, own, check_exact=True)
+        assert got.to_csv(index=False) == own.to_csv(index=False) and got.attrs == own.attrs
+    assert tab is not page
+    # the tab's r2 changed: a detection of its own; set back: the shared result again
+    shared.find_ld_clusters_genomewide(**dict(tab_kw, ld_threshold=0.5))
+    assert len(runs) == 2
+    back = shared.find_ld_clusters_genomewide(**tab_kw)
+    assert len(runs) == 2
+    assert back.to_csv(index=False) == own.to_csv(index=False)
+
+
+_CHANGES = ["ld_threshold", "flank_kb", "adj_r2_min", "rows", "gwas", "labels", "table",
+            "function", "top_n", "sig_thresh", "gap_factor", "min_pair_n"]
+
+
+@pytest.mark.parametrize("change", _CHANGES)
+def test_a_detection_with_other_inputs_is_not_shared(example_v1, change):
+    """Any input that differs (the tab's r2, window or adj_r2_min, the rows, the GWAS results,
+    the labels, the table, the function, the seeds, the gap, a default): another key, and
+    both detections run."""
+    from gwas.ld import find_ld_clusters_genomewide
+
+    post = example_v1["posts"]["memory"]
+    find, runs = _counting(find_ld_clusters_genomewide)
+    runs2 = []
+    state = {}
+    first = gp.SharedDetection(state, find, post.identity)
+    kw = _page_and_tab_calls(example_v1, post)[1]
+    other, kw2 = first, dict(kw)
+    if change in ("ld_threshold", "adj_r2_min", "sig_thresh"):
+        kw2[change] = {"ld_threshold": 0.5, "adj_r2_min": 0.3, "sig_thresh": 1e-6}[change]
+    elif change == "flank_kb":
+        kw2["flank_kb"] = 200.5                      # another window in base pairs
+    elif change == "rows":
+        keep = np.ones(post.shape[0], dtype=bool)
+        keep[3] = False
+        kw2["geno_imputed"] = post.ld.lazy_rows(keep)
+    elif change == "gwas":
+        g = kw["gwas_df"].copy()
+        g.loc[g.index[1], "PValue"] = 1e-9
+        kw2["gwas_df"] = g
+    elif change == "labels":
+        p = np.asarray(kw["positions"]).copy()
+        p[0] += 1
+        kw2["positions"] = p
+    elif change == "table":
+        other = gp.SharedDetection(state, find, "another table")
+    elif change == "function":
+        find2, runs2 = _counting(find_ld_clusters_genomewide)
+        other = gp.SharedDetection(state, find2, post.identity)
+    elif change == "top_n":
+        kw2["top_n"] = 9
+    elif change == "gap_factor":
+        kw2["gap_factor"] = 5.0
+    elif change == "min_pair_n":
+        kw2["min_pair_n"] = 15                       # a default neither caller passes
+    assert other.key(kw2) != first.key(kw)
+    first.find_ld_clusters_genomewide(**kw)
+    other.find_ld_clusters_genomewide(**kw2)
+    assert len(runs) + len(runs2) == 2
+
+
+def test_the_window_is_the_only_flank_use():
+    """The key takes flank_kb as the base pairs int(round(float(flank_kb) * 1000.0)): pin that
+    this is the detection's only use of it, and that equal base pairs share a key."""
+    import ast
+    import inspect
+
+    from gwas.ld import find_ld_clusters_genomewide
+
+    tree = ast.parse(inspect.getsource(find_ld_clusters_genomewide))
+    uses = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "flank_kb"]
+    assert len(uses) == 1, "find_ld_clusters_genomewide reads flank_kb more than once"
+    assign = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+              and any(getattr(t, "id", None) == "flank_bp" for t in n.targets)]
+    assert len(assign) == 1
+    assert ast.unparse(assign[0].value) == "int(round(float(flank_kb) * 1000.0))"
+    shared = gp.SharedDetection({}, find_ld_clusters_genomewide, "T")
+    assert shared.key({"flank_kb": 300}) == shared.key({"flank_kb": 300.0}) != shared.key({"flank_kb": 300.5})
+
+
+def test_the_detection_cache_is_bounded():
+    state = {}
+    shared = gp.SharedDetection(state, lambda **kw: pd.DataFrame({"x": [kw["top_n"]]}), "T")
+    for i in range(gp.RESULT_CACHE_MAX + 5):
+        shared.find_ld_clusters_genomewide(geno_imputed=None, top_n=i)
+    assert len(state[gp.DETECTION_CACHE]) == gp.RESULT_CACHE_MAX
+    assert shared.find_ld_clusters_genomewide(geno_imputed=None, top_n=gp.RESULT_CACHE_MAX + 4)["x"].tolist() == [
+        gp.RESULT_CACHE_MAX + 4]
+
+
 # --------------------------------------------------------------- the session keys (Clear)
 _FILES = ["pages/Post_GWAS_Analysis.py"] + sorted(
     str(p.relative_to(ROOT)).replace("\\", "/") for p in (ROOT / "pages" / "_ld_tabs").glob("*.py"))
@@ -489,6 +633,11 @@ def test_the_session_key_lists_cover_every_write():
     src = (ROOT / "pages/_ld_tabs/tab_genome_wide.py").read_text(encoding="utf-8")
     assert re.findall(r'cache_namespace="([^"]+)"', src) == ["_hap_box_cache"]
     seen.add("_hap_box_cache")
+    # SharedDetection (gwas/guipost.py) keeps its results under DETECTION_CACHE in the session
+    # the page and the tab pass it
+    for rel in ("pages/Post_GWAS_Analysis.py", "pages/_ld_tabs/tab_genome_wide.py"):
+        assert "SharedDetection(\n" in sources[rel] and "st.session_state, find_ld_clusters_genomewide" in sources[rel]
+    seen.add(gp.DETECTION_CACHE)
     # the stray copies are gone, and every listed key is written somewhere
     assert not {"geno_hard", "ld_geno_hard"} & seen
     assert set(gp.POST_GWAS_SESSION_KEYS) <= seen, set(gp.POST_GWAS_SESSION_KEYS) - seen
