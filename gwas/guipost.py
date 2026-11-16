@@ -626,8 +626,10 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
 
     ``geno_imputed`` is the imputed table as the LD code reads it (an array or a reader of
     this module); each block's window is read from it, phenotype-aligned rows first, as the
-    page always cut it. ``pcs`` is the session's PCs (st.session_state["pcs"]) and
-    ``strict_selfing`` its selfing_mode, which the page read inside this function."""
+    page always cut it. ``pcs`` are the PCs of the GWAS page's run that left the session's
+    table, from GWAS_CTX (run_pcs), the PCs the haplotype test gets, and ``strict_selfing`` is
+    the session's selfing_mode. The page passes both; ff56e5c's page read them from the session
+    inside this function."""
     from gwas.haplotype import mlg_labels_for_block as _mlg_labels_for_block
     from gwas.ld import anova_eta_sq_from_labels as _anova_eta_sq_from_labels
     from gwas.ld import maf_from_matrix as _maf_from_matrix
