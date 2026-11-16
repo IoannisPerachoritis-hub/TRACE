@@ -311,8 +311,8 @@ def subsample_gwas_resampling(
                 progress_callback(rep, int(n_reps))
 
             if _rep_threads is not None:      # the thread counts of a joblib worker
-                from threadpoolctl import threadpool_limits
-                with threadpool_limits(limits=_rep_threads):
+                from gwas.provenance import limited_threads
+                with limited_threads(_rep_threads):
                     rep_idx, pvals_rep, meta = _subsample_one_rep(
                         rep, all_indices[rep], geno_imputed, y, iid, Z_for_grm,
                         sid, pos_arr, n_pcs, discovery_thresh,

@@ -252,11 +252,11 @@ def subsampling(geno_imputed, y, sid, chroms, chroms_num, positions, iid, Z_for_
     elif int(n_jobs) <= 1 or is_lazy(geno_imputed):
         out = subsample_gwas_resampling(**args, n_jobs=int(n_jobs), progress_callback=progress_callback)
     else:
-        from threadpoolctl import threadpool_limits
+        # the process-wide limits under one lock (gwas.provenance.limited_threads): another
+        # session's subsampling waits for it instead of interleaving with it
+        from gwas.provenance import limited_threads, worker_threadpool_limits
 
-        from gwas.provenance import worker_threadpool_limits
-
-        with threadpool_limits(limits=worker_threadpool_limits(int(n_jobs))):
+        with limited_threads(worker_threadpool_limits(int(n_jobs))):
             out = subsample_gwas_resampling(**args, n_jobs=1, progress_callback=progress_callback)
     return (*out, note)
 

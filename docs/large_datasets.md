@@ -165,7 +165,12 @@ panel then says why).
 **Subsampling.** With the table on disk, the iterations run one after another. In memory with
 more than one core, the page first checks that the workers fit in the free memory (each worker
 after the first needs about 300 MiB and 12 bytes per genotype call). If they do not, it runs the
-iterations one after another and says so. The results are the same either way.
+iterations one after another and says so. The results are the same either way. When the
+iterations run one after another with more than one core chosen, each uses the thread count a
+worker would have, and that limit holds for the whole server process while it runs (one
+subsampling at a time sets it). On a shared server, other sessions' computations that run
+meanwhile may then use fewer threads, and their last digits differ, as between thread counts
+(see "Reproducibility" above).
 
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
 that open the same VCF with the same choice share one table, and the server keeps at most two.
