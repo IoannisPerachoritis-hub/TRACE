@@ -1966,17 +1966,18 @@ def compute_block_ld_quality(blocks_df, chroms, positions, sid, geno_imputed, gw
             meff_status = "too_many_snps"
 
         r2_lead_med = r2_lead_min = frac_ge = np.nan
-        if lead:
-            try:
-                r2_lead, _ = compute_r2_to_lead(
-                    geno_for_lead, sid, lead, get_block_snp_mask(block, chroms, positions, sid), min_pair_n)
-                r2l = np.asarray(r2_lead, dtype=float)
-                r2l = r2l[np.isfinite(r2l)]
-                if r2l.size:
-                    r2_lead_med, r2_lead_min = float(np.median(r2l)), float(np.min(r2l))
-                    frac_ge = float(np.mean(r2l >= r2_coherent))
-            except ValueError:
-                lead_in_block = False                                # lead absent from sid
+        # r2 to the lead when the lead is typed (the test compute_r2_to_lead makes itself). A
+        # read that fails (a table file closed meanwhile) is not taken for an untyped lead.
+        if lead and bool(np.any(sid == str(lead))):
+            r2_lead, _ = compute_r2_to_lead(
+                geno_for_lead, sid, lead, get_block_snp_mask(block, chroms, positions, sid), min_pair_n)
+            r2l = np.asarray(r2_lead, dtype=float)
+            r2l = r2l[np.isfinite(r2l)]
+            if r2l.size:
+                r2_lead_med, r2_lead_min = float(np.median(r2l)), float(np.min(r2l))
+                frac_ge = float(np.mean(r2l >= r2_coherent))
+        elif lead:
+            lead_in_block = False                                    # lead absent from sid
 
         rec.update({
             "ldq_n_members": n_members, "ldq_r2_mean": r2_mean, "ldq_r2_median": r2_med,

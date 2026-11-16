@@ -145,6 +145,35 @@ def test_array_columns_never_copy_the_table_whole(monkeypatch):
     _same(R[:, np.arange(3)], np.asarray(A, float)[:, np.arange(3)])
 
 
+def _caller_one(R):
+    return R[:, np.arange(3)]
+
+
+def _caller_two(R):
+    return R[:, np.arange(5)]
+
+
+def test_the_read_log_names_the_callers_in_memory_as_on_disk(tmp_path):
+    """The read log files each block under the site that asked for it. In memory it filed every
+    read under ArrayColumns.block (gwas/guipost.py), so its by-site view could not tell the
+    callers apart; now it names the same sites as on disk. Diagnostics only."""
+    from gwas.genostore import LazyColumns, write_store
+
+    G = _array("F", np.float32)
+    store = write_store(tmp_path / "s", G)
+    sites = {}
+    try:
+        for mode, R in (("memory", gp.ArrayColumns(G)), ("disk", LazyColumns(store, np.arange(M)))):
+            reset_read_log()
+            _caller_one(R)
+            _caller_two(R)
+            sites[mode] = set(read_log()["by_site"])
+    finally:
+        store.close()
+    assert {s.split(":")[2] for s in sites["memory"]} == {"_caller_one", "_caller_two"}, sites
+    assert sites["memory"] == sites["disk"]
+
+
 # ------------------------------------------------------------- memory and disk PostTables
 @pytest.fixture(scope="module")
 def example_v1(tmp_path_factory):
@@ -369,15 +398,29 @@ def test_frame_key_reads_every_row():
 
 
 def test_sample_index_sources():
-    """The genotype frame's index (the GWAS page's frame, or the store frame on disk), else
-    GWAS_CTX's geno_index, else the table's iid; none of them: a plain error for the page."""
+    """The table's iid first, else the genotype frame's index (the GWAS page's frame, or the
+    store frame on disk), else GWAS_CTX's geno_index; none of them: a plain error for the
+    page. A geno_df of another trait (written before the table, by a GWAS page run that
+    stopped between the two) does not replace the table's own samples."""
     idx = pd.Index(["a", "b"], dtype=object)
     store_frame = pd.DataFrame({"__trace_store_row__": [0, 1]}, index=idx)
-    assert gp.sample_index(store_frame) is store_frame.index
-    assert list(gp.sample_index(None, np.array(["a", "b"], dtype=object))) == ["a", "b"]
-    assert list(gp.sample_index(None, None, np.array([["a", "a"], ["b", "b"]]))) == ["a", "b"]
+    iid = np.array([["a", "a"], ["b", "b"]])
+    assert list(gp.sample_index(iid)) == ["a", "b"]
+    other = pd.DataFrame(index=pd.Index(["b", "c"], dtype=object))      # another trait's frame
+    assert list(gp.sample_index(iid, other, np.array(["c", "d"], dtype=object))) == ["a", "b"]
+    assert gp.sample_index(None, store_frame) is store_frame.index
+    assert list(gp.sample_index(None, None, np.array(["a", "b"], dtype=object))) == ["a", "b"]
     with pytest.raises(ValueError, match="Run the GWAS page first"):
         gp.sample_index(None, None, None)
+
+
+def test_the_tables_iid_gives_the_genotype_frames_index(example_v1):
+    """The page now takes the samples from the table's iid: the same index as the genotype
+    frame's (values, dtype, name), in memory and on disk."""
+    for tables in (example_v1["mem"], example_v1["disk"]):
+        got = gp.sample_index(tables.table.iid)
+        assert got.identical(tables.geno_df.index)
+        assert got.dtype == object and got.name is None
 
 
 def test_bounded_caches():
@@ -564,6 +607,28 @@ def test_a_detection_with_other_inputs_is_not_shared(example_v1, change):
     first.find_ld_clusters_genomewide(**kw)
     other.find_ld_clusters_genomewide(**kw2)
     assert len(runs) + len(runs2) == 2
+
+
+@pytest.mark.parametrize("mode", ["memory", "disk"])
+def test_a_raw_and_an_imputed_reader_of_one_table_never_share_a_detection(example_v1, mode):
+    """The key names which table a reader reads (imputed or raw) and its number format: in
+    memory a reader has no fill to tell the raw table from the imputed one, so before, both
+    readers of one identity gave one key, and a raw detection would have been served the
+    imputed one (or the other way round)."""
+    from gwas.ld import find_ld_clusters_genomewide
+
+    post = example_v1["posts"][mode]
+    shared = gp.SharedDetection({}, find_ld_clusters_genomewide, post.identity)
+    kw = _page_and_tab_calls(example_v1, post)[1]
+    imputed = shared.key(kw)
+    raw = shared.key(dict(kw, geno_imputed=post.raw))
+    float32 = shared.key(dict(kw, geno_imputed=post.ld.astype(np.float32)))
+    assert raw != imputed, "a raw and an imputed reader of one table share a key"
+    assert float32 != imputed, "two number formats of one table share a key"
+    # the page's reader (the aligned rows, all of them here) and the tab's still share
+    assert shared.key(dict(kw, geno_imputed=post.ld_aligned)) == imputed
+    assert (gp.table_kind(post.ld), gp.table_kind(post.ld_aligned), gp.table_kind(post.raw)) == (
+        "imputed", "imputed", "raw")
 
 
 def test_the_window_is_the_only_flank_use():

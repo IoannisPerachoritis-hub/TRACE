@@ -660,6 +660,8 @@ def render(
             guipost.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_df_auto,
                                 guipost.TRAIT_CACHE_MAX)
             st.session_state["ld_blocks_final"] = haplo_df_auto.copy()
+            # which trait and table they are of (the GWAS page's block stability checks)
+            st.session_state["ld_blocks_final_key"] = (trait_col, ctx.table_identity)
             st.session_state["ld_blocks"] = haplo_df_auto.copy()
 
             # --- LD metadata logging ---
@@ -915,6 +917,11 @@ def _render_haplotype_gwas(
         _ldq_full = _cblq(haplo_df_auto, chroms, positions, sid, geno_ld, ctx.gwas_df,
                           geno_dosage_raw=ctx.geno_dosage_raw, r2_coherent=0.6)
     except Exception as _e:
+        if guipost.table_released(st.session_state.get("geno_table")):
+            # the table file was closed during this read: the page's plain message, not the
+            # read error (which names the file)
+            st.info(guipost.RELEASED_MESSAGE)
+            st.stop()
         st.caption(f"LD-block coherence unavailable: {_e}")
 
     _seed_p = (settings or {}).get("seed_p")

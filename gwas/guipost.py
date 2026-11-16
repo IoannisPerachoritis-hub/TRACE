@@ -32,6 +32,11 @@ A table file closed after the GWAS page left it in the session (Clear session da
 server's registry making room) ends the page with a plain message (RELEASED_MESSAGE,
 table_released, released_guard).
 
+The GWAS results and M_eff in the session are taken only for the table they were computed on
+(run_table_changed, meff_for_table: the identities the GWAS page records with them), and the
+page records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for the GWAS
+page's block stability.
+
 SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
 result when their inputs are provably the same (the tab at its defaults, every sample
 phenotype-aligned), so a first visit detects once. sigtable_key: the Significant SNPs tab
@@ -49,7 +54,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from gwas.genostore import LazyColumns, _note_block, is_lazy
+from gwas.genostore import LazyColumns, _note_block, is_lazy, skip_in_call_site
 
 # ------------------------------------------------------------------- reading the table
 def _layout_of(a):
@@ -76,9 +81,11 @@ class ArrayColumns(LazyColumns):
     F-ordered, a column slice of a C-ordered table strided, a single column 1-D. So the code
     that receives a block does today's arithmetic on today's operand (scaling audit, section
     8.6), and a whole-table read happens only if someone asks for it (np.asarray), logged and
-    refusable as on disk (TRACE_STORE_FORBID_MATERIALIZE)."""
+    refusable as on disk (TRACE_STORE_FORBID_MATERIALIZE). ``kind`` says which table the array
+    is, "imputed" or "raw" (the in-memory array has no fill to tell them apart, as a table on
+    disk does), or None when not given."""
 
-    def __init__(self, arr, dtype=None, layout=None):
+    def __init__(self, arr, dtype=None, layout=None, kind=None):
         a = arr if isinstance(arr, np.ndarray) else np.asarray(arr)
         if a.ndim != 2:
             raise ValueError("ArrayColumns takes a samples x SNPs array")
@@ -90,6 +97,7 @@ class ArrayColumns(LazyColumns):
         self.dtype = np.dtype(a.dtype if dtype is None else dtype)
         self.layout = layout or _layout_of(a)
         self.std = None
+        self.kind = kind
 
     def __repr__(self):
         return f"ArrayColumns(shape={self.shape}, dtype={self.dtype}, layout={self.layout})"
@@ -124,14 +132,28 @@ class ArrayColumns(LazyColumns):
         return out
 
 
-def reader(table, dtype=None):
+# the read log names who asked for a block, as for a table on disk, not ArrayColumns itself
+skip_in_call_site(*(f for f in vars(ArrayColumns).values() if inspect.isfunction(f)))
+
+
+def reader(table, dtype=None, kind=None):
     """The table read in windows: a LazyColumns as it is (in ``dtype`` if given), an array
-    wrapped in an ArrayColumns; None stays None."""
+    wrapped in an ArrayColumns of that ``kind`` ("imputed" or "raw"); None stays None."""
     if table is None:
         return None
     if is_lazy(table):
         return table if dtype is None else table.astype(dtype)
-    return ArrayColumns(table, dtype=dtype)
+    return ArrayColumns(table, dtype=dtype, kind=kind)
+
+
+def table_kind(table):
+    """Which table a reader reads: "imputed" or "raw" (an ArrayColumns says so itself; a
+    LazyColumns on disk is imputed when it has a fill), or "unknown"."""
+    if isinstance(table, ArrayColumns):
+        return table.kind or "unknown"
+    if is_lazy(table):
+        return "imputed" if getattr(table, "fill", None) is not None else "raw"
+    return "unknown"
 
 
 class HardCalls:
@@ -180,16 +202,19 @@ class PostTable:
         return digest(self.keep_mask)
 
 
-def sample_index(geno_df=None, geno_index=None, iid=None):
-    """The trait's sample index, from the first source that has it: the genotype frame's own
-    index (the GWAS page's frame in memory, the store frame on disk), the GWAS context's
-    ``geno_index``, or the table's ``iid`` (its first column)."""
+def sample_index(iid=None, geno_df=None, geno_index=None):
+    """The trait's sample index, from the first source that has it: the table's own ``iid`` (its
+    first column: the samples of the table's rows, the genotype frame's index as strings), else
+    the genotype frame's index (the GWAS page's frame in memory, the store frame on disk), else
+    the GWAS context's ``geno_index``. The table comes first: the GWAS page writes geno_df
+    before the table, so a run of that page that stopped between the two leaves a geno_df that
+    is not the table's."""
+    if iid is not None:
+        return pd.Index(np.asarray(iid)[:, 0])
     if isinstance(geno_df, pd.DataFrame):
         return geno_df.index
     if geno_index is not None:
         return pd.Index(np.asarray(geno_index))
-    if iid is not None:
-        return pd.Index(np.asarray(iid)[:, 0])
     raise ValueError("The trait's sample IDs are not in the session. Run the GWAS page first.")
 
 
@@ -197,14 +222,14 @@ def post_table(session_table, keep_mask, geno_encoding="dosage012", samples=None
     """The PostTable of a gwas.guitable.SessionTable: ``keep_mask`` the phenotype-aligned rows,
     ``geno_encoding`` the hard-call rule, ``samples`` the sample index (sample_index)."""
     view = session_table.view
-    ld = reader(view, np.float64)
+    ld = reader(view, np.float64, kind="imputed")
     keep = np.asarray(keep_mask, dtype=bool)
     if samples is None:
         samples = sample_index(iid=session_table.iid)
     return PostTable(
         identity=str(session_table.identity), mode=str(session_table.mode),
         ld=ld, ld_aligned=ld.lazy_rows(keep), hard=HardCalls(ld, geno_encoding),
-        raw=reader(session_table.raw), view=view,
+        raw=reader(session_table.raw, kind="raw"), view=view,
         samples=pd.DataFrame(index=samples), keep_mask=keep)
 
 
@@ -226,6 +251,38 @@ def table_released(session_table):
         if store is not None and bool(getattr(store, "closed", False)):
             return True
     return False
+
+
+# ------------------------------------------- the GWAS page's results and the table they are of
+# Session keys of the contract between the two pages (batch 13): the GWAS page writes the first
+# two, this page the third.
+RUN_IDENTITY = "gwas_run_identity"        # with gwas_results: the identity of its Run's table
+MEFF_IDENTITY = "meff_identity"           # with meff_val: the identity of the table of M_eff
+BLOCKS_FINAL_KEY = "ld_blocks_final_key"  # with ld_blocks_final: (trait, table identity)
+
+RUN_CHANGED_MESSAGE = ("The genotype table's settings changed since the last Run GWAS on the "
+                       "GWAS page: run GWAS again (or set the settings back) to use this page.")
+
+
+def run_table_changed(state, session_table):
+    """True when the session's GWAS results are not results of this table: the GWAS page records
+    the identity of the table its Run GWAS used (RUN_IDENTITY) with gwas_results, and rebuilds
+    the session's table on every rerun, so another identity means the table's settings changed
+    since that run. Results without a recorded identity are not taken for this table either."""
+    ran_on = state.get(RUN_IDENTITY)
+    if ran_on is None:
+        return "gwas_results" in state
+    return str(ran_on) != str(getattr(session_table, "identity", ""))
+
+
+def meff_for_table(state, session_table):
+    """The session's M_eff (meff_val) when it was computed on this table (MEFF_IDENTITY, which
+    the GWAS page writes with it), else None: the page then takes M_eff as absent, as when it
+    was never computed."""
+    of = state.get(MEFF_IDENTITY)
+    if of is None or str(of) != str(getattr(session_table, "identity", "")):
+        return None
+    return state.get("meff_val")
 
 
 @contextlib.contextmanager
@@ -417,10 +474,11 @@ def _value(v):
 
 
 def _reads_of(table, identity=""):
-    """What reading ``table`` gives besides the table it names: a reader's class, whether it
-    is imputed (has a fill) and its rows (all, or a digest of the selected rows), and the
-    table's ``identity`` (without one, the reader's array or file object); a plain array by
-    its content."""
+    """What reading ``table`` gives besides the table it names: a reader's class, which table
+    it reads (imputed or raw: table_kind) and in which number format, its rows (all, or a
+    digest of the selected rows), and the table's ``identity`` (without one, the reader's array
+    or file object); a plain array by its content. So a raw and an imputed reader of one
+    identity, or two number formats of one table, never give the same key."""
     if table is None:
         return "none"
     if is_lazy(table):
@@ -431,7 +489,7 @@ def _reads_of(table, identity=""):
         else:
             r = digest(np.asarray(rows))
         source = table.arr if isinstance(table, ArrayColumns) else getattr(table, "store", None)
-        return (type(table).__name__, getattr(table, "fill", None) is None, r,
+        return (type(table).__name__, table_kind(table), str(np.dtype(table.dtype)), r,
                 str(identity) if identity else f"object:{id(source)}")
     return ("array", digest(np.asarray(table)))
 
@@ -706,7 +764,7 @@ POST_GWAS_SESSION_KEYS = (
     "ld_chroms", "ld_positions", "ld_sid",
     "r2_cache", "_ld_prev_trait",
     "haplo_df_auto", "haplo_df_auto_hash",
-    "ld_blocks_final", "ld_blocks", "ld_block_metadata_auto",
+    "ld_blocks_final", BLOCKS_FINAL_KEY, "ld_blocks", "ld_block_metadata_auto",
     "adj_r2_min",
     "pheno_used_for_hap", "pheno_used_for_hap_label", "trait_col", "trait_col_locked",
     "haplo_blocks_to_use", "pcs_for_hap",
@@ -716,7 +774,6 @@ POST_GWAS_SESSION_KEYS = (
     "_hapgwas_order", "_lddetect_order",
     DETECTION_CACHE,                                      # SharedDetection's results
     SIGTABLE_CACHE,                                       # the Significant SNPs tab's tables
-    "genes_df",
 )
 # Families of keys named by their settings: each haplotype test (HAPGWAS::..., with its
 # "::tables" and "::assign" keys) and each LD-block detection (LDDETECT::...).
