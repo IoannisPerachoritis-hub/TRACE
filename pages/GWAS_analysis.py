@@ -50,7 +50,8 @@ from gwas.stability import _make_run_manifest
 from gwas.significance import add_significance_columns
 from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
-    plot_manhattan_interactive, plot_manhattan_overlay, manhattan_caption, plot_qq, compute_lambda_gc,
+    plot_manhattan_interactive, plot_manhattan_overlay, manhattan_caption, manhattan_overlay_caption,
+    plot_qq, compute_lambda_gc,
     download_matplotlib_fig, download_plotly_fig,
     _build_gwas_results_zip, _append_metadata_to_zip, _combine_gwas_zips,
     PALETTE, export_matplotlib,
@@ -3232,14 +3233,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             )
 
             # Optional: overlay Manhattan by model (shared genome-wide x). Above 500,000 points
-            # in all (every model's SNPs), it draws the interactive Manhattan's subset, with its
-            # caption (gwas.plotting.plot_manhattan_overlay); its HTML is built once, for the
-            # download.
+            # in all (every model's SNPs), it draws within each model the interactive Manhattan's
+            # subset, with one k for every model, and a caption that counts points
+            # (gwas.plotting.plot_manhattan_overlay); its HTML is built once, for the download.
             st.markdown("### Overlay Manhattan by model (genome-wide x)")
             fig_overlay, df_plot_multi = plot_manhattan_overlay(all_res)
             show_plot(fig_overlay, "wide")
-            if manhattan_caption(df_plot_multi):
-                st.caption(manhattan_caption(df_plot_multi))
+            _overlay_caption = manhattan_overlay_caption(df_plot_multi)
+            if _overlay_caption:
+                st.caption(_overlay_caption)
             st.caption("Data: \"Download cross-model results (CSV)\" below.")
             download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html",
                                 label="Download overlay Manhattan",

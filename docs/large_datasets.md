@@ -229,8 +229,11 @@ points or fewer. A caption under the figure says so ("N of M SNPs drawn: ..."). 
 Manhattan and the results table keep every SNP. The reason is the browser: Streamlit sends a
 figure in one message, of at most 200 MB by default, and at 1,070,795 SNPs the full figure was
 157 MB; the thinned one is 53 MB, and a figure at the limit 73 MB. Below the limit nothing
-changes. The cross-model "Overlay Manhattan by model" follows the same rule over the points of
-all its models together (three models of 200,000 SNPs are 600,000 points), with the same caption.
+changes. The cross-model "Overlay Manhattan by model" is thinned when the points of all its
+models together are more than 500,000 (three models of 200,000 SNPs are 600,000 points): within
+each model it draws every SNP with p ≤ 0.01 and one in k of the others, with the same k for every
+model, so every region shows each model's points alike. Its caption counts points ("N of M points
+drawn (S SNPs x 3 models): ...").
 
 ## Checking that both modes agree
 
