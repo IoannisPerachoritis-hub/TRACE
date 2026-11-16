@@ -362,8 +362,11 @@ class SessionTable:
     file_identity   the VCF's identity
     mode            "memory" or "disk"
     parsed          the registry's parsed genotypes or table file (shared, read-only)
-    view            the trait's table: the in-memory array, or a gwas.genostore.LazyColumns that
-                    stays on disk
+    view            the trait's mean-imputed table: the in-memory float32 array, or a
+                    gwas.genostore.LazyColumns that stays on disk (with its fill)
+    raw             the trait's raw dosage table, missing calls NaN (the Post-GWAS page's MAF,
+                    significant SNPs and regional r2 read it): the array, or a LazyColumns
+                    without fill
     rows            the trait's rows in ``parsed`` (None: the view's own rows)
     fill            the per-SNP fill of the mean-imputed table on disk (None in memory)
     sid, chroms, positions, iid
@@ -375,6 +378,7 @@ class SessionTable:
     mode: str
     parsed: object = None
     view: object = None
+    raw: object = None
     rows: object = None
     fill: object = None
     sid: object = None

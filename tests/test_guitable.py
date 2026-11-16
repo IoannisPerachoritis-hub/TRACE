@@ -108,7 +108,7 @@ def test_table_identity_names_every_setting():
     assert gt.table_identity("f", maf=0.05, impute="ldknni", trait="T") != base
     assert gt.table_identity("f", maf=0.05, impute="mean", trait="T", covar="c1") != base
     st = gt.SessionTable(identity=base, file_identity="f", mode="memory", view=np.zeros((3, 4)))
-    assert st.shape == (3, 4) and st.rows is None and st.fill is None
+    assert st.shape == (3, 4) and st.rows is None and st.fill is None and st.raw is None
 
 
 def test_upload_token_names_the_upload():

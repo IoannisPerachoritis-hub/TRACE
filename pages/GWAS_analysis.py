@@ -1532,6 +1532,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         file_identity=vcf_hash,
         mode=_geno_plan.mode,
         view=st.session_state["geno_imputed"],
+        raw=st.session_state.get("geno_dosage_raw"),
         sid=st.session_state["sid"],
         chroms=st.session_state["chroms"],
         positions=st.session_state["positions"],
