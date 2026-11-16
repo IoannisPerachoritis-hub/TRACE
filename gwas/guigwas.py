@@ -404,6 +404,16 @@ def subsampling_settings(state, seed_default, jobs_default):
     return tuple(state.get(k, defaults[k]) for k in SUBSAMPLING_WIDGETS)
 
 
+# The caption when the session holds LD blocks of another trait or table only (stability_blocks gives
+# None). The subsampling box is drawn only on a Run, and opening another page clears it, so a user
+# coming back from the Post-GWAS page ticks it again before the Run that aggregates.
+BLOCKS_NOT_AGGREGATED = (
+    "Not aggregated: the Post-GWAS page's LD blocks belong to another trait or another genotype "
+    "table. To aggregate this run's blocks: open the Post-GWAS page after this run, come back and "
+    "click Run GWAS, tick subsampling again in this section (its box is shown only on a Run, and "
+    "opening another page clears it), then click Run GWAS once more.")
+
+
 def stability_blocks(state, trait, table_key):
     """The LD blocks the GWAS page's per-block subsampling stability aggregates, or None when the
     session has none of this trait and this table: the Post-GWAS page's last blocks

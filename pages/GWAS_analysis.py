@@ -2684,10 +2684,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     else:
                         st.warning("No LD blocks could be matched to subsampling SNP results.")
                 elif _other_blocks:
-                    st.caption(
-                        "Not aggregated: the Post-GWAS page's LD blocks belong to another trait or "
-                        "another genotype table. Open the Post-GWAS page after this run, then click "
-                        "Run GWAS again to aggregate its blocks.")
+                    st.caption(_gg.BLOCKS_NOT_AGGREGATED)
                 else:
                     st.write(
                         "No LD blocks available for aggregation. "
