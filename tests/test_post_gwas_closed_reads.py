@@ -59,8 +59,9 @@ def tables(tmp_path):
                          parsed=SimpleNamespace(store=store), view=view, raw=raw,
                          sid=sid, chroms=chroms, positions=positions,
                          iid=np.array([[f"S{i}", f"S{i}"] for i in range(N)]))
-    return SimpleNamespace(store=store, view=view, raw=raw, G=G, positions=positions,
-                           chroms=chroms, sid=sid, gwas_df=gwas_df, blocks=blocks, table=table)
+    yield SimpleNamespace(store=store, view=view, raw=raw, G=G, positions=positions,
+                          chroms=chroms, sid=sid, gwas_df=gwas_df, blocks=blocks, table=table)
+    store.close()
 
 
 def _closed_copy(t, tmp_path):
@@ -267,3 +268,25 @@ def test_the_ld_blocks_coherence_says_the_table_was_released(tables, page):
         run()
     assert ("info", gp.RELEASED_MESSAGE) in shown
     assert not any("calls.i8" in m for _, m in shown), shown
+
+
+def test_a_significant_snp_table_built_on_a_closed_table_is_neither_kept_nor_shown(tables, page):
+    """The build leaves the per-SNP MAF empty when that read fails (gwas/sigtable.py). With every
+    significant SNP below the seed threshold, no other read follows, so a closed table gave a
+    complete-looking table without MAF, which the tab showed and kept for later runs. With the
+    session's table released, the tab now shows the plain message and keeps nothing."""
+    from streamlit.runtime.scriptrunner import StopException
+
+    from gwas import guipost as gp
+    from pages._ld_tabs import tab_significant_snps as T
+
+    state, shown = page
+    t = tables
+    state["geno_table"] = t.table
+    gwas_df = t.gwas_df.copy()
+    gwas_df.loc[LEAD, "PValue"] = 1e-4     # significant (0.05 / 40 = 1.25e-3), not a seed (1e-5)
+    t.store.close()
+    with pytest.raises(StopException):
+        T.render(_ctx(t, t.raw, gwas_df=gwas_df))
+    assert ("info", gp.RELEASED_MESSAGE) in shown
+    assert not state.get("_sigtable_cache"), "a table built on a closed file was kept"

@@ -73,6 +73,15 @@ def render(ctx: LDContext):
                                    seed_p_used, top_n_used)
     sig_cache = guipost.bounded(st.session_state, "_sigtable_cache")
     sig = guipost.recall(sig_cache, sig_key)
+
+    def _stop_if_released():
+        # the table file was closed during the build (Clear session data, or another dataset
+        # took its place): the page's plain message, not the read error (which names the
+        # file), and no table: the build leaves the per-SNP MAF empty when its read fails
+        if guipost.table_released(st.session_state.get("geno_table")):
+            st.info(guipost.RELEASED_MESSAGE)
+            st.stop()
+
     if sig is None:
         try:
             # frame_for_rule: this tab's own custom p-value, not a stored Significant_Custom
@@ -83,13 +92,10 @@ def render(ctx: LDContext):
                 ld_decay_bp=ld_decay_bp, geno_encoding=geno_encoding,
             )
         except Exception as e:  # never crash the page on a malformed frame
-            if guipost.table_released(st.session_state.get("geno_table")):
-                # the table file was closed during this read: the page's plain message, not
-                # the read error (which names the file)
-                st.info(guipost.RELEASED_MESSAGE)
-                st.stop()
+            _stop_if_released()
             st.error(f"Could not build the significant-SNP table: {e}")
             return
+        _stop_if_released()        # a build that finished on a closed file is not kept
         guipost.remember(sig_cache, sig_key, sig, guipost.RESULT_CACHE_MAX)
     sig = sig.copy()           # the cache keeps its own table
 
