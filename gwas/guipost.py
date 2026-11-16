@@ -25,8 +25,8 @@ ArrayColumns    an in-memory array read the way gwas.genostore.LazyColumns reads
 HardCalls       hard calls of a table, one column or block at a time.
 
 Keys and caches: every Post-GWAS cache names the table's identity (SessionTable.identity) and
-the window, and keeps a fixed number of entries (r2_key, detection_key, remember,
-keep_recent, remember_family).
+the window, and keeps a fixed number of entries (r2_key, haplotype_key, detection_key,
+remember, keep_recent, remember_family).
 
 POST_GWAS_SESSION_KEYS / POST_GWAS_SESSION_PREFIXES list every session key the page and its
 tabs write (widget keys excluded), for Clear (gwas.guitable).
@@ -268,6 +268,22 @@ def window_r2_key(G, min_pair_n=20):
     return f"r2::window::{digest(G)}::mp{int(min_pair_n)}"
 
 
+def haplotype_key(trait_col, min_hap_count, min_group_size, pcs, table, n_perm, blocks_hash,
+                  pheno_hash):
+    """The session key of one haplotype test: the trait, its settings, the PCs, the table's
+    identity (``table``, from table_key), the permutations, the blocks and the phenotype."""
+    pcs_sig = "nopcs"
+    if pcs is not None:
+        pcs_arr = np.asarray(pcs)
+        pcs_sig = f"pcs{pcs_arr.shape[0]}x{pcs_arr.shape[1]}"
+    return (f"HAPGWAS::{trait_col}"
+            f"::mhc{int(min_hap_count)}::mgs{int(min_group_size)}"
+            f"::{pcs_sig}"
+            f"::T{table}"
+            f"::nperm{int(n_perm)}"
+            f"::B{blocks_hash}::P{pheno_hash}")
+
+
 def detection_key(trait_col, ld_r2, flank_kb, top_n, seed_p, ld_decay_kb, gwas_sig, table):
     """The session key of the LD Blocks tab's detection: every detection parameter, the GWAS
     results and the table's identity."""
@@ -502,7 +518,7 @@ def run_haplotype_tests(haplo_df, chroms, positions, geno_imputed, sid, geno_df,
     """gwas.haplotype.run_haplotype_block_gwas with the LD Blocks tab's positional arguments
     (the call it makes to run_haplotype_block_gwas_cached_fn). Not wrapped in st.cache_data:
     that would hash the whole table, and the tab keeps each result in the session under its
-    key (a bounded family, remember_family)."""
+    haplotype_key (a bounded family)."""
     from gwas.haplotype import run_haplotype_block_gwas
 
     return run_haplotype_block_gwas(

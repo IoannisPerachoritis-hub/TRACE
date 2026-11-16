@@ -344,11 +344,16 @@ def test_r2_keys_name_the_table_its_rows_and_the_window():
     assert gp.window_r2_key(G[:, :3]) != gp.window_r2_key(G2[:, :3])
 
 
-def test_detection_keys_name_the_identity():
+def test_haplotype_and_detection_keys_name_the_identity_not_the_shape():
+    pcs = np.zeros((N, 2))
+    a = gp.haplotype_key("t", 5, 3, pcs, "identityA", 1000, "B", "P")
+    b = gp.haplotype_key("t", 5, 3, pcs, "identityB", 1000, "B", "P")
+    assert a != b and "identityA" in a and a.startswith("HAPGWAS::")
+    assert f"::{N}x{M}::" not in a                                # no shape term for the table
     d1 = gp.detection_key("t", 0.6, 300.0, 10, 1e-5, None, "G", "identityA")
     d2 = gp.detection_key("t", 0.6, 300.0, 10, 1e-5, None, "G", "identityB")
     assert d1 != d2 and d1.startswith("LDDETECT::")
-    assert all(k.startswith(gp.POST_GWAS_SESSION_PREFIXES) for k in (d1, d2))
+    assert all(k.startswith(gp.POST_GWAS_SESSION_PREFIXES) for k in (a, b, d1, d2))
 
 
 def test_frame_key_reads_every_row():

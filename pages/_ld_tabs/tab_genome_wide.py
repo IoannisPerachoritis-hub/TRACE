@@ -853,23 +853,13 @@ def _render_haplotype_gwas(
     # ---------------------------------------------
     blocks_hash = _hash_df(haplo_blocks_to_use.reset_index(drop=True))
     pheno_hash = _hash_df(pheno_for_hap[[trait_col_resolved]].copy())
-
-    pcs_sig = "nopcs"
-    if pcs is not None:
-        pcs_arr = np.asarray(pcs)
-        pcs_sig = f"pcs{pcs_arr.shape[0]}x{pcs_arr.shape[1]}"
-
-    geno_sig = f"{geno_ld.shape[0]}x{geno_ld.shape[1]}"
     n_perm = int(st.session_state.get("n_perm_hap", 1000))
 
-    hap_key = (
-        f"HAPGWAS::{trait_col}"
-        f"::mhc{int(min_hap_count)}::mgs{int(min_group_size)}"
-        f"::{pcs_sig}"
-        f"::{geno_sig}"
-        f"::nperm{n_perm}"
-        f"::B{blocks_hash}::P{pheno_hash}"
-    )
+    # The result's session key names the genotype table by its identity (two tables of the
+    # same shape are two keys), with the trait, the settings, the PCs, the blocks and the
+    # phenotype.
+    hap_key = guipost.haplotype_key(trait_col, min_hap_count, min_group_size, pcs,
+                                    guipost.table_key(ctx), n_perm, blocks_hash, pheno_hash)
 
     if hap_key not in st.session_state:
 
