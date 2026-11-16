@@ -12,7 +12,7 @@ mode the session state persists between calls and every widget returns its defau
 haplotype test is the real one (99 permutations). Table B holds the same block genotypes as
 table A, but on other samples, so its test differs; both have one shape. The file uses only
 names that ff56e5c has too: run against an export of ff56e5c it fails, showing the stale
-result there (batch13/track_b/evidence/stale_haplotype_key_*.log).
+result there.
 """
 import numpy as np
 import pandas as pd

@@ -9,8 +9,7 @@ window's SNPs (gwas.guipost.r2_key).
 
 The tab's own render function runs here outside a Streamlit page (bare mode), with the real
 region extraction and a cache that, like the page's get_r2_cached, answers by key. The file
-uses only names that ff56e5c has too: run against an export of ff56e5c it fails
-(batch13/track_b/evidence/stale_r2_key_*.log).
+uses only names that ff56e5c has too: run against an export of ff56e5c it fails.
 """
 import numpy as np
 import pandas as pd
