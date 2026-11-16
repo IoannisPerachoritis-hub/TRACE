@@ -510,6 +510,80 @@ def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_p
     assert "reads the VCF again" in guigwas.CLOSED_MESSAGE and "upload the VCF again" in guigwas.CLOSED_MESSAGE
 
 
+def test_one_click_stopped_mid_way_keeps_the_traits_it_finished(tmp_path, own_registry, monkeypatch):
+    """The round 2 re-check's q2 c: One-Click over two traits, the table on disk and the VCF an upload;
+    Clear session data in another session while trait 2 runs closes the table and deletes the saved
+    upload, so no fresh table can be read (VcfGone). The page stopped there with the message only, and
+    trait 1's finished results were lost. Now trait 1 keeps them: its summary and the combined ZIP,
+    whose failed_traits.txt names trait 2 with the plain message, as after a run with a failed trait;
+    the page still stops plainly when no trait finished."""
+    import ast
+    import io
+    import zipfile
+
+    from gwas import pipeline as pl
+    from gwas.plotting import _combine_gwas_zips
+
+    # the page: the trait loop's stop handler stops only when no trait finished, and keeps the rest
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    (loop,) = [n for n in ast.walk(page) if isinstance(n, ast.Try)
+               and any("_gg.run_traits_rereading(" in ast.unparse(s) for s in n.body)]
+    (handler,) = loop.handlers
+    assert ast.unparse(handler.type) == "(_gg.PlanStop, _gg.VcfGone)"
+    stops = [n for n in ast.walk(handler) if isinstance(n, ast.Call) and ast.unparse(n.func) == "st.stop"]
+    guards = [n for n in handler.body if isinstance(n, ast.If) and ast.unparse(n.test) == "not _done"]
+    assert stops and len(guards) == 1 and all(any(s is n for n in ast.walk(guards[0])) for s in stops)
+    assert "_not_run = _gg.traits_not_run(selected_traits, _done, _failed, _oc_stop)" in ast.unparse(handler)
+    assert "_failed.update(_not_run)" in ast.unparse(handler)
+
+    # q2 c, through the loop the page runs
+    vcf, ph = EX1
+    work = tmp_path / "w"
+    opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
+                                  run_label="One-Click Full Analysis")
+    traits = ["Trait1", "Trait2"]
+    upload = io.BytesIO(vcf.read_bytes())
+    upload.name, upload.size, upload.file_id = vcf.name, vcf.stat().st_size, "u-2"
+    state, seen, real = {}, [], pl.run_trait_pipeline
+
+    def clearing(parsed, pheno_df, trait, options, progress=None):
+        seen.append(trait)
+        if len(seen) == 2:
+            guitable.clear_all({}, memo_folder=tmp_path / "memo")    # another session's Clear, during trait 2
+        return real(parsed, pheno_df, trait, options, progress=progress)
+
+    done, failed = {}, {}
+    try:
+        guitable.vcf_input(state, "", upload, work)
+        path = state["_persist_vcf_path"]
+        ident = guitable.file_identity(path)
+        parsed = guigwas.table(ident, "disk", path, work)
+        monkeypatch.setattr(pl, "run_trait_pipeline", clearing)
+        with pytest.raises(guigwas.VcfGone) as stop:
+            for t, res, err, _again in guigwas.run_traits_rereading(
+                    parsed, pd.read_csv(ph, index_col=0), traits, opts,
+                    lambda: guigwas.table(ident, "disk", path, work)):
+                if res is None:
+                    failed[t] = err
+                else:
+                    done[t] = res.zip_bytes
+    finally:
+        guitable.remove_saved_uploads()
+    assert list(done) == ["Trait1"] and failed == {} and seen == ["Trait1", "Trait2"]
+    not_run = guigwas.traits_not_run(traits, done, failed, stop.value)
+    assert not_run == {"Trait2": guitable.UPLOAD_REMOVED_MESSAGE}
+    failed.update(not_run)
+    _name, buf = _combine_gwas_zips(done, pheno_label="example_pheno",
+                                    extra_members={"failed_traits.txt": pl.failed_traits_report(traits, done, failed)})
+    with zipfile.ZipFile(buf) as combined, zipfile.ZipFile(io.BytesIO(done["Trait1"])) as one:
+        assert {n for n in combined.namelist() if n.startswith("Trait1/")} == {f"Trait1/{n}" for n in one.namelist()}
+        assert not [n for n in combined.namelist() if n.startswith("Trait2/")]
+        report = combined.read("failed_traits.txt").decode()
+    assert "1 of 2 traits completed" in report and "Trait1: completed" in report and "Trait2: FAILED" in report
+    assert guitable.UPLOAD_REMOVED_MESSAGE in report
+    assert guigwas.traits_not_run(["A", "B", "C"], {"A": 1}, {"B": "its own error"}, "stopped") == {"C": "stopped"}
+
+
 def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_then(tmp_path, own_registry,
                                                                                   monkeypatch):
     """The server builds one table at a time, so a build may start after another session's: its check

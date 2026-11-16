@@ -1910,6 +1910,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 # is asked for plainly
                 _oc_check = _gg.build_check(vcf_path, _oc_plan, geno_work_dir, vcf_hash,
                                             estimate=_gt.gui_estimate_mib)
+                _not_run = {}
                 try:
                     for _t, _res, _err, _again in _gg.run_traits_rereading(
                             _parsed, pheno, selected_traits, _opts,
@@ -1928,24 +1929,43 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                             _elapsed.append(_time_mod.time() - _clock["t0"])
                         del _res
                 except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:    # no fresh table
-                    _gm_tmp.cleanup()
-                    _status.update(label="Full analysis stopped", state="error")
-                    st.error(str(_oc_stop))
-                    st.stop()
+                    if not _done:                   # nothing finished: the plain stop
+                        _gm_tmp.cleanup()
+                        _status.update(label="Full analysis stopped", state="error")
+                        st.error(str(_oc_stop))
+                        st.stop()
+                    # the traits that finished keep their results (their summaries and the
+                    # combined ZIP below, as after a run with a failed trait); the others are
+                    # reported with the stop's plain message
+                    _not_run = _gg.traits_not_run(selected_traits, _done, _failed, _oc_stop)
+                    _failed.update(_not_run)
+                    st.error(f"Not run: {', '.join(f'`{t}`' for t in _not_run)}. {_oc_stop}")
                 _gm_tmp.cleanup()
                 del _parsed      # the registry keeps the table (it is shared, never closed here)
-                if _failed:
+                if _not_run:
+                    _status.update(label=(f"Full analysis stopped: {len(_not_run)} of "
+                                          f"{_n_total} traits not run"), state="error")
+                elif _failed:
                     _status.update(label=(f"Full analysis finished: {len(_failed)} of "
                                           f"{_n_total} traits failed"), state="error")
                 else:
                     _status.update(label="Full analysis complete!", state="complete")
                 # Replace the trait-progress banner with a final summary
                 # so it doesn't keep showing "ETA: ~Xm remaining" forever.
-                _trait_progress.success(
-                    f"**Done.** Processed {len(_done)}/{_n_total} traits in "
-                    f"{_fmt_secs(sum(_elapsed))}."
-                    + (f" Failed: {', '.join(f'`{t}`' for t in _failed)}." if _failed else "")
-                )
+                if _not_run:
+                    _failed_own = [t for t in _failed if t not in _not_run]
+                    _trait_progress.error(
+                        f"**Stopped.** Processed {len(_done)}/{_n_total} traits in "
+                        f"{_fmt_secs(sum(_elapsed))}."
+                        + (f" Failed: {', '.join(f'`{t}`' for t in _failed_own)}." if _failed_own else "")
+                        + f" Not run: {', '.join(f'`{t}`' for t in _not_run)}."
+                    )
+                else:
+                    _trait_progress.success(
+                        f"**Done.** Processed {len(_done)}/{_n_total} traits in "
+                        f"{_fmt_secs(sum(_elapsed))}."
+                        + (f" Failed: {', '.join(f'`{t}`' for t in _failed)}." if _failed else "")
+                    )
 
             # --- Combined ZIP when several traits were selected (with the error report) ---
             _combined_zip_name = None
@@ -1963,6 +1983,9 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # --- Per-trait results summary (tabs when >1 trait) ---
             def _render_one_trait_summary(_t):
                 _td = _done.get(_t)
+                if _t in _not_run:
+                    st.error(f"`{_t}` was not run: {_not_run[_t]}")
+                    return
                 if _td is None:
                     st.error(f"`{_t}` failed: {_last_line(_failed.get(_t, ''))}")
                     with st.expander("Error details"):

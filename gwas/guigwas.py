@@ -384,6 +384,16 @@ def run_traits_rereading(parsed, pheno, traits, options, reread, on_start=None, 
             break
 
 
+def traits_not_run(traits, done, failed, stop):
+    """One-Click stopped before its last trait (PlanStop or VcfGone: the table could not be read
+    again). The traits it finished keep their results (``done``: the page shows their summaries
+    and builds the combined ZIP, as after a run with a failed trait); each trait it did not
+    complete, the one it was running included, is reported with the stop's plain message.
+    Returns {trait: message} for those traits, in the selection's order."""
+    message = str(stop)
+    return {t: message for t in traits if t not in done and t not in failed}
+
+
 def n_snps(results):
     """The number of SNPs after QC: the genotype frame's columns in memory; on disk the frame
     holds the sample rows only, so the SNPs are counted from their IDs (the same number)."""
