@@ -40,6 +40,22 @@ class TraitPipelineError(Exception):
         self.exit_arg = message if exit_arg is None else exit_arg
 
 
+def is_phenotype_qc_stop(exc):
+    """True when ``exc`` is phenotype QC's refusal of a trait (no numeric values, a constant
+    trait, infinite values, every sample removed by the missingness filter): a ValueError raised
+    in gwas.qc._pipeline_phenotype_qc (the table in memory) or in
+    gwas.storepipe.TraitStore.phenotype_qc (on disk). The innermost frame of its traceback says
+    which, so the CLI and the GWAS page recognise both the same way."""
+    if not isinstance(exc, ValueError) or exc.__traceback__ is None:
+        return False
+    tb = exc.__traceback__
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    code = tb.tb_frame.f_code
+    where = (code.co_name, Path(code.co_filename).name)
+    return where in (("_pipeline_phenotype_qc", "qc.py"), ("phenotype_qc", "storepipe.py"))
+
+
 @dataclass(frozen=True)
 class ParsedGenotypes:
     """The parsed VCF (biallelic filter), shared read-only by every trait of a run."""

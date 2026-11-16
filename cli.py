@@ -727,7 +727,8 @@ def run_pipeline(args):
         # ── Pipeline stages ──────────────────────────────────
         _stagelog.mark("S03_parse")
         log.info("Parsing VCF (biallelic filter)…")
-        from gwas.pipeline import ParsedGenotypes, TraitPipelineError, run_trait_pipeline
+        from gwas.pipeline import (ParsedGenotypes, TraitPipelineError, is_phenotype_qc_stop,
+                                   run_trait_pipeline)
         if not _on_disk:
             parsed = ParsedGenotypes.from_callset(callset)
             del callset, vcf_bytes
@@ -752,6 +753,11 @@ def run_pipeline(args):
                 res = run_trait_pipeline(parsed, pheno, traits[0], args)
             except TraitPipelineError as exc:
                 sys.exit(exc.exit_arg)
+            except ValueError as exc:
+                # phenotype QC refused the trait: one line, exit code 1, no traceback
+                if not is_phenotype_qc_stop(exc):
+                    raise
+                sys.exit(f"Error: {exc}")
             _stagelog.mark("S41_zip_write")
             zip_path = output_dir / res.zip_name
             zip_path.write_bytes(res.zip_bytes)
