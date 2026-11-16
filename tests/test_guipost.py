@@ -369,15 +369,29 @@ def test_frame_key_reads_every_row():
 
 
 def test_sample_index_sources():
-    """The genotype frame's index (the GWAS page's frame, or the store frame on disk), else
-    GWAS_CTX's geno_index, else the table's iid; none of them: a plain error for the page."""
+    """The table's iid first, else the genotype frame's index (the GWAS page's frame, or the
+    store frame on disk), else GWAS_CTX's geno_index; none of them: a plain error for the
+    page. A geno_df of another trait (written before the table, by a GWAS page run that
+    stopped between the two) does not replace the table's own samples."""
     idx = pd.Index(["a", "b"], dtype=object)
     store_frame = pd.DataFrame({"__trace_store_row__": [0, 1]}, index=idx)
-    assert gp.sample_index(store_frame) is store_frame.index
-    assert list(gp.sample_index(None, np.array(["a", "b"], dtype=object))) == ["a", "b"]
-    assert list(gp.sample_index(None, None, np.array([["a", "a"], ["b", "b"]]))) == ["a", "b"]
+    iid = np.array([["a", "a"], ["b", "b"]])
+    assert list(gp.sample_index(iid)) == ["a", "b"]
+    other = pd.DataFrame(index=pd.Index(["b", "c"], dtype=object))      # another trait's frame
+    assert list(gp.sample_index(iid, other, np.array(["c", "d"], dtype=object))) == ["a", "b"]
+    assert gp.sample_index(None, store_frame) is store_frame.index
+    assert list(gp.sample_index(None, None, np.array(["a", "b"], dtype=object))) == ["a", "b"]
     with pytest.raises(ValueError, match="Run the GWAS page first"):
         gp.sample_index(None, None, None)
+
+
+def test_the_tables_iid_gives_the_genotype_frames_index(example_v1):
+    """The page now takes the samples from the table's iid: the same index as the genotype
+    frame's (values, dtype, name), in memory and on disk."""
+    for tables in (example_v1["mem"], example_v1["disk"]):
+        got = gp.sample_index(tables.table.iid)
+        assert got.identical(tables.geno_df.index)
+        assert got.dtype == object and got.name is None
 
 
 def test_bounded_caches():

@@ -1,17 +1,19 @@
-"""The Post-GWAS page takes the GWAS page's results and M_eff only for the table they were
-computed on, and records which trait and table its final LD blocks are of (the contract between
-the two pages, batch 13).
+"""The Post-GWAS page takes the GWAS page's results, its M_eff and its sample IDs only for the
+table they belong to, and records which trait and table its final LD blocks are of (the
+contract between the two pages, batch 13).
 
-- KEY-2: the GWAS page records, with gwas_results, the identity of its Run's table
+- The GWAS results: the GWAS page records, with gwas_results, the identity of its Run's table
   (gwas_run_identity), and rebuilds the session's table (geno_table) on every rerun. After a
   settings change without a new Run, the page computed with the last Run's p-values on the new
   table. It now says so plainly and stops when the identities differ, or when results come
   without an identity.
-- KEY-1: meff_val is used only when meff_identity names this table; otherwise M_eff is absent
+- M_eff: meff_val is used only when meff_identity names this table; otherwise M_eff is absent
   (the rule's path without M_eff), as when it was never computed.
-- KEY-3: whenever the page or the LD Blocks tab writes ld_blocks_final, it also writes
-  ld_blocks_final_key = (trait, the table's identity), which the GWAS page's block stability
-  checks before it aggregates those blocks.
+- The final LD blocks: whenever the page or the LD Blocks tab writes ld_blocks_final, it also
+  writes ld_blocks_final_key = (trait, the table's identity), which the GWAS page's block
+  stability checks before it aggregates those blocks.
+- The sample IDs: the table's own (geno_table.iid). The GWAS page writes geno_df before the
+  table, so a run of it that stopped between the two left a geno_df beside an older table.
 
 The page and the tab run here outside a Streamlit page (bare mode), on a small table in memory:
 st.stop raises StopException as in a real run, and the run ends where the page builds the tabs'
@@ -137,6 +139,18 @@ def test_meff_is_taken_only_for_its_own_table(run_page):
     assert run(meff_identity="T0")[1]["meff_val"] is None    # computed on another table
     assert run(meff_identity=None)[1]["meff_val"] is None    # table unknown
     assert run(meff_identity="T1", meff_val=None)[1]["meff_val"] is None
+
+
+def test_the_samples_are_the_tables_own(run_page):
+    """A geno_df of the same samples in another order (another trait's run that stopped before
+    it wrote the table): the page still labels the table's rows with the table's samples."""
+    run, _ = run_page
+    ids = [f"S{i:02d}" for i in range(N)]
+    stale = pd.DataFrame(index=pd.Index(ids[::-1], dtype=object))
+    _, ctx, _ = run(geno_df=stale)
+    assert ctx is not None
+    assert list(ctx["geno_df"].index) == ids, "the rows were labelled with another frame's samples"
+    assert list(run()[1]["geno_df"].index) == ids
 
 
 def test_the_pages_final_blocks_name_their_trait_and_table(run_page):

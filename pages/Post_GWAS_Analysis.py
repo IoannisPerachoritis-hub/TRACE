@@ -247,15 +247,15 @@ def ld_analysis_page():
 
     chroms = canonicalize_chr(geno_table.chroms)
 
-    # The genotype frame's index is all this page reads of it (the sample IDs); the shared
-    # functions it is passed to read nothing else. On disk the GWAS page keeps the store
-    # frame (the index and a row column) or None, so the IDs then come from GWAS_CTX or
-    # the table.
+    # The sample IDs are all this page needs of a genotype frame; the shared functions it is
+    # passed to read nothing else. They are the table's own (geno_table.iid, the rows of the
+    # view): the GWAS page writes geno_df before geno_table, so a run of that page that
+    # stopped between the two could leave another trait's geno_df beside this table.
     try:
         _samples = _gp.sample_index(
+            geno_table.iid,
             st.session_state.get("geno_df"),
-            (st.session_state.get("GWAS_CTX") or {}).get("geno_index"),
-            geno_table.iid)
+            (st.session_state.get("GWAS_CTX") or {}).get("geno_index"))
     except ValueError as e:
         st.error(str(e))
         st.stop()

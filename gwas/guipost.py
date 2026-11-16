@@ -185,16 +185,19 @@ class PostTable:
         return digest(self.keep_mask)
 
 
-def sample_index(geno_df=None, geno_index=None, iid=None):
-    """The trait's sample index, from the first source that has it: the genotype frame's own
-    index (the GWAS page's frame in memory, the store frame on disk), the GWAS context's
-    ``geno_index``, or the table's ``iid`` (its first column)."""
+def sample_index(iid=None, geno_df=None, geno_index=None):
+    """The trait's sample index, from the first source that has it: the table's own ``iid`` (its
+    first column: the samples of the table's rows, the genotype frame's index as strings), else
+    the genotype frame's index (the GWAS page's frame in memory, the store frame on disk), else
+    the GWAS context's ``geno_index``. The table comes first: the GWAS page writes geno_df
+    before the table, so a run of that page that stopped between the two leaves a geno_df that
+    is not the table's."""
+    if iid is not None:
+        return pd.Index(np.asarray(iid)[:, 0])
     if isinstance(geno_df, pd.DataFrame):
         return geno_df.index
     if geno_index is not None:
         return pd.Index(np.asarray(geno_index))
-    if iid is not None:
-        return pd.Index(np.asarray(iid)[:, 0])
     raise ValueError("The trait's sample IDs are not in the session. Run the GWAS page first.")
 
 
