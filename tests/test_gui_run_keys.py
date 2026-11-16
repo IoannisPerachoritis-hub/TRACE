@@ -118,3 +118,13 @@ def test_the_notice_covers_every_setting_the_run_reads():
     (scan,) = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
                and any(isinstance(t, ast.Name) and t.id == "_scan_fp" for t in n.targets)]
     assert "_run_fp" in {n.id for n in ast.walk(scan.value) if isinstance(n, ast.Name)}
+
+
+def test_the_page_imports_no_cached_wrapper_that_hashes_a_table():
+    """The page calls none of the st.cache_data / st.cache_resource wrappers whose key holds a whole
+    table (Streamlit samples a large array): it does not import them either, so none is called by
+    mistake. They stay in gwas/ for benchmarks/capture_golden.py and the tests."""
+    imported = {a.asname or a.name for n in ast.walk(_page()) if isinstance(n, ast.ImportFrom) for a in n.names}
+    hashing = {"build_mlmm_snpdata", "standardize_genotypes_for_mlmm_cached", "subset_snps_for_mlmm",
+               "run_haplotype_block_gwas_cached", "compute_meff_li_ji", "load_vcf_cached"}
+    assert not imported & hashing

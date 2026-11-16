@@ -39,7 +39,7 @@ every page offers a ZIP download.
   On disk force the choice. The results are the same either way. LD-kNNi imputation needs the
   table in memory.
 - **Clear session data** frees this server's genotype tables, the uploads it saved and every
-  cached result, on both pages.
+  cached result, on both pages, and empties the GWAS page's file boxes and trait selection.
 - **The interactive Manhattan.** Above 500,000 SNPs it draws every SNP with p ≤ 0.01 and a
   sample of the others. The static Manhattan and the results table keep every SNP.
 
@@ -106,7 +106,7 @@ st.markdown("""
 - `Subsampling workers (--boot-jobs)`: the subsampling workers (N/A without subsampling)
 - `Subsampling BLAS threads per worker`: the threads each worker's library uses
 - `Genotype table`: where the table was kept, memory or disk
-- `Genotype table choice`: what was asked (auto, or memory or disk)
+- `Genotype table choice`: what was asked: `auto`, `--geno-store memory` or `--geno-store disk` (the GUI's Automatic, In memory or On disk)
 - `Genotype table reason`: why it was kept there
 - `Memory estimate, in-memory run (GB)`: TRACE's estimate for an in-memory run of this analysis
 - `Genotype calls`: samples × SNPs as read

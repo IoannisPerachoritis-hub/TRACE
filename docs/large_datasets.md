@@ -138,6 +138,11 @@ again until you choose another work folder.
 A location that fails the check (a typo, another file type) stops the page with the reason; the
 file an earlier location gave is not used under the new text.
 
+TRACE knows a VCF by its content, hashed once for each location, size and modification time. A
+file rewritten in place with the same size and the same modification time (a copy that keeps the
+old file's time stamp, for one) is therefore read as the old one until Clear session data or a
+restart of the server.
+
 On a shared server, whose users should not open the server's own files, set
 `TRACE_DISABLE_PATH_INPUT=1` to hide the location box. In Docker, the location is a path inside
 the container: the folder you mounted (for example `/data/panel.vcf.gz` for `-v

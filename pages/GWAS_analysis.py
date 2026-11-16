@@ -33,16 +33,16 @@ from gwas.kinship import (
     build_loco_kernels_cached, compute_pcs_full_cached,
     _build_grm_from_Z, _standardize_geno_for_grm,
 )
+# (the cached wrappers that take a whole table as a hashed argument are not imported: the page
+# calls none of them, and every cache it uses is keyed by the table's identity)
 from gwas.models import (
     run_gwas_cached, run_mlmm_core_cached, run_farmcpu_cached,
     add_ols_effects_to_gwas,
     bic_proxy_from_design,
-    build_mlmm_snpdata, standardize_genotypes_for_mlmm_cached,
-    subset_snps_for_mlmm, _ols_fit, _nested_f_test, _one_hot_drop_first,
+    _ols_fit, _nested_f_test, _one_hot_drop_first,
 )
 from gwas.subsampling import subsample_gwas_resampling, aggregate_subsampling_to_ld_blocks
 from gwas.haplotype import (
-    run_haplotype_block_gwas_cached,
     normalize_ld_blocks_schema, block_test_lm_with_pcs,
     freedman_lane_perm_pvalue,
 )
