@@ -21,9 +21,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from tests import _golden_qc as _gq  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 GOLDEN = REPO / "tests" / "golden" / "tomato_locule"
-QC = REPO / "benchmarks" / "qc_data" / "tomato_locule_number"
+QC = _gq.qc_dir()          # TRACE_VARITOME_DIR if set, else benchmarks/qc_data/tomato_locule_number
 
 
 def _load_capture_module():
@@ -37,6 +39,16 @@ def _load_capture_module():
 
 def _golden_ready():
     return GOLDEN.exists() and (GOLDEN / "run_manifest.json").exists() and QC.exists()
+
+
+def _skip_unless_ready():
+    """Skip, with the reason, without the golden or without the QC copy it was made from (an
+    older copy in the gitignored qc_data folder skips instead of failing)."""
+    if not (GOLDEN.exists() and (GOLDEN / "run_manifest.json").exists()):
+        pytest.skip("tomato_locule golden not captured yet (T-61/Batch B)")
+    problem = _gq.qc_copy_problem(QC)
+    if problem:
+        pytest.skip(problem)
 
 
 def _rebuild(tmp_path):
@@ -73,8 +85,7 @@ def test_capture_golden_flank_kb_is_required():
 # --------------------------------------------------------------------------
 @pytest.mark.golden
 def test_ld_blocks_bitwise_stable(tmp_path):
-    if not _golden_ready():
-        pytest.skip("tomato_locule golden not captured yet (T-61/Batch B) or qc_data/ absent")
+    _skip_unless_ready()
     out = _rebuild(tmp_path)
     got = pd.read_csv(out / "ld_blocks.csv")
     exp = pd.read_csv(GOLDEN / "ld_blocks.csv")
@@ -87,8 +98,7 @@ def test_ld_blocks_bitwise_stable(tmp_path):
 
 @pytest.mark.golden
 def test_haplotype_blocks_bitwise_stable(tmp_path):
-    if not _golden_ready():
-        pytest.skip("tomato_locule golden not captured yet (T-61/Batch B) or qc_data/ absent")
+    _skip_unless_ready()
     out = _rebuild(tmp_path)
     got = pd.read_csv(out / "haplotype_blocks.csv")
     exp = pd.read_csv(GOLDEN / "haplotype_blocks.csv")
@@ -101,8 +111,7 @@ def test_haplotype_blocks_bitwise_stable(tmp_path):
 
 @pytest.mark.golden
 def test_annotated_blocks_bitwise_stable(tmp_path):
-    if not _golden_ready():
-        pytest.skip("tomato_locule golden not captured yet (T-61/Batch B) or qc_data/ absent")
+    _skip_unless_ready()
     if not (GOLDEN / "annotated_blocks.csv").exists():
         pytest.skip("annotated golden not present")
     out = _rebuild(tmp_path)

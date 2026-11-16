@@ -12,8 +12,6 @@ incidental ordering difference cannot cause a false failure.
 
 Spec: ``docs/revision/specs/integration_and_testing.md`` §1.2.
 """
-import os
-
 import pandas as pd
 import pytest
 
@@ -103,26 +101,29 @@ def test_min_snps_gate_has_discriminating_power():
 def test_varitome_locule_blocks_match_table_s8():
     """Tier-B pin: re-running detection at the reproducing params (meta.json,
     from T-61: flank_kb=144, ld_decay_kb=72.17) on the Varitome QC inputs emits
-    Table S8's six blocks. The genotypes are gitignored, so this skips cleanly
-    unless the QC data is present on the machine."""
+    Table S8's blocks (tests/golden/varitome_locule/expected_blocks.csv). The inputs
+    are read from TRACE_VARITOME_DIR if set, else benchmarks/qc_data/tomato_locule_number
+    (gitignored); the test skips, with the reason, when they are absent or are not
+    the copy the golden was made from."""
     import importlib.util
     import json
+
+    from tests import _golden_qc as _gq
 
     repo = GOLDEN_DIR.parents[1]
     case_dir = GOLDEN_DIR / "varitome_locule"
     meta = json.loads((case_dir / "meta.json").read_text(encoding="utf-8"))
-    qc_dir = os.environ.get("TRACE_VARITOME_DIR",
-                            str(repo / "benchmarks" / "qc_data" / "tomato_locule_number"))
-    from pathlib import Path
-    if not (Path(qc_dir) / "QC_genotype_matrix.csv").exists():
-        pytest.skip("Varitome QC inputs absent (gitignored; set TRACE_VARITOME_DIR). "
-                    "Read back from an actual run, never from the PDF.")
+    qc_dir = _gq.qc_dir()
+    problem = _gq.qc_copy_problem(qc_dir)
+    if problem:
+        pytest.skip(problem + ". Read back from an actual run, never from the PDF.")
 
     # Reuse the T-61 loader/detector so the reproducing path lives in one place.
     spec = importlib.util.spec_from_file_location(
         "_recon_t61", repo / "benchmarks" / "reconstruct_table_s8_params.py")
     recon = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(recon)
+    recon.QC_DIR = qc_dir                    # the folder checked above
 
     geno, sid, chroms_str, positions = recon._load()
     gwas_df = pd.read_csv(recon.QC_DIR / "platform_GWAS_locule_number.csv")
@@ -131,6 +132,6 @@ def test_varitome_locule_blocks_match_table_s8():
                         flank_kb=p["flank_kb"], ld_decay_kb=p["ld_decay_kb"])
     expected = pd.read_csv(case_dir / "expected_blocks.csv", dtype=str, keep_default_na=False)
     assert canon_block_table(got) == canon_block_table(expected), (
-        "Varitome locule detection no longer reproduces Table S8's six blocks — "
+        "Varitome locule detection no longer reproduces Table S8's blocks — "
         "tests/golden/varitome_locule/expected_blocks.csv"
     )

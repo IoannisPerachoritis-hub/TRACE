@@ -59,5 +59,5 @@ inside a large fixture diff.
 ```bash
 pytest tests/test_golden_blocks.py tests/test_golden_lock.py tests/test_golden_harness.py   # Tier A + guards (CI)
 pytest -m golden        # Tier-B real-data pins (needs benchmarks/qc_data/)
-pytest -m manuscript    # Tier-B Table S8 pin (needs TRACE_VARITOME_DIR)
+pytest -m manuscript    # Tier-B Table S8 pin (reads TRACE_VARITOME_DIR if set, else benchmarks/qc_data/)
 ```
