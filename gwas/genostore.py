@@ -289,9 +289,13 @@ class LazyColumns:
         (G - mean) / SD with NaN and infinities set to 0, in float32."""
         base = self._derive(dtype=np.dtype(np.float32), std=None)
         m = base.shape[1]
-        # one pass per (rows, columns, fill): MLMM and FarmCPU standardise the same table
+        # one pass per (rows, columns, fill): MLMM and FarmCPU standardise the same table. The
+        # GUI's sessions share a store, so its cache is looked up and changed under the store's
+        # lock; the pass itself runs outside it (its reads take the lock).
         key = (id(self.cols), id(self.fill), id(self.rows))
-        hit = self.store._std_cache.get(key)
+        store = self.store
+        with store._lock:
+            hit = store._std_cache.get(key)
         if hit is not None and hit[0] is self.cols and hit[1] is self.fill and hit[2] is self.rows:
             mu, sd = hit[3], hit[4]
         else:
@@ -305,10 +309,12 @@ class LazyColumns:
                 mu[a:j] = np.nanmean(G, axis=0)
                 sd[a:j] = np.nanstd(G, axis=0)
             sd[~np.isfinite(sd) | (sd == 0)] = 1.0
-            cache = self.store._std_cache
-            while len(cache) >= self.store.STD_CACHE_MAX:        # bounded: drop the oldest set
-                cache.pop(next(iter(cache)))
-            cache[key] = (self.cols, self.fill, self.rows, mu, sd)
+            with store._lock:
+                cache = store._std_cache
+                if key not in cache:
+                    while len(cache) >= store.STD_CACHE_MAX:      # bounded: drop the oldest set
+                        cache.pop(next(iter(cache)))
+                cache[key] = (self.cols, self.fill, self.rows, mu, sd)
         return base._derive(std=(mu, sd), layout="C")
 
     # -- ndarray-like surface
@@ -515,7 +521,8 @@ def _make_reader(lazy, iid, sid, pos):
 class StoreParsed:
     """Stands in for gwas.pipeline.ParsedGenotypes: the same metadata, the table on disk.
     ``stats`` holds exact call counts over all samples and all variants (n1, n2, nmiss and the
-    largest value per variant; missing calls per sample; the largest value overall)."""
+    largest value per variant; missing calls per sample; the largest value overall). Its arrays
+    and the metadata arrays are read-only: the GUI's sessions share one StoreParsed."""
 
     store: GenotypeStore
     samples: np.ndarray
@@ -711,7 +718,7 @@ def ingest_vcf(vcf_path, store_dir, chunk_bytes=64 * 2**20, log=None, chunk_reco
         ingest={"seconds": round(time.perf_counter() - t0, 3), "chunks": n_chunks, "chunk_length": L,
                 "calls_bytes": int(calls_path.stat().st_size), "gz": bool(gz)})
     for p in (parsed.samples, parsed.chroms, parsed.positions, parsed.vid, parsed.ref, parsed.alt,
-              parsed.info_scores):
+              parsed.info_scores, *stats.values()):
         if isinstance(p, np.ndarray):
             p.setflags(write=False)          # a trait must never modify the shared parse
     (store_dir / "meta.json").write_text(json.dumps(

@@ -303,3 +303,75 @@ def test_standardized_table_blocks_and_subsets(store):
     assert S.layout == "C" and S.std is not None
     _same(S[:, IDX], Z[:, IDX])
     _same(np.asarray(S.lazy_cols(MASK)), np.ascontiguousarray(Z[:, MASK]))
+
+
+class _WatchedCache(dict):
+    """The store's standardisation cache, noting every look-up and change made without the store's
+    lock held (the GUI's sessions share one store, so its cache is shared by threads)."""
+
+    def __init__(self, lock):
+        super().__init__()
+        self.lock, self.unlocked = lock, []
+
+    def _note(self, what):
+        if not self.lock.locked():
+            self.unlocked.append(what)
+
+    def get(self, *a):
+        self._note("get")
+        return super().get(*a)
+
+    def pop(self, *a):
+        self._note("pop")
+        return super().pop(*a)
+
+    def __setitem__(self, k, v):
+        self._note("set")
+        super().__setitem__(k, v)
+
+
+def test_standardisation_cache_is_used_under_the_stores_lock(store):
+    """Every look-up, eviction and insertion of the shared cache happens under the store's lock, so
+    two sessions standardising one table cannot evict the same entry twice (KeyError) or change
+    the dict while another iterates it."""
+    st, _G = store
+    st._std_cache = _WatchedCache(st._lock)
+    views = [LazyColumns(st, np.arange(M)) for _ in range(st.STD_CACHE_MAX + 2)]   # misses that evict
+    for v in views:
+        v.standardized()
+    views[-1].standardized()                                                      # a hit
+    assert len(st._std_cache) == st.STD_CACHE_MAX
+    assert st._std_cache.unlocked == []
+
+
+def test_standardisation_from_several_threads(store):
+    """Threads standardising fresh views of one store, with frequent thread switches: no error, and
+    every (mean, SD) is the one-thread value."""
+    import sys
+    import threading
+
+    st, _G = store
+    ref = LazyColumns(st, np.arange(M)).standardized().std
+    st._std_cache.clear()
+    errors, wrong = [], []
+
+    def work():
+        for _ in range(60):
+            try:
+                mu, sd = LazyColumns(st, np.arange(M)).standardized().std
+                if mu.tobytes() != ref[0].tobytes() or sd.tobytes() != ref[1].tobytes():
+                    wrong.append(1)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        ts = [threading.Thread(target=work) for _ in range(6)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+    finally:
+        sys.setswitchinterval(old)
+    assert errors == [] and wrong == []
