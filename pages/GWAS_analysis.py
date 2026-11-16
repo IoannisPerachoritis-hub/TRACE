@@ -21,7 +21,6 @@ from gwas.utils import (
     put_array_in_session,
     stable_seed, bump_data_version,
 )
-from gwas.io import _clean_chr_series
 from gwas.pipeline import is_phenotype_qc_stop
 from gwas import guitable as _gt
 from gwas import guigwas as _gg
@@ -51,10 +50,10 @@ from gwas.stability import _make_run_manifest
 from gwas.significance import add_significance_columns
 from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
-    plot_manhattan_interactive, manhattan_caption, plot_qq, compute_lambda_gc,
+    plot_manhattan_interactive, plot_manhattan_overlay, manhattan_caption, plot_qq, compute_lambda_gc,
     download_matplotlib_fig, download_plotly_fig,
     _build_gwas_results_zip, _append_metadata_to_zip, _combine_gwas_zips,
-    PALETTE, PALETTE_CYCLE, export_matplotlib,
+    PALETTE, export_matplotlib,
 )
 from annotation import (ASSEMBLY_NOTE, DESCRIPTIONS_FILE_HELP, GENE_FILE_HELP,
                         chromosomes_without_genes, load_gene_model)
@@ -3191,50 +3190,19 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 mime="text/csv",
             )
 
-            # Optional: overlay Manhattan by model (shared genome-wide x)
+            # Optional: overlay Manhattan by model (shared genome-wide x). Above 500,000 points
+            # in all (every model's SNPs), it draws the interactive Manhattan's subset, with its
+            # caption (gwas.plotting.plot_manhattan_overlay); its HTML is built once, for the
+            # download.
             st.markdown("### Overlay Manhattan by model (genome-wide x)")
-
-            # Use helper to get cumulative positions per model together
-            df_plot_multi = all_res.copy()
-            chr_clean, chr_num_multi, order_labels_multi, order_map_multi = _clean_chr_series(df_plot_multi["Chr"])
-            df_plot_multi["Chr"] = chr_clean
-            df_plot_multi["ChrNum"] = chr_num_multi.astype(int)
-            df_plot_multi["Pos"] = df_plot_multi["Pos"].astype(int)
-            df_plot_multi = df_plot_multi.sort_values(["ChrNum", "Pos"]).reset_index(drop=True)
-
-            gap = 1_000_000
-            offset = 0
-            tick_pos_multi, tick_lab_multi = [], []
-
-            for chnum in np.sort(df_plot_multi["ChrNum"].unique()):
-                mask = df_plot_multi["ChrNum"] == chnum
-                pos_min = df_plot_multi.loc[mask, "Pos"].min()
-                pos_max = df_plot_multi.loc[mask, "Pos"].max()
-                df_plot_multi.loc[mask, "CumPos"] = df_plot_multi.loc[mask, "Pos"] + offset
-                tick_pos_multi.append(offset + (pos_min + pos_max) / 2)
-                tick_lab_multi.append(str(chnum))
-                offset += (pos_max - pos_min) + gap
-
-
-            _models_unique = df_plot_multi["Model"].unique().tolist()
-            _model_color_map = {m: PALETTE_CYCLE[i % len(PALETTE_CYCLE)] for i, m in enumerate(_models_unique)}
-            fig_overlay = px.scatter(
-                df_plot_multi,
-                x="CumPos", y="-log10p", color="Model",
-                color_discrete_map=_model_color_map,
-                hover_data=["SNP", "Chr", "Pos", "PValue"],
-                title="Overlay Manhattan by model",
-                render_mode="webgl"
-            )
-            fig_overlay.update_layout(
-                xaxis_title="Chromosome (cumulative)",
-                yaxis_title="-log10(p)",
-                xaxis=dict(tickmode="array", tickvals=tick_pos_multi, ticktext=tick_lab_multi, showgrid=False),
-                height=520,
-            )
+            fig_overlay, df_plot_multi = plot_manhattan_overlay(all_res)
             show_plot(fig_overlay, "wide")
+            if manhattan_caption(df_plot_multi):
+                st.caption(manhattan_caption(df_plot_multi))
             st.caption("Data: \"Download cross-model results (CSV)\" below.")
-            download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html", label="Download overlay Manhattan")
+            download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html",
+                                label="Download overlay Manhattan",
+                                html_bytes=plotly_html_bytes(fig_overlay))
 
             # --- Cross-model consensus: which SNPs detected by which models? ---
             st.markdown("### Cross-model consensus")
