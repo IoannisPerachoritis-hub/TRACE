@@ -461,8 +461,9 @@ LA1589,12.8,7.3
                  "the uploads it saved, every cached result and TRACE's cache files, and this "
                  "session's data and results, the Post-GWAS page's too. It also empties the "
                  "VCF location box, the upload boxes and the trait selection: give the files "
-                 "again to run. The tables are the server's, so on a shared server Clear frees "
-                 "every session's.",
+                 "again to run. The tables and saved uploads are the server's, so on a shared "
+                 "server Clear frees every session's (an uploaded VCF must then be uploaded "
+                 "again).",
             on_click=_clear_session_data,
         ):
             st.success("Session data cleared.")
@@ -1013,7 +1014,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     _table_reread = _gg.drop_closed_table(st.session_state, vcf_hash, _geno_plan.mode)
     # The server builds one table at a time: a new table's build may wait for another session's,
     # and then checks the free memory and disk again (gwas.guigwas.build_check), stopping plainly
-    # when the plan above no longer holds.
+    # when the plan above no longer holds. A VCF that is gone when its table must be read again
+    # (an upload that Clear session data in another session deleted) is asked for plainly too.
     _build_check = _gg.build_check(vcf_path, _geno_plan, geno_work_dir, vcf_hash,
                                    estimate=_gt.gui_estimate_mib)
 
@@ -1022,6 +1024,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir, check=_build_check)
         except _gg.PlanStop as _build_stop:
             _rehydrate_or_stop(str(_build_stop))
+        except _gg.VcfGone as _gone:
+            _rehydrate_or_stop(str(_gone), level="warning")
 
     with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
                     else "Reading the VCF…"):
@@ -1849,7 +1853,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
                     vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts,
                     estimate=_gt.gui_estimate_mib)
-            except _gg.PlanStop as _oc_stop:
+            except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:
                 _gm_tmp.cleanup()
                 st.error(str(_oc_stop))
                 st.stop()
@@ -1878,7 +1882,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 # a trait that fails because the table file was closed meanwhile (Clear session
                 # data in another session, or the server making room for another dataset) runs
                 # again, with the traits after it, on a fresh table (gwas.guigwas), whose build
-                # checks the free memory and disk again first
+                # checks the free memory and disk again first; an uploaded VCF that Clear deleted
+                # is asked for plainly
                 _oc_check = _gg.build_check(vcf_path, _oc_plan, geno_work_dir, vcf_hash,
                                             estimate=_gt.gui_estimate_mib)
                 try:
@@ -1898,7 +1903,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                                              zip_bytes=_res.zip_bytes)
                             _elapsed.append(_time_mod.time() - _clock["t0"])
                         del _res
-                except _gg.PlanStop as _oc_stop:            # the fresh table's check stopped it
+                except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:    # no fresh table
                     _gm_tmp.cleanup()
                     _status.update(label="Full analysis stopped", state="error")
                     st.error(str(_oc_stop))

@@ -436,6 +436,73 @@ def test_one_click_runs_the_remaining_traits_again_on_a_fresh_table(tmp_path, ow
     assert {t: tables(r) for t, r, _e, _a in out} == plain
 
 
+def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_path):
+    """The round 1 re-check's r8, case 3: the session's VCF was an upload, and Clear session data in
+    another session closed its table and deleted the saved upload. The session's next run says so
+    (the page reads nothing), and a read that would read the VCF again (the setup's preprocessing,
+    One-Click's next trait) raises VcfGone with that message, which the page shows, instead of a
+    FileNotFoundError. A VCF given by its location is read again; one gone from its location is
+    named."""
+    import ast
+    import io
+
+    from gwas import pipeline as pl
+
+    vcf, ph = EX1
+    work = tmp_path / "w"
+    pheno = _page_pheno(ph)
+    opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
+                                  run_label="One-Click Full Analysis")
+    upload = io.BytesIO(vcf.read_bytes())
+    upload.name, upload.size, upload.file_id = vcf.name, vcf.stat().st_size, "u-1"
+    state = {"_persist_pheno": "pheno"}
+    try:
+        guitable.vcf_input(state, "", upload, work)
+        path = state["_persist_vcf_path"]
+        ident = guitable.file_identity(path)
+        held = guigwas.table(ident, "disk", path, work)
+        guitable.clear_all({}, memo_folder=tmp_path / "memo")                  # another session's Clear
+        assert guigwas.table_closed(held) and not Path(path).exists()
+        nxt = guitable.vcf_input(state, "", None, work)                         # this session's next run
+        assert nxt.warning == guitable.UPLOAD_REMOVED_MESSAGE == (
+            "The uploaded VCF was removed by Clear session data: upload it again.")
+        assert not nxt.error and not guitable.inputs_kept(state)                # nothing is read
+
+        def reread():
+            return guigwas.table(ident, "disk", path, work)
+
+        with pytest.raises(guigwas.VcfGone) as gone:                            # the setup, mid-run
+            guigwas.preprocess_rereading({}, "k", held, reread, pheno.copy(), "Trait1", **QC)
+        assert str(gone.value) == guitable.UPLOAD_REMOVED_MESSAGE
+        with pytest.raises(guigwas.VcfGone) as gone:                            # One-Click, mid-run
+            list(guigwas.run_traits_rereading(held, pd.read_csv(ph, index_col=0), ["Trait1"], opts, reread))
+        assert str(gone.value) == guitable.UPLOAD_REMOVED_MESSAGE
+
+        loc = tmp_path / "loc" / "panel.vcf.gz"                                 # a location: read again
+        loc.parent.mkdir()
+        loc.write_bytes(vcf.read_bytes())
+        lident = guitable.file_identity(loc)
+        lheld = guigwas.table(lident, "disk", str(loc), work)
+        guitable.clear_all({}, memo_folder=tmp_path / "memo")
+        _out, used, again = guigwas.preprocess_rereading(
+            {}, "k", lheld, lambda: guigwas.table(lident, "disk", str(loc), work), pheno.copy(), "Trait1", **QC)
+        assert again and not guigwas.table_closed(used)
+        guitable.get_registry().close_all()
+        loc.unlink()
+        with pytest.raises(guigwas.VcfGone, match="No file at"):
+            guigwas.table(lident, "disk", str(loc), work)
+    finally:
+        guitable.get_registry().close_all()
+        guitable.remove_saved_uploads()
+    # the page shows VcfGone's message where it reads the table: the setup, One-Click's table and its
+    # fresh table after a closed one; a Run that found its table closed says what happens next
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    handlers = [h for h in ast.walk(page) if isinstance(h, ast.ExceptHandler) and h.type is not None
+                and "_gg.VcfGone" in ast.unparse(h.type)]
+    assert len(handlers) == 3
+    assert "reads the VCF again" in guigwas.CLOSED_MESSAGE and "upload the VCF again" in guigwas.CLOSED_MESSAGE
+
+
 def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_then(tmp_path, own_registry,
                                                                                   monkeypatch):
     """The server builds one table at a time, so a build may start after another session's: its check

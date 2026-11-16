@@ -712,6 +712,23 @@ def vcf_path_ready(state):
     return bool(path) and os.path.isfile(path)
 
 
+# Clear session data deletes the server's saved uploads, in every session (clear_all): a session
+# whose VCF was an upload must then give it again.
+UPLOAD_REMOVED_MESSAGE = "The uploaded VCF was removed by Clear session data: upload it again."
+
+
+def vcf_gone_message(path):
+    """The page's message for a VCF that is no longer at ``path``, or "" while it is there (or no
+    path is given): for an upload TRACE saved (a _trace_upload_gui_* folder), which Clear session
+    data deletes, UPLOAD_REMOVED_MESSAGE; for a file given by its location, the location box's
+    own message."""
+    if not path or os.path.isfile(path):
+        return ""
+    if Path(path).parent.name.startswith(UPLOAD_PREFIX + "_"):
+        return UPLOAD_REMOVED_MESSAGE
+    return f"No file at {path}."
+
+
 def inputs_kept(state):
     """The VCF (by its path) and the phenotype table of an earlier run are still in the session,
     so a run can go on without the files being given again."""
@@ -727,7 +744,8 @@ def vcf_input(state, location_text, upload, work_dir):
     folder (save_upload): then Streamlit's copy of it is removed (release_upload), and the page
     gives the box a new key and reruns. A copy that fails is not tried again in that work folder.
     With both boxes empty, the VCF given earlier (by its path) stays in use, named in the
-    caption."""
+    caption; when it is gone (an upload that Clear session data in another session deleted), the
+    warning says so (vcf_gone_message) and nothing is read."""
     text = str(location_text or "").strip()
     if text:
         loc = check_vcf_location(text)
@@ -763,6 +781,8 @@ def vcf_input(state, location_text, upload, work_dir):
         release_upload(upload)
         return VcfInput(rerun=True, live=True)
     if not vcf_path_ready(state):
+        if state.get("_vcf_source") in ("upload", "location"):
+            return VcfInput(warning=vcf_gone_message(state.get("_persist_vcf_path")))
         return VcfInput()
     path = state["_persist_vcf_path"]
     live = state.get(VCF_LIVE_KEY) == path

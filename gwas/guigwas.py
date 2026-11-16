@@ -132,7 +132,9 @@ def table(file_identity, mode, vcf_path, work_dir, check=None):
     (gwas.genostore.StoreParsed) in a folder of the work folder on disk. Shared by the sessions
     and never closed by a page: the registry owns it. A VCF the reader refuses raises the
     in-memory reader's error, in both modes. ``check`` (build_check) runs when the table has to
-    be built, just before the build starts."""
+    be built, just before the build starts. A VCF that is no longer there raises VcfGone (an
+    upload that Clear session data in another session deleted, or a file gone from its
+    location), not FileNotFoundError."""
     from gwas import guitable
     from gwas.genostore import DeferredParseError
 
@@ -140,6 +142,16 @@ def table(file_identity, mode, vcf_path, work_dir, check=None):
         return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir, check=check)
     except DeferredParseError as exc:          # on disk: the in-memory parse's own stop
         raise exc.original from None
+    except FileNotFoundError:
+        gone = guitable.vcf_gone_message(vcf_path)
+        if gone:
+            raise VcfGone(gone) from None
+        raise
+
+
+class VcfGone(Exception):
+    """The VCF in use is no longer there, so its table cannot be built (str(): the page's message,
+    gwas.guitable.vcf_gone_message)."""
 
 
 # The server builds one table at a time (gwas.guitable.TableRegistry), so a build may wait for
@@ -216,13 +228,17 @@ def preprocess(state, key, parsed, pheno, trait_col, maf_thresh, miss_thresh, no
 
 # --------------------------------------------------------- a table file closed meanwhile
 # The registry closes a table file when another dataset needs its place, and Clear session data
-# (in any session) closes them all: a session that still holds one then reads it again.
+# (in any session) closes them all: a session that still holds one then reads the VCF again. Clear
+# also deletes the server's saved uploads, so a session whose VCF was an upload is asked for it
+# again instead (gwas.guitable.UPLOAD_REMOVED_MESSAGE; VcfGone).
 REREAD_MESSAGE = ("This session's genotype table was closed (Clear session data in another "
                   "session, or the server making room for another dataset), so TRACE read the "
                   "VCF again.")
 CLOSED_MESSAGE = ("This session's genotype table was closed while this run read it (Clear "
                   "session data in another session, or the server making room for another "
-                  "dataset). Run again: TRACE then reads the VCF again.")
+                  "dataset). Run again: TRACE then reads the VCF again, from its location or "
+                  "from the saved upload. Clear session data also deletes the saved uploads: "
+                  "the page then asks you to upload the VCF again.")
 
 
 def table_closed(table):

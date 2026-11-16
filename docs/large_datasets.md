@@ -174,9 +174,8 @@ same section can change it, and the check includes its free space. Each table fi
 folder, `_trace_geno_store_gui_<process>_<random>`, and each saved upload its own
 `_trace_upload_gui_<process>_<random>`; TRACE keeps at most two tables, and a third while a new
 one is built, and removes a folder when its table is no longer kept and when the server stops
-normally. Table folders and saved
-uploads left by a run or a server that did not stop are named on the page with their size; they
-are never deleted automatically.
+normally. Table folders and saved uploads left by a run or a server that did not stop are named
+on the page with their size; they are never deleted automatically.
 
 **What the pages do with the table on disk.** The GWAS page runs its preprocessing (sample
 matching, phenotype and SNP QC, the fill of missing calls, kinship, the QC report) on the table
@@ -203,14 +202,17 @@ that open the same VCF with the same choice share one table, and the server keep
 and a third while a new one is built. It builds one table at a time: a session that needs a new
 table while another is built waits for that build, and then checks the free memory and disk
 again, so the check counts what that build used (the page stops with a plain message when they
-no longer suffice). When a third is needed, the one used least
-recently is closed once the new one is open (a file that cannot be read closes nothing), before
-the next build starts. A session that still held a closed table (closed this way,
-or by Clear session data in another session) reads the VCF again: the GWAS page on its next run,
-One-Click for the trait it was running and the ones after it, each with a note on the page. A
-Run GWAS that was reading the table at that moment stops with a message, and the next run reads
-it again. The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not
-closed: it stays in memory while a session still holds it, until that session's next run.
+no longer suffice). When a third is needed, the one used least recently is closed once the new
+one is open (a file that cannot be read closes nothing), before the next build starts. A session
+that still held a closed table (closed this way, or by Clear session data in another session)
+reads the VCF again: the GWAS page on its next run, One-Click for the trait it was running and
+the ones after it, each with a note on the page. A Run GWAS that was reading the table at that
+moment stops with a message, and the next run reads it again. Clear session data in another
+session also deletes the uploads the server saved, so a VCF that was uploaded cannot be read
+again: the page then says "The uploaded VCF was removed by Clear session data: upload it again",
+on its next run or when it would read the VCF again. A VCF given by its location is read again.
+The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not closed: it
+stays in memory while a session still holds it, until that session's next run.
 
 **Clear session data** frees this server's genotype tables (in memory, and the table files with
 their folders on disk), the uploads it saved, every cached result, and the cache files that
@@ -218,7 +220,8 @@ earlier versions of TRACE left in Streamlit's cache folder (`~/.streamlit/cache`
 there are not touched). It also drops this session's data and results on both pages, and
 empties the VCF location box, the upload boxes and the trait selection, so nothing is read again
 until you give the files again; the other settings stay. On a shared server Clear affects every
-session, since the tables are the server's.
+session, since the tables and the saved uploads are the server's: another session's uploaded VCF
+must then be uploaded again.
 
 **The interactive Manhattan.** Above 500,000 SNPs it draws every SNP with p ≤ 0.01 and one in k of
 the others, in genome order, with k the smallest whole number that keeps the drawing at 500,000
