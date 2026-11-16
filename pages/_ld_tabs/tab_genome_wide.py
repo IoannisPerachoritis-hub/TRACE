@@ -660,6 +660,8 @@ def render(
             guipost.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_df_auto,
                                 guipost.TRAIT_CACHE_MAX)
             st.session_state["ld_blocks_final"] = haplo_df_auto.copy()
+            # which trait and table they are of (the GWAS page's block stability checks)
+            st.session_state["ld_blocks_final_key"] = (trait_col, ctx.table_identity)
             st.session_state["ld_blocks"] = haplo_df_auto.copy()
 
             # --- LD metadata logging ---

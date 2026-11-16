@@ -32,6 +32,11 @@ A table file closed after the GWAS page left it in the session (Clear session da
 server's registry making room) ends the page with a plain message (RELEASED_MESSAGE,
 table_released, released_guard).
 
+The GWAS results and M_eff in the session are taken only for the table they were computed on
+(run_table_changed, meff_for_table: the identities the GWAS page records with them), and the
+page records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for the GWAS
+page's block stability.
+
 SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
 result when their inputs are provably the same (the tab at its defaults, every sample
 phenotype-aligned), so a first visit detects once. sigtable_key: the Significant SNPs tab
@@ -226,6 +231,38 @@ def table_released(session_table):
         if store is not None and bool(getattr(store, "closed", False)):
             return True
     return False
+
+
+# ------------------------------------------- the GWAS page's results and the table they are of
+# Session keys of the contract between the two pages (batch 13): the GWAS page writes the first
+# two, this page the third.
+RUN_IDENTITY = "gwas_run_identity"        # with gwas_results: the identity of its Run's table
+MEFF_IDENTITY = "meff_identity"           # with meff_val: the identity of the table of M_eff
+BLOCKS_FINAL_KEY = "ld_blocks_final_key"  # with ld_blocks_final: (trait, table identity)
+
+RUN_CHANGED_MESSAGE = ("The genotype table's settings changed since the last Run GWAS on the "
+                       "GWAS page: run GWAS again (or set the settings back) to use this page.")
+
+
+def run_table_changed(state, session_table):
+    """True when the session's GWAS results are not results of this table: the GWAS page records
+    the identity of the table its Run GWAS used (RUN_IDENTITY) with gwas_results, and rebuilds
+    the session's table on every rerun, so another identity means the table's settings changed
+    since that run. Results without a recorded identity are not taken for this table either."""
+    ran_on = state.get(RUN_IDENTITY)
+    if ran_on is None:
+        return "gwas_results" in state
+    return str(ran_on) != str(getattr(session_table, "identity", ""))
+
+
+def meff_for_table(state, session_table):
+    """The session's M_eff (meff_val) when it was computed on this table (MEFF_IDENTITY, which
+    the GWAS page writes with it), else None: the page then takes M_eff as absent, as when it
+    was never computed."""
+    of = state.get(MEFF_IDENTITY)
+    if of is None or str(of) != str(getattr(session_table, "identity", "")):
+        return None
+    return state.get("meff_val")
 
 
 @contextlib.contextmanager
@@ -706,7 +743,7 @@ POST_GWAS_SESSION_KEYS = (
     "ld_chroms", "ld_positions", "ld_sid",
     "r2_cache", "_ld_prev_trait",
     "haplo_df_auto", "haplo_df_auto_hash",
-    "ld_blocks_final", "ld_blocks", "ld_block_metadata_auto",
+    "ld_blocks_final", BLOCKS_FINAL_KEY, "ld_blocks", "ld_block_metadata_auto",
     "adj_r2_min",
     "pheno_used_for_hap", "pheno_used_for_hap_label", "trait_col", "trait_col_locked",
     "haplo_blocks_to_use", "pcs_for_hap",

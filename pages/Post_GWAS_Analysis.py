@@ -159,6 +159,13 @@ def ld_analysis_page():
             + "\n\nRun the GWAS page first."
         )
         st.stop()
+    geno_table = st.session_state["geno_table"]
+    # The GWAS results are those of the last Run GWAS, whose table's identity the GWAS page
+    # records with them. It rebuilds the session's table on every rerun, so a table built
+    # since with other settings has another identity, and the results are not its own.
+    if _gp.run_table_changed(st.session_state, geno_table):
+        st.warning(_gp.RUN_CHANGED_MESSAGE)
+        st.stop()
 
     # ---- Resolve phenotype (STRICT: use GWAS-aligned phenotype if available) ----
     if "pheno_used_for_hap" in st.session_state:
@@ -231,7 +238,6 @@ def ld_analysis_page():
     # --------------------------------------------------------
     # 3. Pull shared objects
     # --------------------------------------------------------
-    geno_table = st.session_state["geno_table"]
     # a table on disk can be closed while the session still holds it (Clear session data in
     # any session, or the server's registry making room): stop before any read
     if _gp.table_released(geno_table):
@@ -424,6 +430,8 @@ def ld_analysis_page():
 
             if isinstance(haplo_tmp, pd.DataFrame) and not haplo_tmp.empty:
                 st.session_state["ld_blocks_final"] = haplo_tmp.copy()
+                # which trait and table they are of (the GWAS page's block stability checks)
+                st.session_state["ld_blocks_final_key"] = (trait_col, geno_table.identity)
                 st.session_state["ld_blocks"] = haplo_tmp.copy()  # shared with GWAS enrichment
 
     # --------------------------------------------------------
@@ -492,7 +500,9 @@ def ld_analysis_page():
         geno_encoding=geno_encoding,
         has_annotation=_HAS_ANNOTATION,
         geno_dosage_raw=post.raw,
-        meff_val=st.session_state.get("meff_val"),
+        # the GWAS page's M_eff when it was computed on this table, else none (the rule's
+        # path without M_eff)
+        meff_val=_gp.meff_for_table(st.session_state, geno_table),
         sig_rule_label=st.session_state.get("sig_rule", ""),
         custom_thresh=st.session_state.get("custom_sig_thresh"),
         table_identity=post.identity,
