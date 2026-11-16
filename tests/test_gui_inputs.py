@@ -246,3 +246,13 @@ def test_a_new_visit_forgets_which_vcf_was_given_in_the_last_one():
     assert gt.new_page_visit(state) and gt.VCF_LIVE_KEY not in state
     assert gt.box_key({"_pheno_upload_widget": 2}, "pheno_upload") == "pheno_upload_2"
     assert gt.box_key({}, "covar_upload") == "covar_upload"
+
+
+def test_with_the_location_box_emptied_the_earlier_location_is_named(tmp_path):
+    """The earlier location stays in use (from the session, as ff56e5c's upload did when its box was
+    emptied) and the caption names it; a VCF of unknown source gets no caption."""
+    state = {}
+    gt.vcf_input(state, str(EX1), None, tmp_path)
+    inp = gt.vcf_input(state, "", None, tmp_path)
+    assert not inp.error and not inp.live and str(EX1.resolve()) in inp.caption
+    assert gt.vcf_input({"_persist_vcf_path": str(EX1)}, "", None, tmp_path).caption == ""

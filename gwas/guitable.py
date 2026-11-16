@@ -771,8 +771,10 @@ def vcf_input(state, location_text, upload, work_dir):
                        "memory for it.")
         return VcfInput(caption=f"Genotype file: {name} (saved in the work folder, {size_text(size)}).",
                         warning=warning, live=live)
-    return VcfInput(caption=f"Genotype file: {path} ({size_text(size)}), the location typed earlier.",
-                    live=live)
+    if state.get("_vcf_source") == "location":
+        return VcfInput(caption=f"Genotype file: {path} ({size_text(size)}), the location typed "
+                                "earlier.", live=live)
+    return VcfInput(live=live)
 
 
 def covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):
