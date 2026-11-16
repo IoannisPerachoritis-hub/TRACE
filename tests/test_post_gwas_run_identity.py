@@ -142,6 +142,34 @@ def test_no_results_and_no_identity_keep_the_old_message(run_page):
     assert any(kind == "error" and m.startswith("GWAS results not found") for kind, m in shown)
 
 
+# the MLM frame the GWAS page writes as gwas_df during a Run, before gwas_results
+_FRAME = pd.DataFrame({"SNP": ["SL25ch02p1040000"], "PValue": [1e-9], "Chr": ["2"],
+                       "Pos": [1_040_000]})
+
+
+def test_a_frame_without_an_identity_counts_as_results_without_one(run_page):
+    """The re-check's rc3 case: a first Run GWAS that did not finish (a page switch during
+    MLMM) leaves only its MLM frame (gwas_df), without an identity; the settings then change.
+    The page took that frame, the earlier table's p-values, on the new table. It now stops with
+    the run-again message, before it reads any result."""
+    run, _ = run_page
+    shown, ctx, _ = run(gwas_results=None, gwas_run_identity=None, gwas_df=_FRAME)
+    assert ctx is None, "the page went on with a frame of another table"
+    assert ("warning", MESSAGE) in shown
+
+
+def test_a_frame_beside_another_traits_results_is_not_taken(run_page):
+    """A Run for this trait that did not finish locked it (trait_col_locked) and left a frame
+    (gwas_df), beside the last finished Run's results of another trait, whose table the session
+    holds again. The page took that frame, which is not this trait's results; it now stops with
+    the run-again message."""
+    run, _ = run_page
+    shown, ctx, _ = run(gwas_results={"u": _FRAME}, active_trait="u", trait_col_locked=TRAIT,
+                        gwas_df=_FRAME)
+    assert ctx is None, "the page went on with a frame that is not this trait's results"
+    assert ("warning", MESSAGE) in shown
+
+
 def test_meff_is_taken_only_for_its_own_table(run_page):
     run, _ = run_page
     assert run(meff_identity="T1")[1]["meff_val"] == 72
@@ -178,6 +206,9 @@ def test_the_contract_helpers():
     assert gp.run_table_changed({"gwas_results": {}, gp.RUN_IDENTITY: "T0"}, t1)
     assert gp.run_table_changed({"gwas_results": {}}, t1)
     assert not gp.run_table_changed({}, t1)
+    assert gp.run_table_changed({"gwas_df": _FRAME}, t1)                # a frame, no identity
+    assert not gp.run_table_changed({"gwas_df": None}, t1)
+    assert not gp.run_table_changed({"gwas_df": _FRAME, gp.RUN_IDENTITY: "T1"}, t1)
     assert gp.meff_for_table({"meff_val": 5, gp.MEFF_IDENTITY: "T1"}, t1) == 5
     assert gp.meff_for_table({"meff_val": 5, gp.MEFF_IDENTITY: "T0"}, t1) is None
     assert gp.meff_for_table({"meff_val": 5}, t1) is None

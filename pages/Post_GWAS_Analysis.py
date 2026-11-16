@@ -210,9 +210,14 @@ def ld_analysis_page():
     if trait_col in gwas_results:
         gwas_df = gwas_results[trait_col]
 
-    # 2) Fallback: global gwas_df
-    if gwas_df is None and "gwas_df" in st.session_state:
-        gwas_df = st.session_state["gwas_df"]
+    # 2) The frame gwas_df alone is not this trait's results: the GWAS page writes it with
+    # gwas_results[trait] when a Run ends, and alone during a Run (its MLM frame). Here the
+    # trait (locked by a Run that did not finish) has no results of a finished Run, so the
+    # frame is that Run's, on its own table, or the last finished Run's, of another trait.
+    # (Without a finished Run, run_table_changed stopped the page above.)
+    if gwas_df is None and st.session_state.get("gwas_df") is not None:
+        st.warning(_gp.RUN_CHANGED_MESSAGE)
+        st.stop()
 
     # 3) Final sanity check
     if gwas_df is None or not isinstance(gwas_df, pd.DataFrame) or gwas_df.empty:

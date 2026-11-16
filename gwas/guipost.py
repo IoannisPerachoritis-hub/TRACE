@@ -269,10 +269,12 @@ def run_table_changed(state, session_table):
     """True when the session's GWAS results are not results of this table: the GWAS page records
     the identity of the table its Run GWAS used (RUN_IDENTITY) with gwas_results, and rebuilds
     the session's table on every rerun, so another identity means the table's settings changed
-    since that run. Results without a recorded identity are not taken for this table either."""
+    since that run. Results without a recorded identity are not taken for this table either:
+    gwas_results, or the frame gwas_df alone, which the GWAS page writes during a Run before
+    its results (the MLM frame), so a first Run that did not finish leaves it without one."""
     ran_on = state.get(RUN_IDENTITY)
     if ran_on is None:
-        return "gwas_results" in state
+        return "gwas_results" in state or state.get("gwas_df") is not None
     return str(ran_on) != str(getattr(session_table, "identity", ""))
 
 
