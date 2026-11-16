@@ -278,6 +278,18 @@ def run_table_changed(state, session_table):
     return str(ran_on) != str(getattr(session_table, "identity", ""))
 
 
+def run_trait(state):
+    """The trait whose GWAS results the Post-GWAS page takes: the last finished Run GWAS's
+    (active_trait). The GWAS page writes it when a Run ends, with gwas_results[trait] and
+    RUN_IDENTITY, and that identity names the trait, so while the session's table is that Run's
+    (run_table_changed is False) these are the trait's own results on it. A Run writes
+    trait_col_locked earlier, when it locks its trait, so a later Run that did not finish left
+    its own trait there, and gwas_results may hold an earlier Run's results of that trait, on
+    another table. Without a finished Run: the locked trait, or the chosen one (the page then
+    finds no results for it)."""
+    return state.get("active_trait") or state.get("trait_col_locked") or state.get("trait_col")
+
+
 def meff_for_table(state, session_table):
     """The session's M_eff (meff_val) when it was computed on this table (MEFF_IDENTITY, which
     the GWAS page writes with it), else None: the page then takes M_eff as absent, as when it

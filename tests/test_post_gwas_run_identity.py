@@ -7,6 +7,9 @@ contract between the two pages, batch 13).
   settings change without a new Run, the page computed with the last Run's p-values on the new
   table. It now says so plainly and stops when the identities differ, or when results come
   without an identity.
+- The trait: the last finished Run's (active_trait, written with its results and identity). A
+  Run writes trait_col_locked before its results, so after a later Run that did not finish the
+  page took that trait's results of an earlier Run, on another table.
 - M_eff: meff_val is used only when meff_identity names this table; otherwise M_eff is absent
   (the rule's path without M_eff), as when it was never computed.
 - The final LD blocks: whenever the page or the LD Blocks tab writes ld_blocks_final, it also
@@ -158,16 +161,47 @@ def test_a_frame_without_an_identity_counts_as_results_without_one(run_page):
     assert ("warning", MESSAGE) in shown
 
 
-def test_a_frame_beside_another_traits_results_is_not_taken(run_page):
-    """A Run for this trait that did not finish locked it (trait_col_locked) and left a frame
-    (gwas_df), beside the last finished Run's results of another trait, whose table the session
-    holds again. The page took that frame, which is not this trait's results; it now stops with
-    the run-again message."""
+def _two_traits():
+    """The phenotype table with this trait and a second one, u, on the table's samples."""
+    ids = [f"S{i:02d}" for i in range(N)]
+    return pd.DataFrame({TRAIT: np.linspace(0.0, 1.0, N), "u": np.linspace(1.0, 0.0, N)}, index=ids)
+
+
+def test_beside_a_later_runs_frame_the_last_finished_run_is_taken(run_page):
+    """The re-check's F3: a Run for this trait that did not finish locked it (trait_col_locked)
+    and left its MLM frame (gwas_df), beside the last finished Run's results, of trait u, whose
+    table the session holds again. The page took that frame (round 1), then stopped (round 2). It
+    now takes the last finished Run's trait and results, on their own table, the run the GWAS
+    page shows as the last completed one."""
     run, _ = run_page
+    mlm = _FRAME.assign(PValue=0.5)                  # the MLM frame of the Run that did not finish
     shown, ctx, _ = run(gwas_results={"u": _FRAME}, active_trait="u", trait_col_locked=TRAIT,
-                        gwas_df=_FRAME)
-    assert ctx is None, "the page went on with a frame that is not this trait's results"
-    assert ("warning", MESSAGE) in shown
+                        gwas_df=mlm, pheno_used_for_hap=_two_traits())
+    assert ctx is not None, shown
+    assert ctx["trait_col"] == "u", "the page took the trait of a Run that did not finish"
+    assert list(ctx["gwas_df"]["PValue"]) == list(_FRAME["PValue"]), \
+        "the page took the frame of a Run that did not finish"
+
+
+def test_the_results_are_the_last_finished_runs_trait(run_page):
+    """The re-check's F4 steps (cc59/recheck2_b/r2_fallback.py): Run 1, of trait u, finished on
+    another table; Run 2, of this trait, finished on this table (T1); Run 3, of u, locked its
+    trait (trait_col_locked) and did not finish; the GWAS page is set back to Run 2's table. The
+    page took gwas_results["u"], Run 1's results on another table, for the trait Run 3 locked.
+    It now takes the last finished Run's trait (active_trait) and its results, on its own
+    table."""
+    run, _ = run_page
+    own = run()[2]["gwas_results"][TRAIT].copy()     # Run 2's results, on this table
+    run1 = _FRAME.assign(PValue=1e-12)               # Run 1's results of u, on another table
+    shown, ctx, _ = run(gwas_results={"u": run1, TRAIT: own}, trait_col_locked="u",
+                        pheno_used_for_hap=_two_traits())
+    assert ctx is not None, shown
+    assert ctx["trait_col"] == TRAIT, "the page took an earlier Run's results of the trait a later Run locked"
+    assert list(ctx["gwas_df"]["SNP"]) == list(own["SNP"])
+    assert list(ctx["gwas_df"]["PValue"]) == list(own["PValue"])
+    assert gp.run_trait({"active_trait": TRAIT, "trait_col_locked": "u", "trait_col": "u"}) == TRAIT
+    assert gp.run_trait({"trait_col_locked": "u", "trait_col": "v"}) == "u"   # no Run finished
+    assert gp.run_trait({}) is None
 
 
 def test_meff_is_taken_only_for_its_own_table(run_page):
