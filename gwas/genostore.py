@@ -33,6 +33,7 @@ Diagnostics (environment variables, read when used; tests and measurements only)
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -141,29 +142,40 @@ def write_store(store_dir, G):
 
 
 class GenotypeStore:
-    """The genotype table on disk: ``calls.i8`` (n_variants x n_samples int8, -1 missing)."""
+    """The genotype table on disk: ``calls.i8`` (n_variants x n_samples int8, -1 missing).
+
+    One file handle, read with seek + read under a lock, so threads that share one store (the
+    GUI's sessions share a table through st.cache_resource) cannot interleave their reads."""
+
+    STD_CACHE_MAX = 4      # per-SNP mean/SD sets kept (each holds a few arrays of the SNP count)
 
     def __init__(self, store_dir, n_samples, n_variants):
         self.dir = Path(store_dir)
         self.N, self.M = int(n_samples), int(n_variants)
         self.path = self.dir / "calls.i8"
+        self._lock = threading.Lock()
         self._fh = open(self.path, "rb", buffering=0)
         self._std_cache = {}
 
     def close(self):
-        if self._fh is not None:
-            self._fh.close()
-            self._fh = None
+        with self._lock:
+            if self._fh is not None:
+                self._fh.close()
+                self._fh = None
+            self._std_cache.clear()
 
     def _read_run(self, a, b):
         """Variants a..b-1 as an int8 (b - a, N) C array (one file read)."""
         a, b = int(a), int(b)
-        self._fh.seek(a * self.N)
-        buf = np.fromfile(self._fh, dtype=np.int8, count=(b - a) * self.N)
-        if buf.size != (b - a) * self.N:
-            raise IOError(f"short read from {self.path}: variants {a}..{b}")
-        _LOG["file_reads"] += 1
-        _LOG["file_bytes"] += int(buf.size)
+        with self._lock:
+            if self._fh is None:
+                raise ValueError(f"the genotype table {self.path} is closed")
+            self._fh.seek(a * self.N)
+            buf = np.fromfile(self._fh, dtype=np.int8, count=(b - a) * self.N)
+            if buf.size != (b - a) * self.N:
+                raise IOError(f"short read from {self.path}: variants {a}..{b}")
+            _LOG["file_reads"] += 1
+            _LOG["file_bytes"] += int(buf.size)
         return buf.reshape(b - a, self.N)
 
     def gather(self, cols, rows=None, piece=4096, _log=True, table_cols=None):
@@ -211,6 +223,31 @@ class GenotypeStore:
             if g.size:
                 gmax = max(gmax, int(g.max()))
         return {"n1": n1, "n2": n2, "nmiss": nm, "row_nmiss": row_nm, "gmax": gmax, "n": n}
+
+
+def new_store_dir(base, prefix="_trace_geno_store"):
+    """A new, empty folder for a genotype table inside ``base`` (created if missing), named
+    ``<prefix>_<pid>_<random>``. The exclusive create of a uniquely named folder proves that
+    ``base`` can be written and keeps runs that share it apart. Raises OSError otherwise (the
+    caller words the message: the CLI names --geno-store-dir, the GUI its work folder)."""
+    import uuid
+
+    base = Path(base)
+    store_dir = base / f"{prefix}_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    base.mkdir(parents=True, exist_ok=True)
+    store_dir.mkdir(exist_ok=False)
+    return store_dir
+
+
+def remove_store(store_dir, parsed=None):
+    """Close the table ``parsed`` holds (if any) and delete ``store_dir`` with everything in it.
+    The file is closed first: on Windows an open file cannot be deleted."""
+    import shutil
+
+    store = getattr(parsed, "store", None) if parsed is not None else None
+    if store is not None:
+        store.close()
+    shutil.rmtree(store_dir, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------- the lazy table
@@ -263,7 +300,10 @@ class LazyColumns:
                 mu[a:j] = np.nanmean(G, axis=0)
                 sd[a:j] = np.nanstd(G, axis=0)
             sd[~np.isfinite(sd) | (sd == 0)] = 1.0
-            self.store._std_cache[key] = (self.cols, self.fill, self.rows, mu, sd)
+            cache = self.store._std_cache
+            while len(cache) >= self.store.STD_CACHE_MAX:        # bounded: drop the oldest set
+                cache.pop(next(iter(cache)))
+            cache[key] = (self.cols, self.fill, self.rows, mu, sd)
         return base._derive(std=(mu, sd), layout="C")
 
     # -- ndarray-like surface

@@ -256,24 +256,20 @@ def _new_geno_store_dir(args, output_dir):
     """A new, empty folder for this run's genotype table: inside --geno-store-dir (created if
     missing), else inside the output folder. The exclusive create of a uniquely named folder
     proves that the folder can be written and keeps runs that share one folder apart."""
-    import uuid
+    from gwas import genostore
 
     base = Path(args.geno_store_dir) if getattr(args, "geno_store_dir", None) else output_dir
-    store_dir = base / f"_trace_geno_store_{os.getpid()}_{uuid.uuid4().hex[:8]}"
     try:
-        base.mkdir(parents=True, exist_ok=True)
-        store_dir.mkdir(exist_ok=False)
+        return genostore.new_store_dir(base)
     except OSError as exc:
         sys.exit(f"Error: cannot create a folder for the genotype table in {base} "
                  f"({exc.strerror or exc}). Choose a folder you can write to with --geno-store-dir.")
-    return store_dir
 
 
 def _finish_geno_store(parsed, store_dir, log):
     """Close and delete this run's genotype table (after the run or an early stop). With
     TRACE_STORE_READLOG=<file> (a diagnostic) the store's read log is written there first."""
     import json
-    import shutil
 
     from gwas import genostore
 
@@ -283,9 +279,7 @@ def _finish_geno_store(parsed, store_dir, log):
         _rl["ingest"] = dict(getattr(parsed, "ingest", {}))
         _rl["shape"] = [int(parsed.store.N), int(parsed.store.M)]
         Path(_out).write_text(json.dumps(_rl, indent=1, default=str))
-    if parsed is not None:
-        parsed.store.close()
-    shutil.rmtree(store_dir, ignore_errors=True)
+    genostore.remove_store(store_dir, parsed)
     log.info("  genotype table on disk removed: %s", store_dir)
 
 
