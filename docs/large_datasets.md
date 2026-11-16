@@ -201,7 +201,9 @@ meanwhile may then use fewer threads, and their last digits differ, as between t
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
 that open the same VCF with the same choice share one table, and the server keeps at most two,
 and a third while a new one is built. It builds one table at a time: a session that needs a new
-table while another is built waits for that build. When a third is needed, the one used least
+table while another is built waits for that build, and then checks the free memory and disk
+again, so the check counts what that build used (the page stops with a plain message when they
+no longer suffice). When a third is needed, the one used least
 recently is closed once the new one is open (a file that cannot be read closes nothing), before
 the next build starts. A session that still held a closed table (closed this way,
 or by Clear session data in another session) reads the VCF again: the GWAS page on its next run,

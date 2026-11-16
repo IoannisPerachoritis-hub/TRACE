@@ -391,8 +391,13 @@ class TableRegistry:
             self._entries.move_to_end(key)
         return entry
 
-    def get(self, identity, mode, vcf_path, work_dir=None, log=None):
-        """The table of ``vcf_path`` in ``mode`` ("memory" or "disk"), built if needed."""
+    def get(self, identity, mode, vcf_path, work_dir=None, log=None, check=None):
+        """The table of ``vcf_path`` in ``mode`` ("memory" or "disk"), built if needed.
+
+        ``check``, when given, is called with no arguments just before a new table is built, once
+        no other build runs (so after any build this session waited for), and never for a table
+        that is already here: the caller's check of the free memory and disk, made again then
+        (gwas.guigwas.build_check). An exception from it builds nothing and reaches the caller."""
         if mode not in ("memory", "disk"):
             raise ValueError(f"unknown table mode {mode!r}")
         key = (str(identity), mode)
@@ -405,6 +410,8 @@ class TableRegistry:
                 entry = self._hit(key)                # built by the build this session waited for
                 if entry is not None:
                     return entry["parsed"]
+            if check is not None:
+                check()
             entry = self._open(mode, vcf_path, work_dir, log)      # a failure evicts nothing
             with self._lock:
                 self._entries[key] = entry

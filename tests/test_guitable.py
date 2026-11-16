@@ -432,6 +432,57 @@ def test_one_table_is_built_at_a_time(tmp_path, monkeypatch):
         reg.close_all()
 
 
+def test_a_build_checks_again_once_the_build_before_it_ended(tmp_path, monkeypatch):
+    """The caller's check (gwas.guigwas.build_check: the free memory and disk) runs just before the
+    build, once no other build runs: a session that waited for another session's build checks with
+    that table in the registry and its folder written. It never runs for a table already there, and
+    a check that refuses builds nothing and reaches the caller."""
+    import threading
+
+    from gwas import genostore
+
+    reg = gt.TableRegistry()
+    work = tmp_path / "work"
+    real_ingest = genostore.ingest_vcf
+    started, release = threading.Event(), threading.Event()
+
+    def slow_ingest(*a, **k):
+        started.set()
+        release.wait(30)
+        return real_ingest(*a, **k)
+
+    monkeypatch.setattr(genostore, "ingest_vcf", slow_ingest)
+    first = threading.Thread(target=reg.get, args=("id-1", "disk", EX1, work))
+    first.start()
+    assert started.wait(30)
+    seen = []
+
+    def check():                                    # what the second build's check sees
+        seen.append((reg.keys(), [(f / "calls.i8").stat().st_size for f in _tables_in(work)]))
+
+    second = threading.Thread(target=reg.get, args=("id-2", "disk", EX1, work), kwargs={"check": check})
+    second.start()
+    second.join(0.5)
+    assert seen == []                               # it waits for the first build to end
+    release.set()
+    first.join(60)
+    second.join(60)
+    try:
+        ((keys, sizes),) = seen
+        assert keys == [("id-1", "disk")] and sizes == [os.path.getsize(reg.folders()[0] / "calls.i8")]
+        assert sizes[0] > 0                         # the first table, written, in the registry
+
+        def refuse():
+            raise RuntimeError("no room now")
+
+        assert reg.get("id-1", "disk", EX1, work, check=refuse) is not None        # there: no check
+        with pytest.raises(RuntimeError, match="no room now"):
+            reg.get("id-3", "disk", EX1, work, check=refuse)
+        assert [k for k, _m in reg.keys()] == ["id-2", "id-1"] and len(_tables_in(work)) == 2
+    finally:
+        reg.close_all()
+
+
 # ----------------------------------------------------------- shared kinship arrays
 def test_shared_kinship_and_pcs_are_read_only():
     from gwas import kinship
@@ -542,5 +593,17 @@ def test_the_page_chooses_by_the_gui_estimate_and_records_the_clis(tmp_path):
     assert p_gui.estimate_mib * sp.MIB == pytest.approx(gui)          # the page's message shows it
     assert p_gui.metadata(50, 400) == {**p_gui.metadata(50, 400),
                                        "Memory estimate, in-memory run (GB)": round(cli / sp.GB, 2)}
-    page = (REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8")
-    assert page.count("estimate=_gt.gui_estimate_mib") == 2           # the page's plan and One-Click's
+    # the page's plan and One-Click's, and the checks made again when their tables are built (the
+    # page's table, One-Click's fresh table after a closed one), all on the GUI's estimate
+    import ast
+
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    estimates = {}
+    for node in ast.walk(page):
+        name = ast.unparse(node.func) if isinstance(node, ast.Call) else None
+        if name in ("_storeplan.plan", "_gg.one_click_table", "_gg.build_check"):
+            kw = {k.arg: ast.unparse(k.value) for k in node.keywords}
+            estimates.setdefault(name, []).append(kw.get("estimate"))
+    assert estimates == {"_storeplan.plan": ["_gt.gui_estimate_mib"],
+                         "_gg.one_click_table": ["_gt.gui_estimate_mib"],
+                         "_gg.build_check": ["_gt.gui_estimate_mib"] * 2}

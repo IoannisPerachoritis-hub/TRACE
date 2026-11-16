@@ -436,6 +436,62 @@ def test_one_click_runs_the_remaining_traits_again_on_a_fresh_table(tmp_path, ow
     assert {t: tables(r) for t, r, _e, _a in out} == plain
 
 
+def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_then(tmp_path, own_registry,
+                                                                                  monkeypatch):
+    """The server builds one table at a time, so a build may start after another session's: its check
+    (build_check) makes the plan again for the mode it chose, on the memory and disk free then, and stops
+    in the page's words when that plan stops, building nothing; One-Click's table too. A table already
+    there is not checked again. Every table the GWAS page reads passes the check."""
+    import ast
+
+    from gwas import pipeline as pl
+    from gwas import storeplan
+
+    vcf, ph = EX1
+    ident = guitable.file_identity(vcf)
+    work = tmp_path / "w"
+    free = {"memory": [64 * 2**30], "disk": [100 * 2**30]}         # the last value stays
+    monkeypatch.setattr(storeplan, "available_memory_bytes",
+                        lambda: free["memory"].pop(0) if len(free["memory"]) > 1 else free["memory"][0])
+    monkeypatch.setattr(storeplan, "free_disk_bytes",
+                        lambda folder: free["disk"].pop(0) if len(free["disk"]) > 1 else free["disk"][0])
+    gui = dict(estimate=guitable.gui_estimate_mib)
+    plans = {c: storeplan.plan(vcf, choice=c, store_base=work, models=("mlm", "mlmm", "farmcpu"),
+                               size_of=guitable.vcf_size_of(ident), **gui) for c in ("auto", "memory", "disk")}
+    assert [plans[c].mode for c in ("auto", "memory", "disk")] == ["memory", "memory", "disk"]
+    checks = {c: guigwas.build_check(vcf, p, work, ident, **gui) for c, p in plans.items()}
+    for check in checks.values():
+        check()                                                      # nothing changed: no stop
+    free.update(memory=[2**20], disk=[2**20])                        # another build used them meanwhile
+    said = {}
+    for c, check in checks.items():
+        with pytest.raises(guigwas.PlanStop) as stop:
+            guigwas.table(ident, plans[c].mode, vcf, work, check=check)
+        said[c] = str(stop.value)
+    assert all(s.startswith(guigwas.BUILD_CHECK_NOTE) for s in said.values())
+    assert said["auto"].endswith("are free. Run again: Automatic then keeps the table on disk.")
+    assert "Choose On disk under Large datasets" in said["memory"]
+    assert f"in {work}, and 0.0 GB are free there. Free some space" in said["disk"]
+    assert own_registry.keys() == [] and not list(work.glob(f"{guitable.GUI_STORE_PREFIX}_*"))
+
+    free.update(memory=[64 * 2**30], disk=[100 * 2**30])
+    held = guigwas.table(ident, "disk", vcf, work, check=checks["disk"])
+    free.update(disk=[2**20])
+    assert guigwas.table(ident, "disk", vcf, work, check=checks["disk"]) is held   # there: not checked
+    own_registry.close_all()
+
+    opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
+                                  run_label="One-Click Full Analysis")
+    free.update(disk=[100 * 2**30, 2**20])                           # room for its plan, none at its build
+    with pytest.raises(guigwas.PlanStop, match="checked the free memory and disk again"):
+        guigwas.one_click_table(ident, str(vcf), "disk", work, opts, **gui)
+    assert own_registry.keys() == [] and not list(work.glob(f"{guitable.GUI_STORE_PREFIX}_*"))
+
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    reads = [n for n in ast.walk(page) if isinstance(n, ast.Call) and ast.unparse(n.func) == "_gg.table"]
+    assert len(reads) == 2 and all("check" in {k.arg for k in n.keywords} for n in reads)
+
+
 def test_the_qc_reports_frequencies_and_pc_spectrum_are_kept_per_table(tables, monkeypatch):
     """The QC report's allele frequencies (the table read whole, in pieces on disk) and the PC
     spectrum (a PCA of the pruned table) are made once per table identity, not on every rerun, with

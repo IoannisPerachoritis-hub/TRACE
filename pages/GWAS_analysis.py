@@ -1011,9 +1011,17 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # making room for another dataset), what was built on it is dropped and the registry gives
     # a fresh table (gwas.guigwas.drop_closed_table); the page says so once.
     _table_reread = _gg.drop_closed_table(st.session_state, vcf_hash, _geno_plan.mode)
+    # The server builds one table at a time: a new table's build may wait for another session's,
+    # and then checks the free memory and disk again (gwas.guigwas.build_check), stopping plainly
+    # when the plan above no longer holds.
+    _build_check = _gg.build_check(vcf_path, _geno_plan, geno_work_dir, vcf_hash,
+                                   estimate=_gt.gui_estimate_mib)
 
     def _read_table():
-        return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+        try:
+            return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir, check=_build_check)
+        except _gg.PlanStop as _build_stop:
+            _rehydrate_or_stop(str(_build_stop))
 
     with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
                     else "Reading the VCF…"):
@@ -1869,22 +1877,32 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
 
                 # a trait that fails because the table file was closed meanwhile (Clear session
                 # data in another session, or the server making room for another dataset) runs
-                # again, with the traits after it, on a fresh table (gwas.guigwas)
-                for _t, _res, _err, _again in _gg.run_traits_rereading(
-                        _parsed, pheno, selected_traits, _opts,
-                        lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir),
-                        on_start=_on_trait_start, progress=_on_progress):
-                    if _again:
-                        st.caption(_gg.REREAD_MESSAGE)
-                    if _res is None:
-                        _failed[_t] = _err
-                        st.error(f"Trait `{_t}` failed: {_last_line(_err)}")
-                    else:
-                        # keep only what the summary and the downloads need
-                        _done[_t] = dict(_res.summary, zip_name=_res.zip_name,
-                                         zip_bytes=_res.zip_bytes)
-                        _elapsed.append(_time_mod.time() - _clock["t0"])
-                    del _res
+                # again, with the traits after it, on a fresh table (gwas.guigwas), whose build
+                # checks the free memory and disk again first
+                _oc_check = _gg.build_check(vcf_path, _oc_plan, geno_work_dir, vcf_hash,
+                                            estimate=_gt.gui_estimate_mib)
+                try:
+                    for _t, _res, _err, _again in _gg.run_traits_rereading(
+                            _parsed, pheno, selected_traits, _opts,
+                            lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir,
+                                              check=_oc_check),
+                            on_start=_on_trait_start, progress=_on_progress):
+                        if _again:
+                            st.caption(_gg.REREAD_MESSAGE)
+                        if _res is None:
+                            _failed[_t] = _err
+                            st.error(f"Trait `{_t}` failed: {_last_line(_err)}")
+                        else:
+                            # keep only what the summary and the downloads need
+                            _done[_t] = dict(_res.summary, zip_name=_res.zip_name,
+                                             zip_bytes=_res.zip_bytes)
+                            _elapsed.append(_time_mod.time() - _clock["t0"])
+                        del _res
+                except _gg.PlanStop as _oc_stop:            # the fresh table's check stopped it
+                    _gm_tmp.cleanup()
+                    _status.update(label="Full analysis stopped", state="error")
+                    st.error(str(_oc_stop))
+                    st.stop()
                 _gm_tmp.cleanup()
                 del _parsed      # the registry keeps the table (it is shared, never closed here)
                 if _failed:
