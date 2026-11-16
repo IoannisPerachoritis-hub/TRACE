@@ -33,10 +33,12 @@ server's registry making room) ends the page with a plain message (RELEASED_MESS
 table_released, released_guard).
 
 The GWAS results and M_eff in the session are taken only for the table they were computed on
-(run_table_changed, meff_for_table: the identities the GWAS page records with them), the PCs
-only from what the GWAS page writes with the table (run_pcs, pcs_of_samples), and the page
-records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for the GWAS page's
-block stability.
+(run_table_changed, meff_for_table: the identities the GWAS page records with them), and the
+results only for the trait of the last finished Run GWAS (run_trait); otherwise the page says
+what happened (results_message: the last Run GWAS did not finish, or the settings changed since
+it). The PCs come only from what the GWAS page writes with the table (run_pcs, pcs_of_samples),
+and the page records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for
+the GWAS page's block stability.
 
 SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
 result when their inputs are provably the same (the tab at its defaults, every sample
@@ -263,6 +265,8 @@ BLOCKS_FINAL_KEY = "ld_blocks_final_key"  # with ld_blocks_final: (trait, table 
 
 RUN_CHANGED_MESSAGE = ("The genotype table's settings changed since the last Run GWAS on the "
                        "GWAS page: run GWAS again (or set the settings back) to use this page.")
+RUN_NOT_FINISHED_MESSAGE = ("The last Run GWAS on the GWAS page did not finish: run GWAS again "
+                            "to use this page.")
 
 
 def run_table_changed(state, session_table):
@@ -276,6 +280,53 @@ def run_table_changed(state, session_table):
     if ran_on is None:
         return "gwas_results" in state or state.get("gwas_df") is not None
     return str(ran_on) != str(getattr(session_table, "identity", ""))
+
+
+def run_unfinished(state):
+    """True when the GWAS page's last Run GWAS is known not to have finished. During a Run that
+    page writes trait_col_locked (when it locks the Run's trait) and then gwas_df (the MLM
+    frame); only when the Run ends does it write gwas_results[trait], RUN_IDENTITY, gwas_df again
+    (a copy of the same frame as gwas_results[trait]) and active_trait. So without RUN_IDENTITY
+    (no Run finished in this session) a gwas_df frame is a Run's that did not finish; with it, a
+    trait_col_locked that is not active_trait, or a gwas_df that is not gwas_results[active_trait],
+    was left by a later Run that did not finish. A later Run of the same trait that stopped before
+    its MLM frame leaves no such mark."""
+    frame = state.get("gwas_df")
+    if state.get(RUN_IDENTITY) is None:
+        return frame is not None
+    trait = state.get("active_trait")
+    locked = state.get("trait_col_locked")
+    if locked is not None and str(locked) != str(trait):
+        return True
+    if frame is None:
+        return False
+    done = (state.get("gwas_results") or {}).get(trait)
+    return not (isinstance(frame, pd.DataFrame) and isinstance(done, pd.DataFrame)
+                and frame.equals(done))
+
+
+def results_message(state, session_table):
+    """The plain message the Post-GWAS page stops with when the session's GWAS results are not
+    this table's (run_table_changed), chosen by what happened, or None when they are: when the
+    last Run GWAS is known not to have finished (run_unfinished), RUN_NOT_FINISHED_MESSAGE (no
+    setting needs to have changed then, and without a finished Run setting the settings back
+    cannot help); else RUN_CHANGED_MESSAGE, the table's settings changed since the last Run GWAS
+    (another identity, or results without one)."""
+    if not run_table_changed(state, session_table):
+        return None
+    return RUN_NOT_FINISHED_MESSAGE if run_unfinished(state) else RUN_CHANGED_MESSAGE
+
+
+def run_trait(state):
+    """The trait whose GWAS results the Post-GWAS page takes: the last finished Run GWAS's
+    (active_trait). The GWAS page writes it when a Run ends, with gwas_results[trait] and
+    RUN_IDENTITY, and that identity names the trait, so while the session's table is that Run's
+    (run_table_changed is False) these are the trait's own results on it. A Run writes
+    trait_col_locked earlier, when it locks its trait, so a later Run that did not finish left
+    its own trait there, and gwas_results may hold an earlier Run's results of that trait, on
+    another table. Without a finished Run: the locked trait, or the chosen one (the page then
+    finds no results for it)."""
+    return state.get("active_trait") or state.get("trait_col_locked") or state.get("trait_col")
 
 
 def meff_for_table(state, session_table):
@@ -626,8 +677,10 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
 
     ``geno_imputed`` is the imputed table as the LD code reads it (an array or a reader of
     this module); each block's window is read from it, phenotype-aligned rows first, as the
-    page always cut it. ``pcs`` is the session's PCs (st.session_state["pcs"]) and
-    ``strict_selfing`` its selfing_mode, which the page read inside this function."""
+    page always cut it. ``pcs`` are the PCs of the GWAS page's run that left the session's
+    table, from GWAS_CTX (run_pcs), the PCs the haplotype test gets, and ``strict_selfing`` is
+    the session's selfing_mode. The page passes both; ff56e5c's page read them from the session
+    inside this function."""
     from gwas.haplotype import mlg_labels_for_block as _mlg_labels_for_block
     from gwas.ld import anova_eta_sq_from_labels as _anova_eta_sq_from_labels
     from gwas.ld import maf_from_matrix as _maf_from_matrix

@@ -6,12 +6,17 @@ contract between the two pages, batch 13).
   (gwas_run_identity), and rebuilds the session's table (geno_table) on every rerun. After a
   settings change without a new Run, the page computed with the last Run's p-values on the new
   table. It now says so plainly and stops when the identities differ, or when results come
-  without an identity.
+  without an identity. The message says what happened: the last Run GWAS did not finish, or
+  the settings changed since it.
+- The trait: the last finished Run's (active_trait, written with its results and identity). A
+  Run writes trait_col_locked before its results, so after a later Run that did not finish the
+  page took that trait's results of an earlier Run, on another table.
 - M_eff: meff_val is used only when meff_identity names this table; otherwise M_eff is absent
   (the rule's path without M_eff), as when it was never computed.
 - The final LD blocks: whenever the page or the LD Blocks tab writes ld_blocks_final, it also
   writes ld_blocks_final_key = (trait, the table's identity), which the GWAS page's block
-  stability checks before it aggregates those blocks.
+  stability checks before it aggregates those blocks. On a cache hit the tab writes the blocks
+  on screen there, and as the trait's blocks for the other tabs (haplo_df_auto[trait]), too.
 - The sample IDs: the table's own (geno_table.iid). The GWAS page writes geno_df before the
   table, so a run of it that stopped between the two left a geno_df beside an older table.
 - The PCs: those GWAS_CTX holds, which the GWAS page writes with the table. It writes the
@@ -41,6 +46,8 @@ PAGE = str(ROOT / "pages" / "Post_GWAS_Analysis.py")
 # the plain message of a table whose settings changed since the last Run GWAS (cc59/FIXES.md)
 MESSAGE = ("The genotype table's settings changed since the last Run GWAS on the GWAS page: "
            "run GWAS again (or set the settings back) to use this page.")
+# the plain message of a Run GWAS that did not finish (cc59/FIXES_R3.md: the wording by case)
+NOT_FINISHED = "The last Run GWAS on the GWAS page did not finish: run GWAS again to use this page."
 N, M = 40, 30
 TRAIT = "t"
 
@@ -148,26 +155,91 @@ _FRAME = pd.DataFrame({"SNP": ["SL25ch02p1040000"], "PValue": [1e-9], "Chr": ["2
 
 
 def test_a_frame_without_an_identity_counts_as_results_without_one(run_page):
-    """The re-check's rc3 case: a first Run GWAS that did not finish (a page switch during
-    MLMM) leaves only its MLM frame (gwas_df), without an identity; the settings then change.
-    The page took that frame, the earlier table's p-values, on the new table. It now stops with
-    the run-again message, before it reads any result."""
+    """The re-check's rc3 case, and round 2's re-check F1 and F2: a first Run GWAS that did not
+    finish (a page switch during MLMM) leaves only its MLM frame (gwas_df), without an identity,
+    whether the settings then change or not. The page took that frame, the earlier table's
+    p-values, on the new table. It now stops before it reads any result and says what happened:
+    the last Run GWAS did not finish (round 2 said the settings changed, which they need not
+    have, and no finished Run's settings can be set back)."""
     run, _ = run_page
-    shown, ctx, _ = run(gwas_results=None, gwas_run_identity=None, gwas_df=_FRAME)
+    shown, ctx, _ = run(gwas_results=None, gwas_run_identity=None, gwas_df=_FRAME,
+                        trait_col_locked=TRAIT, active_trait=None)
     assert ctx is None, "the page went on with a frame of another table"
-    assert ("warning", MESSAGE) in shown
+    assert [m for kind, m in shown if kind == "warning"] == [NOT_FINISHED], shown
 
 
-def test_a_frame_beside_another_traits_results_is_not_taken(run_page):
-    """A Run for this trait that did not finish locked it (trait_col_locked) and left a frame
-    (gwas_df), beside the last finished Run's results of another trait, whose table the session
-    holds again. The page took that frame, which is not this trait's results; it now stops with
-    the run-again message."""
+def test_a_later_run_that_did_not_finish_is_named(run_page):
+    """Round 2's re-check, F3 and F6b with the settings not set back: the last finished Run was
+    on another table (T0), and a later Run, with the settings the table has now, did not finish.
+    It locked another trait (F3), or wrote its MLM frame over the finished Run's frame (F6b). The
+    page said the settings changed since the last Run GWAS, which they did not after that Run;
+    it now says the last Run GWAS did not finish. Without such a mark (only the settings
+    changed) it keeps the settings message."""
     run, _ = run_page
+    frame = run()[2]["gwas_results"][TRAIT].copy()   # the finished Run's results
+    for case, extra in {"F3, another trait locked": dict(trait_col_locked="u"),
+                        "F6b, its MLM frame": dict(trait_col_locked=TRAIT, gwas_df=_FRAME)}.items():
+        shown, ctx, _ = run(gwas_run_identity="T0", **extra)
+        assert ctx is None, case
+        assert [m for kind, m in shown if kind == "warning"] == [NOT_FINISHED], (case, shown)
+    # the finished Run's own frame beside its results and its own trait locked: only the
+    # settings changed since it
+    shown, ctx, _ = run(gwas_run_identity="T0", trait_col_locked=TRAIT, gwas_df=frame)
+    assert ctx is None
+    assert [m for kind, m in shown if kind == "warning"] == [MESSAGE], shown
+
+
+def test_a_frame_beside_no_results_of_the_trait_is_not_taken(run_page):
+    """The frame gwas_df beside no results of the page's trait, a state the GWAS page does not
+    leave (a finished Run writes its trait's results with the frame), is never taken: the page
+    stops and says the last Run GWAS did not finish."""
+    run, _ = run_page
+    shown, ctx, _ = run(gwas_results={"u": _FRAME}, gwas_df=_FRAME)
+    assert ctx is None, "the page went on with a frame that is not the trait's results"
+    assert [m for kind, m in shown if kind == "warning"] == [NOT_FINISHED], shown
+
+
+def _two_traits():
+    """The phenotype table with this trait and a second one, u, on the table's samples."""
+    ids = [f"S{i:02d}" for i in range(N)]
+    return pd.DataFrame({TRAIT: np.linspace(0.0, 1.0, N), "u": np.linspace(1.0, 0.0, N)}, index=ids)
+
+
+def test_beside_a_later_runs_frame_the_last_finished_run_is_taken(run_page):
+    """The re-check's F3: a Run for this trait that did not finish locked it (trait_col_locked)
+    and left its MLM frame (gwas_df), beside the last finished Run's results, of trait u, whose
+    table the session holds again. The page took that frame (round 1), then stopped (round 2). It
+    now takes the last finished Run's trait and results, on their own table, the run the GWAS
+    page shows as the last completed one."""
+    run, _ = run_page
+    mlm = _FRAME.assign(PValue=0.5)                  # the MLM frame of the Run that did not finish
     shown, ctx, _ = run(gwas_results={"u": _FRAME}, active_trait="u", trait_col_locked=TRAIT,
-                        gwas_df=_FRAME)
-    assert ctx is None, "the page went on with a frame that is not this trait's results"
-    assert ("warning", MESSAGE) in shown
+                        gwas_df=mlm, pheno_used_for_hap=_two_traits())
+    assert ctx is not None, shown
+    assert ctx["trait_col"] == "u", "the page took the trait of a Run that did not finish"
+    assert list(ctx["gwas_df"]["PValue"]) == list(_FRAME["PValue"]), \
+        "the page took the frame of a Run that did not finish"
+
+
+def test_the_results_are_the_last_finished_runs_trait(run_page):
+    """The re-check's F4 steps (cc59/recheck2_b/r2_fallback.py): Run 1, of trait u, finished on
+    another table; Run 2, of this trait, finished on this table (T1); Run 3, of u, locked its
+    trait (trait_col_locked) and did not finish; the GWAS page is set back to Run 2's table. The
+    page took gwas_results["u"], Run 1's results on another table, for the trait Run 3 locked.
+    It now takes the last finished Run's trait (active_trait) and its results, on its own
+    table."""
+    run, _ = run_page
+    own = run()[2]["gwas_results"][TRAIT].copy()     # Run 2's results, on this table
+    run1 = _FRAME.assign(PValue=1e-12)               # Run 1's results of u, on another table
+    shown, ctx, _ = run(gwas_results={"u": run1, TRAIT: own}, trait_col_locked="u",
+                        pheno_used_for_hap=_two_traits())
+    assert ctx is not None, shown
+    assert ctx["trait_col"] == TRAIT, "the page took an earlier Run's results of the trait a later Run locked"
+    assert list(ctx["gwas_df"]["SNP"]) == list(own["SNP"])
+    assert list(ctx["gwas_df"]["PValue"]) == list(own["PValue"])
+    assert gp.run_trait({"active_trait": TRAIT, "trait_col_locked": "u", "trait_col": "u"}) == TRAIT
+    assert gp.run_trait({"trait_col_locked": "u", "trait_col": "v"}) == "u"   # no Run finished
+    assert gp.run_trait({}) is None
 
 
 def test_meff_is_taken_only_for_its_own_table(run_page):
@@ -212,10 +284,22 @@ def test_the_contract_helpers():
     assert gp.meff_for_table({"meff_val": 5, gp.MEFF_IDENTITY: "T1"}, t1) == 5
     assert gp.meff_for_table({"meff_val": 5, gp.MEFF_IDENTITY: "T0"}, t1) is None
     assert gp.meff_for_table({"meff_val": 5}, t1) is None
+    # the message by case (cc59/FIXES_R3.md): none for this table's results, else what happened
+    assert gp.results_message({"gwas_results": {}, gp.RUN_IDENTITY: "T1"}, t1) is None
+    assert gp.results_message({"gwas_results": {}, gp.RUN_IDENTITY: "T0"}, t1) == MESSAGE
+    assert gp.results_message({"gwas_results": {}}, t1) == MESSAGE     # results without an identity
+    assert gp.results_message({"gwas_df": _FRAME}, t1) == NOT_FINISHED   # no Run finished
+    assert gp.results_message({"gwas_df": _FRAME, gp.RUN_IDENTITY: "T1"}, t1) is None
+    done = {"gwas_results": {"t": _FRAME}, gp.RUN_IDENTITY: "T0", "active_trait": "t"}
+    assert gp.results_message(dict(done, gwas_df=_FRAME.copy(), trait_col_locked="t"), t1) == MESSAGE
+    assert gp.results_message(dict(done, trait_col_locked="u"), t1) == NOT_FINISHED
+    assert gp.results_message(dict(done, gwas_df=_FRAME.assign(PValue=0.5)), t1) == NOT_FINISHED
+    assert not gp.run_unfinished(done) and not gp.run_unfinished({})
     # the exact keys both pages rely on and the message (cc59/FIXES.md, the contract)
     assert (gp.RUN_IDENTITY, gp.MEFF_IDENTITY, gp.BLOCKS_FINAL_KEY) == (
         "gwas_run_identity", "meff_identity", "ld_blocks_final_key")
     assert gp.RUN_CHANGED_MESSAGE == MESSAGE
+    assert gp.RUN_NOT_FINISHED_MESSAGE == NOT_FINISHED
     assert gp.BLOCKS_FINAL_KEY in gp.POST_GWAS_SESSION_KEYS
 
 
@@ -279,6 +363,26 @@ def test_a_detection_served_from_the_tabs_cache_is_the_final_one(monkeypatch):
     the tab serves from its cache. ld_blocks_final stayed the 0.5 detection under the same key
     (trait, table), so the GWAS page's block stability aggregated blocks no longer on screen.
     On a cache hit the tab now writes the blocks on screen, and their key, too."""
+    after, at = _tab_r2_there_and_back(monkeypatch)
+    assert after["detected"] == [0.6, 0.5], "the last render was not served from the tab's cache"
+    pd.testing.assert_frame_equal(after["ld_blocks_final"], at[0.6])
+    assert after["ld_blocks_final_key"] == (TRAIT, "T1")
+
+
+def test_a_detection_served_from_the_tabs_cache_is_the_traits_blocks(monkeypatch):
+    """The same steps (round 2's re-check, its new problem 3): the tab wrote the trait's blocks,
+    which the page hands to the other tabs (haplo_df_auto[trait]: Significant SNPs, Regional,
+    the block heatmaps, the candidate intervals, the LD window), on a detection only, so after
+    the hit they stayed the r2 0.5 blocks while the tab showed the 0.6 ones. A hit now writes
+    the blocks on screen there too."""
+    after, at = _tab_r2_there_and_back(monkeypatch)
+    assert after["detected"] == [0.6, 0.5], "the last render was not served from the tab's cache"
+    pd.testing.assert_frame_equal(after["haplo_df_auto"][TRAIT], at[0.6])
+
+
+def _tab_r2_there_and_back(monkeypatch):
+    """The LD Blocks tab rendered at r2 0.6, 0.5 and 0.6 again (the last served from its cache).
+    Returns (what the session held after it, the blocks each r2 gives)."""
     import streamlit as st
 
     import pages._ld_tabs.tab_genome_wide as tgw
@@ -327,9 +431,11 @@ def test_a_detection_served_from_the_tabs_cache_is_the_final_one(monkeypatch):
             tgw.render(ctx, get_r2_cached=None, cached_extract_block_geno=None,
                        compute_block_qc_effects=None,
                        run_haplotype_block_gwas_cached_fn=lambda *a, **k: (pd.DataFrame(), {}))
-        assert detected == [0.6, 0.5], "the last render was not served from the tab's cache"
-        pd.testing.assert_frame_equal(st.session_state["ld_blocks_final"], at[0.6])
-        assert st.session_state["ld_blocks_final_key"] == (TRAIT, "T1")
+        after = {"detected": list(detected),
+                 "haplo_df_auto": dict(st.session_state.get("haplo_df_auto") or {})}
+        for k in ("ld_blocks_final", "ld_blocks_final_key"):
+            after[k] = st.session_state.get(k)
+        return after, at
     finally:
         for k in list(st.session_state.keys()):
             if k not in before:

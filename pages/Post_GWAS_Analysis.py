@@ -163,9 +163,12 @@ def ld_analysis_page():
     geno_table = st.session_state["geno_table"]
     # The GWAS results are those of the last Run GWAS, whose table's identity the GWAS page
     # records with them. It rebuilds the session's table on every rerun, so a table built
-    # since with other settings has another identity, and the results are not its own.
-    if _gp.run_table_changed(st.session_state, geno_table):
-        st.warning(_gp.RUN_CHANGED_MESSAGE)
+    # since with other settings has another identity, and the results are not its own. The
+    # message says what happened: the last Run GWAS did not finish, or the settings changed
+    # since it (gwas.guipost.results_message).
+    _not_this_table = _gp.results_message(st.session_state, geno_table)
+    if _not_this_table:
+        st.warning(_not_this_table)
         st.stop()
 
     # ---- Resolve phenotype (STRICT: use GWAS-aligned phenotype if available) ----
@@ -189,14 +192,12 @@ def ld_analysis_page():
     # 2. Resolve GWAS results (ROBUST)
     # --------------------------------------------------------
     gwas_df = None
-    trait_col = None
 
-    # Always trust active_trait if present
-    trait_col = (
-            st.session_state.get("trait_col_locked")
-            or st.session_state.get("active_trait")
-            or st.session_state.get("trait_col")
-    )
+    # The trait of the last finished Run GWAS (gwas.guipost.run_trait: active_trait, written with
+    # that Run's results and its table's identity, which names the trait): with the table check
+    # above, the results taken are that trait's, on this table. Not trait_col_locked, which a Run
+    # writes before its results: a later Run that did not finish left its own trait there.
+    trait_col = _gp.run_trait(st.session_state)
 
     # CRITICAL: must have an active trait before indexing trait-specific results
     if trait_col is None:
@@ -210,13 +211,13 @@ def ld_analysis_page():
     if trait_col in gwas_results:
         gwas_df = gwas_results[trait_col]
 
-    # 2) The frame gwas_df alone is not this trait's results: the GWAS page writes it with
-    # gwas_results[trait] when a Run ends, and alone during a Run (its MLM frame). Here the
-    # trait (locked by a Run that did not finish) has no results of a finished Run, so the
-    # frame is that Run's, on its own table, or the last finished Run's, of another trait.
-    # (Without a finished Run, run_table_changed stopped the page above.)
+    # 2) The frame gwas_df alone is never taken for the trait's results: the GWAS page writes it
+    # with gwas_results[trait] when a Run ends, and alone during a Run (its MLM frame), so beside
+    # no results for the trait it is a Run's that did not finish. (A session the GWAS page left
+    # holds the last finished Run's results of its trait, and without a finished Run the check
+    # above stopped the page.)
     if gwas_df is None and st.session_state.get("gwas_df") is not None:
-        st.warning(_gp.RUN_CHANGED_MESSAGE)
+        st.warning(_gp.RUN_NOT_FINISHED_MESSAGE)
         st.stop()
 
     # 3) Final sanity check
