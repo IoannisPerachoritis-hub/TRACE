@@ -77,9 +77,24 @@ holds that page's own tables and figures, interactive HTML included.
 | `figures/QC_report_distributions.png` | the QC report's distributions | unless `--no-plots` |
 | `figures/Subsampling_discovery_freq_<trait>.png` | the subsampling discovery frequencies | `--subsampling`, unless `--no-plots` |
 | `report.html` | the self-contained HTML report | unless `--no-report` |
-| `run_metadata.json` | every setting of the run, for reproducibility | always |
+| `run_metadata.json` | every setting of the run, for reproducibility; also the run's environment and where the genotype table was kept (the keys below) | always |
 | `<trait>/` | in a combined ZIP, one folder per trait holding that trait's files | several traits |
 | `failed_traits.txt` | in a combined ZIP, each trait's status and the error of any that failed | a trait failed |
+""")
+st.markdown("""
+**`run_metadata.json`: the environment and the genotype table.** Besides the settings:
+
+- `BLAS library`: the linear-algebra libraries and their versions (numpy's and scipy's)
+- `BLAS threads`: their thread count
+- `CPU cores (logical)`: the logical cores
+- `CPU cores (physical)`: the physical cores
+- `Subsampling workers (--boot-jobs)`: the subsampling workers (N/A without subsampling)
+- `Subsampling BLAS threads per worker`: the threads each worker's library uses
+- `Genotype table`: where the table was kept, memory or disk
+- `Genotype table choice`: what was asked (auto, or memory or disk)
+- `Genotype table reason`: why it was kept there
+- `Memory estimate, in-memory run (GB)`: TRACE's estimate for an in-memory run of this analysis
+- `Genotype calls`: samples × SNPs as read
 """)
 
 # ============================================================
