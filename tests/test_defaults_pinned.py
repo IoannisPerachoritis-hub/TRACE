@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-import annotation
 import cli
 from gwas import haplotype, impute, ld, models, plotting, reports
 
