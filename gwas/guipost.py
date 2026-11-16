@@ -34,7 +34,8 @@ table_released, released_guard).
 
 SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
 result when their inputs are provably the same (the tab at its defaults, every sample
-phenotype-aligned), so a first visit detects once.
+phenotype-aligned), so a first visit detects once. sigtable_key: the Significant SNPs tab
+builds its table once per input and serves reruns from a bounded session cache.
 
 POST_GWAS_SESSION_KEYS / POST_GWAS_SESSION_PREFIXES list every session key the page and its
 tabs write (widget keys excluded), for Clear (gwas.guitable).
@@ -495,6 +496,30 @@ class SharedDetection:
         return res
 
 
+# --------------------------------------------------- the significant-SNP table, kept
+SIGTABLE_CACHE = "_sigtable_cache"
+
+
+def gwas_key(ctx):
+    """The GWAS results' key (frame_key of ctx.gwas_df), computed once per page run and kept on
+    the context."""
+    if not getattr(ctx, "gwas_key", ""):
+        ctx.gwas_key = frame_key(ctx.gwas_df)
+    return ctx.gwas_key
+
+
+def sigtable_key(ctx, rule, edge_flank_bp, ld_decay_bp, geno_encoding, seed_p_used, top_n_used):
+    """The Significant SNPs tab's cache key: the raw table it reads (the table's identity and
+    the reader's rows, or a plain array's content), the SNP labels, the GWAS results, the
+    blocks, the rule (every field of the gwas.significance.SignificanceRule) and every other
+    argument the tab gives gwas.sigtable.build_significant_snp_table."""
+    return ("SIGTAB",
+            _reads_of(getattr(ctx, "geno_dosage_raw", None), getattr(ctx, "table_identity", "")),
+            labels_key(ctx), gwas_key(ctx), frame_key(getattr(ctx, "haplo_df_auto", None)),
+            repr(rule), _value(edge_flank_bp), _value(ld_decay_bp), _value(geno_encoding),
+            _value(seed_p_used), _value(top_n_used))
+
+
 # ------------------------------------------------------------ the haplotype tab's effects
 def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, pheno_for_hap,
                      trait_col, min_hap_count, min_group_size, compute_maf=True,
@@ -690,6 +715,7 @@ POST_GWAS_SESSION_KEYS = (
     "_local_ld_cache", "_hap_pca_cache", "_hap_box_cache",
     "_hapgwas_order", "_lddetect_order",
     DETECTION_CACHE,                                      # SharedDetection's results
+    SIGTABLE_CACHE,                                       # the Significant SNPs tab's tables
     "genes_df",
 )
 # Families of keys named by their settings: each haplotype test (HAPGWAS::..., with its

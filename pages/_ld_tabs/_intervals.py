@@ -40,10 +40,8 @@ def run_candidate_intervals(ctx):
     gwas_df = ctx.gwas_df
     if gwas_df is None or len(gwas_df) == 0 or ctx.chroms is None:
         return None
-    if not getattr(ctx, "gwas_key", ""):
-        ctx.gwas_key = guipost.frame_key(gwas_df)       # once per page run
     return _candidate_intervals_cached(
-        guipost.labels_key(ctx), ctx.gwas_key, guipost.frame_key(ctx.haplo_df_auto),
+        guipost.labels_key(ctx), guipost.gwas_key(ctx), guipost.frame_key(ctx.haplo_df_auto),
         ctx.sig_rule_label, ctx.meff_val, ctx.custom_thresh,
         edge_flank_bp_from_decay(ctx.ld_decay_kb),
         ctx.haplo_df_auto, gwas_df, np.asarray(ctx.chroms), np.asarray(ctx.positions),

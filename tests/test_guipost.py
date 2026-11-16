@@ -13,6 +13,7 @@
 - A table file closed meanwhile (Clear) is found and ends the page plainly.
 - The page's automatic blocks and the LD Blocks tab's default detection share one result,
   and only when every input is the same.
+- The Significant SNPs tab builds its table once per input.
 """
 import re
 from pathlib import Path
@@ -592,6 +593,74 @@ def test_the_detection_cache_is_bounded():
     assert len(state[gp.DETECTION_CACHE]) == gp.RESULT_CACHE_MAX
     assert shared.find_ld_clusters_genomewide(geno_imputed=None, top_n=gp.RESULT_CACHE_MAX + 4)["x"].tolist() == [
         gp.RESULT_CACHE_MAX + 4]
+
+
+# ------------------------------------------------- the significant-SNP table, built once
+def test_the_significant_snp_table_is_built_once_per_input(example_v1, monkeypatch):
+    """The Significant SNPs tab builds its table once per input and serves reruns from a
+    bounded session cache with the same CSV; another table, GWAS results, blocks or rule
+    build again, and the first input is still served."""
+    import streamlit as st
+
+    import gwas.sigtable as sigtable
+    from gwas.ld import find_ld_clusters_genomewide
+    from pages._ld_tabs import LDContext
+    from pages._ld_tabs import tab_significant_snps as T
+
+    assert gp.SIGTABLE_CACHE == "_sigtable_cache"   # the literal the tab writes
+    built, downloads = [], []
+    real = sigtable.build_significant_snp_table
+
+    def build(*a, **k):
+        built.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(sigtable, "build_significant_snp_table", build)
+    monkeypatch.setattr(st, "download_button",
+                        lambda label, data, *a, **k: downloads.append((label, data)) or False)
+    st.session_state.pop(gp.SIGTABLE_CACHE, None)
+    post = example_v1["posts"]["disk"]
+
+    def ctx(**over):
+        base = dict(geno_ld=post.ld, geno_hard=post.hard, chroms=example_v1["chroms"],
+                    positions=example_v1["positions"], sid=example_v1["sid"], geno_df=post.samples,
+                    pheno_df=example_v1["pheno"], trait_col="Trait1", ph_aligned=example_v1["pheno"],
+                    y_aligned=None, keep_mask=example_v1["keep"], geno_ld_aligned=post.ld_aligned,
+                    gwas_df=example_v1["gwas_df"], haplo_df_auto=pd.DataFrame(), ld_decay_kb=None,
+                    adj_r2_min_global=0.2, ld_trait="Trait1", geno_dosage_raw=post.raw,
+                    meff_val=None, sig_rule_label="Bonferroni (α = 0.05)",
+                    table_identity=post.identity)
+        base.update(over)
+        return LDContext(**base)
+
+    def csv():
+        return [d for d in downloads if d[0] == "Download Significant_SNPs.csv"][-1][1]
+
+    try:
+        T.render(ctx())
+        first = csv()
+        T.render(ctx())                              # a rerun: a new context, nothing changed
+        assert len(built) == 1 and csv() == first
+        T.render(ctx(table_identity="another table"))
+        assert len(built) == 2
+        gwas2 = example_v1["gwas_df"].copy()
+        gwas2.loc[gwas2.index[1], "PValue"] = 1e-12
+        T.render(ctx(gwas_df=gwas2))
+        assert len(built) == 3
+        blocks = find_ld_clusters_genomewide(
+            gwas_df=example_v1["gwas_df"], chroms=example_v1["chroms"],
+            positions=example_v1["positions"], geno_imputed=post.ld, sid=example_v1["sid"],
+            ld_threshold=0.1, flank_kb=200.0)
+        assert len(blocks) > 0
+        T.render(ctx(haplo_df_auto=blocks))
+        assert len(built) == 4 and csv() != first    # SNPs now in blocks
+        T.render(ctx(sig_rule_label="FDR (q < 0.05)"))
+        assert len(built) == 5
+        T.render(ctx())                              # the first input again: still kept
+        assert len(built) == 5 and csv() == first
+        assert len(st.session_state[gp.SIGTABLE_CACHE]) <= gp.RESULT_CACHE_MAX
+    finally:
+        st.session_state.pop(gp.SIGTABLE_CACHE, None)
 
 
 # --------------------------------------------------------------- the session keys (Clear)
