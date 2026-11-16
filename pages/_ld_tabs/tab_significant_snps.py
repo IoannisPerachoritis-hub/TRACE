@@ -83,6 +83,11 @@ def render(ctx: LDContext):
                 ld_decay_bp=ld_decay_bp, geno_encoding=geno_encoding,
             )
         except Exception as e:  # never crash the page on a malformed frame
+            if guipost.table_released(st.session_state.get("geno_table")):
+                # the table file was closed during this read: the page's plain message, not
+                # the read error (which names the file)
+                st.info(guipost.RELEASED_MESSAGE)
+                st.stop()
             st.error(f"Could not build the significant-SNP table: {e}")
             return
         guipost.remember(sig_cache, sig_key, sig, guipost.RESULT_CACHE_MAX)

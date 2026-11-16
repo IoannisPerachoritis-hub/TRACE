@@ -7,8 +7,12 @@ looks right.
   ValueError too, so the regional CSV and the coherence row came out with no r2 and no word of
   the release. They now test that the lead is typed, as compute_r2_to_lead does, and let any
   read error through: on the page it reaches released_guard, which shows RELEASED_MESSAGE.
+- The Significant SNPs tab and the LD Blocks tab's coherence catch every error themselves and
+  showed it, with the table file's path. With the session's table released they show
+  RELEASED_MESSAGE and stop instead; any other error is shown as before.
 
-The tabs run here outside a Streamlit page (bare mode), on a small table written to a store.
+The tabs run here outside a Streamlit page (bare mode), on a small table written to a store;
+st.stop raises StopException, as in a real run.
 """
 import io
 
@@ -177,3 +181,89 @@ def test_an_untyped_lead_still_gives_grey_points(tables, regional):
     t = tables
     csv = regional(_ctx(t, t.raw), _window(t, "not_typed"))
     assert len(csv) == M and csv["r2_to_lead"].isna().all()
+
+
+# ------------------------------------------------- tabs that catch the read error themselves
+@pytest.fixture
+def page(monkeypatch):
+    """The session as the page leaves it for the tabs, with st.info / st.error / st.caption
+    recorded and st.stop raising StopException; the keys the tabs write are removed after."""
+    import streamlit as st
+    from streamlit.runtime.scriptrunner import StopException
+
+    before = set(st.session_state.keys())
+    shown = []
+    for name in ("info", "error", "caption", "warning"):
+        monkeypatch.setattr(st, name, lambda body="", *a, _n=name, **k: shown.append((_n, str(body))))
+
+    def stop():
+        raise StopException()
+
+    monkeypatch.setattr(st, "stop", stop)
+    st.session_state.pop("_sigtable_cache", None)
+    yield st.session_state, shown
+    for k in set(st.session_state.keys()) - before:
+        del st.session_state[k]
+
+
+def test_the_significant_snps_tab_says_the_table_was_released(tables, tmp_path, page, monkeypatch):
+    from streamlit.runtime.scriptrunner import StopException
+
+    import gwas.sigtable as sigtable
+    from gwas import guipost as gp
+    from pages._ld_tabs import tab_significant_snps as T
+
+    state, shown = page
+    t = tables
+    state["geno_table"] = t.table
+    # an error while the table is open (a malformed frame): shown as before
+    real = sigtable.build_significant_snp_table
+
+    def boom(*a, **k):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(sigtable, "build_significant_snp_table", boom)
+    T.render(_ctx(t, t.raw))
+    assert ("error", "Could not build the significant-SNP table: boom") in shown
+    # the table file closed during the build: the plain message and a stop, no file path
+    monkeypatch.setattr(sigtable, "build_significant_snp_table", real)
+    shown.clear()
+    t.store.close()
+    with pytest.raises(StopException):
+        T.render(_ctx(t, t.raw))
+    assert ("info", gp.RELEASED_MESSAGE) in shown
+    assert not [m for kind, m in shown if kind == "error"], shown
+    assert not any("calls.i8" in m for _, m in shown), shown
+
+
+def test_the_ld_blocks_coherence_says_the_table_was_released(tables, page):
+    from streamlit.runtime.scriptrunner import StopException
+
+    from gwas import guipost as gp
+    from pages._ld_tabs import tab_genome_wide as tgw
+
+    state, shown = page
+    t = tables
+    pheno = pd.DataFrame({"t": np.random.default_rng(2).normal(0, 1, N)},
+                         index=[f"S{i}" for i in range(N)])
+    state["geno_table"] = t.table
+    state["pheno_used_for_hap"] = pheno
+
+    def no_tests(*a, **k):                      # the haplotype test is not what this checks
+        return pd.DataFrame(), {}
+
+    def run():
+        ctx = _ctx(t, t.view, geno_dosage_raw=t.raw, pheno_df=pheno, ph_aligned=pheno,
+                   ld_trait="t", haplo_df_auto=t.blocks)
+        tgw._render_haplotype_gwas(ctx=ctx, haplo_df_auto=t.blocks, cached_extract_block_geno=None,
+                                   compute_block_qc_effects=None,
+                                   run_haplotype_block_gwas_cached_fn=no_tests, settings=None)
+
+    run()                                       # the table open: no coherence message
+    assert not any(m.startswith("LD-block coherence unavailable") for _, m in shown), shown
+    shown.clear()
+    t.store.close()
+    with pytest.raises(StopException):
+        run()
+    assert ("info", gp.RELEASED_MESSAGE) in shown
+    assert not any("calls.i8" in m for _, m in shown), shown
