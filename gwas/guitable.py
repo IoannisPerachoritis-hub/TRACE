@@ -150,11 +150,41 @@ def file_identity(path):
     return identity
 
 
+_SIZE_CACHE = OrderedDict()                # (file identity, exact) -> gwas.storeplan.VcfSize
+_SIZE_MAX = 32
+
+
+def vcf_size_of(file_identity):
+    """gwas.storeplan.vcf_size for the file of ``file_identity``, made once per (identity,
+    exact): a function with vcf_size's signature for storeplan.plan(size_of=...). The page plans
+    on every rerun, and counting the records of a gzip VCF that is not BGZF reads the whole file
+    (11 seconds for the 99 MB reviewer-size panel)."""
+    from gwas import storeplan
+
+    def size_of(path, exact=False):
+        key = (str(file_identity), bool(exact))
+        with _ID_LOCK:
+            if key in _SIZE_CACHE:
+                _SIZE_CACHE.move_to_end(key)
+                return _SIZE_CACHE[key]
+        size = storeplan.vcf_size(path, exact=exact)
+        with _ID_LOCK:
+            _SIZE_CACHE[key] = size
+            _SIZE_CACHE.move_to_end(key)
+            while len(_SIZE_CACHE) > _SIZE_MAX:
+                _SIZE_CACHE.popitem(last=False)
+        return size
+
+    return size_of
+
+
 def forget_file_identities():
-    """Empty the file identities this server remembers (Clear): a file rewritten in place with
-    the same size and modification time is then hashed again when next used."""
+    """Empty the file identities this server remembers, and the sizes kept by them (Clear): a
+    file rewritten in place with the same size and modification time is then hashed again when
+    next used."""
     with _ID_LOCK:
         _ID_CACHE.clear()
+        _SIZE_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------- saved uploads

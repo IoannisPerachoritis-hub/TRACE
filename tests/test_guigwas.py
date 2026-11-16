@@ -429,3 +429,31 @@ def test_one_click_runs_the_remaining_traits_again_on_a_fresh_table(tmp_path, ow
     assert [t for t, _p in seen] == ["Trait1", "Trait1", "Trait2"] and seen[1][1] is not p1
     assert started == [(1, "Trait1"), (1, "Trait1"), (2, "Trait2")]
     assert {t: tables(r) for t, r, _e, _a in out} == plain
+
+
+def test_the_qc_reports_frequencies_and_pc_spectrum_are_kept_per_table(tables, monkeypatch):
+    """The QC report's allele frequencies (the table read whole, in pieces on disk) and the PC
+    spectrum (a PCA of the pruned table) are made once per table identity, not on every rerun, with
+    the values the page computed on every rerun before."""
+    from gwas import pc_diagnostics as pcd
+
+    pheno = _page_pheno(EX1[1])
+    r = _prep(tables["ex1"]["disk"], pheno, "Trait1")
+    state, calls = {}, []
+    real_means, real_pcd = guigwas.column_means, pcd.compute_pc_diagnostics
+    monkeypatch.setattr(guigwas, "column_means", lambda g, piece=4096: calls.append("means") or real_means(g, piece))
+    monkeypatch.setattr(pcd, "compute_pc_diagnostics", lambda *a, **k: calls.append("pca") or real_pcd(*a, **k))
+    f1 = guigwas.allele_frequencies(state, "id-1", r["geno_imputed"])
+    d1 = guigwas.pc_diagnostics(state, "id-1", r["Z_for_pca"])
+    assert guigwas.allele_frequencies(state, "id-1", r["geno_imputed"]) is f1        # a rerun: kept
+    assert guigwas.pc_diagnostics(state, "id-1", r["Z_for_pca"]) is d1
+    assert calls == ["means", "pca"]
+    _eq_array(f1, real_means(r["geno_imputed"]) / 2.0, "allele frequencies")
+    assert not f1.flags.writeable
+    ref = real_pcd(r["Z_for_pca"], n=int(r["Z_for_pca"].shape[0]), m=int(r["Z_for_pca"].shape[1]),
+                   prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000}, spectrum_depth=20)
+    assert d1["spectrum"].to_csv() == ref["spectrum"].to_csv()
+    guigwas.allele_frequencies(state, "id-2", r["geno_imputed"])                     # another table
+    guigwas.pc_diagnostics(state, "id-2", r["Z_for_pca"])
+    assert calls == ["means", "pca", "means", "pca"]
+    assert {guigwas.FREQ_KEY, guigwas.PC_DIAG_KEY} <= set(guigwas.SESSION_KEYS)       # Clear drops them

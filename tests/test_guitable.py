@@ -348,3 +348,34 @@ def test_no_vcf_bytes_are_kept_in_the_session():
         assert "VCF_BYTES::" not in text, f
         assert "_persist_vcf_bytes" not in text, f
         assert not re.search(r"session_state[^\n]*vcf_bytes", text), f
+
+
+def test_the_page_plan_counts_a_files_records_once(tmp_path, monkeypatch):
+    """The page plans on every rerun. A gzip VCF that is not BGZF has its records counted by reading
+    the whole file; with the sizes kept per file identity (vcf_size_of) that happens once, until
+    Clear, and the plan is the same."""
+    import gzip
+
+    gz = tmp_path / "v.vcf.gz"
+    gz.write_bytes(gzip.compress(_gt_vcf(tmp_path).read_bytes()))     # plain gzip: counted
+    counted = []
+    real = sp.count_records
+    monkeypatch.setattr(sp, "count_records", lambda p: counted.append(1) or real(p))
+    args = dict(choice="auto", store_base=tmp_path, models=("mlm", "mlmm", "farmcpu"), free_disk=100 * GB)
+    for available in (16 * GB, 1):                                     # fits / too big: refined
+        counted.clear()
+        plain = [sp.plan(gz, available=available, **args) for _ in range(2)]
+        assert len(counted) == 2                                       # once per plan
+        counted.clear()
+        ident = gt.file_identity(gz)
+        kept = [sp.plan(gz, available=available, size_of=gt.vcf_size_of(ident), **args) for _ in range(3)]
+        assert len(counted) == 1                                       # once per file identity
+        for p in kept:
+            assert (p.mode, p.message, p.estimate_mib, p.size, p.reason) == \
+                (plain[0].mode, plain[0].message, plain[0].estimate_mib, plain[0].size, plain[0].reason)
+        gt.forget_file_identities()                                    # Clear: counted again
+    plain_vcf = _gt_vcf(tmp_path)
+    counted.clear()
+    for _ in range(3):                                                 # a bound, then an exact count
+        sp.plan(plain_vcf, available=1, size_of=gt.vcf_size_of(gt.file_identity(plain_vcf)), **args)
+    assert len(counted) == 1

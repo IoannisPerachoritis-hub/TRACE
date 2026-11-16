@@ -288,6 +288,39 @@ def column_means(geno_imputed, piece=4096):
     return out
 
 
+# The QC report's allele frequencies and the PC spectrum, once per table identity (one entry each,
+# the current table's), as M_eff: a rerun of the page does not read the table or redo the PCA.
+FREQ_KEY = "_trace_qc_allele_freq"
+PC_DIAG_KEY = "_trace_pc_diagnostics"
+
+
+def allele_frequencies(state, table_key, geno_imputed):
+    """``column_means(geno_imputed) / 2.0`` (the QC report's MAF histogram), computed once per
+    ``table_key`` (the trait table's identity) and kept in the session ``state`` (read-only)."""
+    hit = state.get(FREQ_KEY)
+    if hit is not None and hit[0] == table_key:
+        return hit[1]
+    freq = column_means(geno_imputed) / 2.0
+    freq.setflags(write=False)
+    state[FREQ_KEY] = (table_key, freq)
+    return freq
+
+
+def pc_diagnostics(state, table_key, Z):
+    """The page's PC-selection diagnostics of the pruned table ``Z`` (gwas.pc_diagnostics with the
+    page's settings), computed once per ``table_key`` and kept in the session ``state``."""
+    hit = state.get(PC_DIAG_KEY)
+    if hit is not None and hit[0] == table_key:
+        return hit[1]
+    from gwas.pc_diagnostics import compute_pc_diagnostics
+
+    out = compute_pc_diagnostics(Z, n=int(Z.shape[0]), m=int(Z.shape[1]),
+                                 prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
+                                 spectrum_depth=20)
+    state[PC_DIAG_KEY] = (table_key, out)
+    return out
+
+
 # ----------------------------------------------------------------------------- subsampling
 def subsampling_workers_fit(n_samples, n_snps_, n_jobs, available=None):
     """(fits, need_bytes, free_bytes): whether ``n_jobs`` subsampling workers fit in the free
@@ -373,7 +406,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
                           subsampling=bool(getattr(options, "subsampling", False)),
                           boot_jobs=getattr(options, "boot_jobs", 1),
                           export_qc=bool(getattr(options, "export_qc", False)),
-                          impute=getattr(options, "impute", "mean"), estimate=estimate)
+                          impute=getattr(options, "impute", "mean"), estimate=estimate,
+                          size_of=guitable.vcf_size_of(file_identity))
     if plan.stop:
         raise PlanStop(guitable.page_stop(plan, work_dir))
     parsed = table(file_identity, plan.mode, vcf_path, work_dir)
@@ -387,7 +421,7 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
 SESSION_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_", "BOOT_GWAS::")
 SESSION_KEYS = (
     "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
-    "_vcf_live", "_vcf_save_failed",
+    "_vcf_live", "_vcf_save_failed", FREQ_KEY, PC_DIAG_KEY,
     "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
     "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
     "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",

@@ -979,8 +979,10 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     pheno_hash = _pheno_raw_fp
 
     # --- Where the genotype table is kept: checked before anything is read ---
+    # (the VCF's size is read once per file identity, not on every rerun)
     _geno_plan = _storeplan.plan(vcf_path, choice=geno_store_choice, store_base=geno_work_dir,
-                                 models=("mlm", "mlmm", "farmcpu"), impute=impute_method)
+                                 models=("mlm", "mlmm", "farmcpu"), impute=impute_method,
+                                 size_of=_gt.vcf_size_of(vcf_hash))
     st.caption(_gt.page_message(_geno_plan))
     if geno_work_dir.exists():
         # table folders and saved uploads that an earlier run or server left (never this server's)
@@ -1281,7 +1283,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                            "(no valid genomic position).")
             _geno_imp = results["geno_imputed"]
             try:
-                _freq = _gg.column_means(_geno_imp) / 2.0     # read in pieces on disk
+                # column means / 2, read in pieces on disk; once per table identity
+                _freq = _gg.allele_frequencies(st.session_state, _table_id, _geno_imp)
             except Exception:
                 _stop_if_table_closed(_parsed)
                 raise
@@ -1327,12 +1330,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 st.info("Prepare/run the GWAS first to compute the PC spectrum.")
             else:
                 try:
-                    from gwas.pc_diagnostics import compute_pc_diagnostics
-                    _diag = compute_pc_diagnostics(
-                        _Zdiag, n=int(_Zdiag.shape[0]), m=int(_Zdiag.shape[1]),
-                        prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
-                        spectrum_depth=20,
-                    )
+                    # the spectrum of the pruned table, once per table identity
+                    _diag = _gg.pc_diagnostics(st.session_state, _table_id, _Zdiag)
                     _sp = _diag["spectrum"]
                     # Plot first: variance explained per PC (%) + cumulative on a secondary axis --
                     # what a user reads to choose a count (raw eigenvalues are scale-dependent; hidden below).

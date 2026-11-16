@@ -297,7 +297,7 @@ def _calls_text(size):
 
 def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=False, boot_jobs=1,
          export_qc=False, impute="mean", available=None, free_disk=None, one_piece_cells=None,
-         estimate=None):
+         estimate=None, size_of=None):
     """Where the table is kept for this run, decided before the VCF is read.
 
     auto: in memory when the estimate is at most AUTO_MEMORY_FRACTION of the free memory, else
@@ -308,13 +308,16 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
     ``available`` and ``free_disk`` (bytes) replace the measured values (tests). ``estimate``
     replaces estimate_memory_mib for the choice (same signature; the GUI passes its own rule,
     since an open GUI session keeps more than a CLI run). The plan's metadata() always records
-    the CLI's estimate, so run_metadata.json is the same whichever program made the run."""
+    the CLI's estimate, so run_metadata.json is the same whichever program made the run.
+    ``size_of`` replaces vcf_size (same signature): the GUI keeps a file's sizes by its identity,
+    so a rerun of its page does not count the records again."""
     estimate_fn = estimate_memory_mib if estimate is None else estimate
+    size_fn = vcf_size if size_of is None else size_of
     if one_piece_cells is None:
         from gwas.storepipe import one_piece_cells as _opc
         one_piece_cells = _opc()
     try:
-        size = vcf_size(vcf_path)
+        size = size_fn(vcf_path)
     except Exception:          # unreadable here: the reader then gives the usual message
         size = VcfSize(0, 0, True, "not read", 0)
     avail = available_memory_bytes() if available is None else int(available)
@@ -328,7 +331,7 @@ def plan(vcf_path, choice="auto", store_base=".", models=("mlm",), subsampling=F
         nonlocal size
         if not size.exact:
             try:
-                size = vcf_size(vcf_path, exact=True)
+                size = size_fn(vcf_path, exact=True)
             except Exception:
                 pass
         return est(size)
