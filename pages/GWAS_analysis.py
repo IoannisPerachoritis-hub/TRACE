@@ -24,7 +24,7 @@ from gwas.utils import (
 from gwas.io import load_vcf_cached, _clean_chr_series
 from gwas.qc import gwas_pipeline, allele_freq_from_called_dosage
 from gwas import guitable as _gt
-from gwas import storeplan as _sp
+from gwas import storeplan as _storeplan
 from pathlib import Path as _Path
 from gwas.windows import ld_window_kb
 from utils.pub_theme import plotly_html_bytes
@@ -1038,12 +1038,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     pheno_hash = _pheno_raw_fp
 
     # --- Where the genotype table is kept: checked before anything is read ---
-    _geno_plan = _sp.plan(vcf_path, choice=geno_store_choice, store_base=geno_work_dir,
-                          models=("mlm", "mlmm", "farmcpu"), impute=impute_method)
+    _geno_plan = _storeplan.plan(vcf_path, choice=geno_store_choice, store_base=geno_work_dir,
+                                 models=("mlm", "mlmm", "farmcpu"), impute=impute_method)
     st.caption(_gt.page_message(_geno_plan))
     if geno_work_dir.exists():
         _own = _gt.own_folders()
-        for _stale_dir, _stale_bytes in _sp.stale_store_folders(geno_work_dir):
+        for _stale_dir, _stale_bytes in _storeplan.stale_store_folders(geno_work_dir):
             if _stale_dir not in _own:
                 st.warning(
                     f"A genotype table folder of an earlier TRACE run that did not close is "
