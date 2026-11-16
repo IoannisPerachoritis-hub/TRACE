@@ -8,12 +8,9 @@ build_plotly_template()
 import hashlib
 import logging
 
-from gwas.ld import (
-    filter_contained_blocks, extract_block_geno_for_paper,
-    maf_from_matrix, anova_eta_sq_from_labels,
-)
+from gwas import guipost as _gp
+from gwas.ld import filter_contained_blocks
 from gwas.utils import canonicalize_chr, align_pheno_to_geno, resolve_trait_column, check_data_version
-from gwas.haplotype import mlg_labels_for_block
 from pages._ld_tabs import LDContext
 from pages._ld_tabs._decay import decay_run_label
 from gwas.windows import ld_window_kb
@@ -31,17 +28,17 @@ from pages._ld_tabs._window import select_window
 def _hash_df(df: pd.DataFrame) -> str:
     h = pd.util.hash_pandas_object(df, index=True).values
     return hashlib.blake2b(h.tobytes(), digest_size=16).hexdigest()
-def _sync_variant_axes(G, chroms, positions, sid):
+def _sync_variant_axes(n_snps, chroms, positions, sid):
     """
-    Ensure genotype matrix columns match chroms/positions/sid lengths.
-    Fails hard on mismatch to prevent silent data corruption.
+    Ensure the genotype table's SNP count (``n_snps``, its columns) matches the
+    chroms/positions/sid lengths. Fails hard on mismatch to prevent silent data
+    corruption. The table itself is not read.
     """
-    G = np.asarray(G)
     chroms = np.asarray(chroms, dtype=object)
     positions = np.asarray(positions)
     sid = np.asarray(sid, dtype=object)
 
-    nG = G.shape[1]
+    nG = int(n_snps)
     nC = len(chroms)
     nP = len(positions)
     nS = len(sid)
@@ -55,32 +52,11 @@ def _sync_variant_axes(G, chroms, positions, sid):
         )
         st.stop()
 
-    return G, chroms, positions, sid
+    return chroms, positions, sid
 
-# -----------------------------------------------------------
-# Cached wrapper for block genotype extraction
-# Prevents recomputation when only UI changes (e.g. boxplots)
-# -----------------------------------------------------------
-@st.cache_data(show_spinner=False, max_entries=50)
-def cached_extract_block_geno(
-    geno_hard, chroms, positions, sid,
-    block_chr, block_start, block_end,
-    sample_keep_mask=None, maf_threshold=0.01,
-    cache_key: str = "",
-    snp_ids=None,
-):
-    return extract_block_geno_for_paper(
-        geno_hard, chroms, positions, sid,
-        block_chr, block_start, block_end,
-        sample_keep_mask=sample_keep_mask,
-        maf_threshold=maf_threshold,
-        snp_ids=snp_ids,
-    )
 # --------------------------------------------------
-# LD matrix cache (robust, avoids re-hashing big arrays)
+# LD matrix cache (bounded; keyed by the table's identity and the window)
 # --------------------------------------------------
-from collections import OrderedDict
-
 def get_r2_cached(
     G: np.ndarray,
     pos: np.ndarray | None = None,
@@ -88,40 +64,26 @@ def get_r2_cached(
     cache_key: str | None = None,
 ):
     """
-    Compute LD r² with LRU caching.
+    Compute LD r² of the window ``G`` (samples x SNPs) with LRU caching.
 
-    Prefer passing an explicit cache_key (e.g. "r2::chr3:1000-5000")
-    for reliable, collision-free caching.
+    The tabs pass cache_key = gwas.guipost.r2_key(...), which names the table's identity,
+    its rows and the window's SNPs. Without one the window's own values are the key.
     """
     from gwas.ld import pairwise_r2
 
     if cache_key is None:
-        # Fallback: shape + boundary positions (fast, mostly safe)
-        pos_sig = ""
-        if pos is not None:
-            p = np.asarray(pos, int)
-            pos_sig = f"::{p[0]}:{p[-1]}:{len(p)}"
-        cache_key = f"r2::{G.shape}{pos_sig}::minpair{int(min_pair_n)}"
+        cache_key = _gp.window_r2_key(G, min_pair_n)
 
-    if "r2_cache" not in st.session_state:
-        st.session_state["r2_cache"] = OrderedDict()
-
-    cache = st.session_state["r2_cache"]
+    cache = _gp.bounded(st.session_state, "r2_cache")
     MAX_R2_CACHE = 10
 
-    if cache_key in cache:
-        cache.move_to_end(cache_key)
-        return cache[cache_key]
+    hit = _gp.recall(cache, cache_key)
+    if hit is not None:
+        return hit
 
     r2 = pairwise_r2(np.asarray(G, float), min_pair_n=int(min_pair_n))
     r2 = np.clip(r2, 0.0, 1.0)
-    cache[cache_key] = r2
-    cache.move_to_end(cache_key)
-
-    while len(cache) > MAX_R2_CACHE:
-        cache.popitem(last=False)
-
-    return r2
+    return _gp.remember(cache, cache_key, r2, MAX_R2_CACHE)
 
 # -------------------------------------------
 # LD utilities from gwas/ld.py
@@ -152,189 +114,25 @@ except ImportError:
     except ImportError:
         _HAS_ANNOTATION = False
 
-# -------------------------------------------
-# Haplotype GWAS (import directly from gwas.haplotype
-# to avoid triggering GWAS_analysis.py top-level UI)
-# -------------------------------------------
-from gwas.haplotype import run_haplotype_block_gwas, run_haplotype_block_gwas_cached
-
-
 # ============================================================
 # Helper: cumulative genomic positions for Manhattan-style plots
 # ============================================================
 from gwas.plotting import compute_cumulative_positions as _prepare_cumpos
 
 
+def compute_block_qc_effects(**kwargs) -> pd.DataFrame:
+    """The LD Blocks & Haplotypes tab's block effects (gwas.guipost.block_qc_effects: block
+    length, SNP counts, MAF, eta^2 of the tested groups), with the session's PCs and selfing
+    mode, as this page always read them. The tab passes the imputed table as it reads it."""
+    return _gp.block_qc_effects(**kwargs, pcs=st.session_state.get("pcs", None),
+                                strict_selfing=st.session_state.get("selfing_mode", False))
 
-# Backward-compatible aliases for renamed functions
-_mlg_labels_for_block = mlg_labels_for_block
-_maf_from_matrix = maf_from_matrix
-_anova_eta_sq_from_labels = anova_eta_sq_from_labels
 
-
-def compute_block_qc_effects(
-    hap_gwas_df: pd.DataFrame,
-    chroms,
-    positions,
-    geno_imputed: np.ndarray,
-    geno_df: pd.DataFrame,
-    pheno_for_hap: pd.DataFrame,
-    trait_col: str,
-    min_hap_count: int,
-    min_group_size: int,
-    compute_maf: bool = True,
-    geno_encoding: str | None = None,
-) -> pd.DataFrame:
-    """
-    Add publication-oriented QC/effect metrics to hap_gwas_df:
-      - Block_length_kb
-      - n_snps_total (in physical window)
-      - n_snps_poly
-      - maf_median, maf_mean (optional)
-      - EtaSq (η²) for MLG ANOVA groups actually tested
-      - n_groups_tested, n_samples_used
-      - Frac_other (based on tested vs total haplotypes, if available)
-    """
-    if hap_gwas_df is None or hap_gwas_df.empty:
-        return hap_gwas_df
-
-    out = hap_gwas_df.copy()
-    out["Block_length_kb"] = (out["End"].astype(int) - out["Start"].astype(int)) / 1000.0
-
-    # “Other” fraction (only if your run_haplotype_block_gwas provides these columns)
-    if ("n_haplotypes" in out.columns) and ("n_tested_haplotypes" in out.columns):
-        denom = out["n_haplotypes"].replace(0, np.nan).astype(float)
-        out["Frac_other"] = 1.0 - (out["n_tested_haplotypes"].astype(float) / denom)
-    else:
-        out["Frac_other"] = np.nan
-
-    chroms_np = np.asarray(chroms).astype(str)
-    pos_np = np.asarray(positions).astype(int)
-
-    trait_col_qc = resolve_trait_column(trait_col, pheno_for_hap)
-
-    # -------------------------------------------------
-    # FIX: enforce genotype sample order alignment
-    # prevents genotype–phenotype mismatches
-    # -------------------------------------------------
-    ph_aligned, y_vec, keep_mask = align_pheno_to_geno(
-        pheno_for_hap,
-        geno_df,
-        trait_col_qc,
-    )
-
-    n_snps_total = []
-    n_snps_poly = []
-    maf_median = []
-    maf_mean = []
-    eta_sq_list = []
-    n_groups_list = []
-    n_used_list = []
-
-    for _, row in out.iterrows():
-        ch = str(row["Chr"])
-        s = int(row["Start"])
-        e = int(row["End"])
-
-        mask = (chroms_np == ch) & (pos_np >= s) & (pos_np <= e)
-        G = np.asarray(geno_imputed[keep_mask, :][:, mask], float)
-
-        n_snps_total.append(int(G.shape[1]))
-
-        if G.shape[1] < 1:
-            n_snps_poly.append(0)
-            maf_median.append(np.nan)
-            maf_mean.append(np.nan)
-            eta_sq_list.append(np.nan)
-            n_groups_list.append(0)
-            n_used_list.append(int(np.isfinite(y_vec).sum()))
-            continue
-
-        var = np.nanvar(G, axis=0)
-        poly = var > 0
-        n_snps_poly.append(int(np.sum(poly)))
-
-        # MAF summaries
-        if compute_maf and np.any(poly):
-            enc = geno_encoding
-            maf = _maf_from_matrix(G[:, poly], enc)
-            maf_median.append(float(np.nanmedian(maf)))
-            maf_mean.append(float(np.nanmean(maf)))
-        else:
-            maf_median.append(np.nan)
-            maf_mean.append(np.nan)
-
-        # Effect size η² using the same MLG grouping logic as permutation test
-        # (collapse rare haplotypes and drop too-small groups + "Other")
-        keep_y = np.isfinite(y_vec)
-        if keep_y.sum() < 5:
-            eta_sq_list.append(np.nan)
-            n_groups_list.append(0)
-            n_used_list.append(int(keep_y.sum()))
-            continue
-
-        G2 = G[keep_y, :]
-        y2 = y_vec[keep_y]
-
-        # ---- PC-residualize phenotype for η² (match haplotype analysis test) ----
-        pcs_for_eta = st.session_state.get("pcs", None)
-        if pcs_for_eta is not None:
-            try:
-                pcs_arr = np.asarray(pcs_for_eta, float)
-                # align to same keep_mask used above
-                pcs_sub = pcs_arr[keep_mask, :][keep_y, :]
-                X = np.column_stack([np.ones(pcs_sub.shape[0]), pcs_sub])
-                beta, *_ = np.linalg.lstsq(X, y2, rcond=None)
-                y2 = y2 - X @ beta
-            except Exception:
-                pass  # fall back to unadjusted η² if alignment fails
-
-        if G2.shape[1] < 2:
-            eta_sq_list.append(np.nan)
-            n_groups_list.append(0)
-            n_used_list.append(int(len(y2)))
-            continue
-
-        mlg, keep_mlg = _mlg_labels_for_block(
-            G2,
-            min_hap_count=min_hap_count,
-            return_mask=True,
-            strict_selfing=st.session_state.get("selfing_mode", False),
-            geno_encoding=geno_encoding,
-        )
-
-        y2 = y2[keep_mlg]
-
-        df = pd.DataFrame({
-            "MLG": mlg,
-            "y": y2
-        })
-
-        counts = df["MLG"].value_counts()
-        valid = [g for g in counts.index if (counts[g] >= int(min_group_size) and g != "Other")]
-
-        if len(valid) < 2:
-            eta_sq_list.append(np.nan)
-            n_groups_list.append(int(len(valid)))
-            n_used_list.append(int(len(y2)))
-            continue
-
-        df = df[df["MLG"].isin(valid)].copy()
-        eta_sq, n_groups, n_used = _anova_eta_sq_from_labels(df["y"].values, df["MLG"].values)
-
-        eta_sq_list.append(eta_sq)
-        n_groups_list.append(n_groups)
-        n_used_list.append(n_used)
-
-    out["n_snps_total"] = n_snps_total
-    out["n_snps_poly"] = n_snps_poly
-    out["maf_median"] = maf_median
-    out["maf_mean"] = maf_mean
-    out["EtaSq"] = eta_sq_list
-    out["n_groups_tested_effect"] = n_groups_list
-    out["n_samples_used_effect"] = n_used_list
-
-    return out
+def _released():
+    """The session's table file was closed after the GWAS page left it here (Clear session
+    data, or the server made room for another dataset): say so plainly and stop."""
+    st.info(_gp.RELEASED_MESSAGE)
+    st.stop()
 
 # --------------------------------------------------------
 # 1. Sanity: require genotype / phenotype (GWAS resolved below)
@@ -348,9 +146,12 @@ def ld_analysis_page():
     # in the page body / their tabs, not the sidebar; see the "Block table filter"
     # row above the tabs and the LD Blocks & Haplotypes tab.
 
-    required_keys = ["geno_dosage_raw", "geno_imputed", "chroms", "positions", "sid", "geno_df"]
+    # The genotype table comes only through the session's table object (the GWAS page's
+    # gwas.guitable.SessionTable): its identity, the table in memory or the view of the
+    # table on disk, and its SNP and sample labels.
+    required_keys = ["geno_table"]
 
-    missing = [k for k in required_keys if k not in st.session_state]
+    missing = [k for k in required_keys if st.session_state.get(k) is None]
     if missing:
         st.error(
             "Missing required genotype objects in session state:\n\n"
@@ -430,12 +231,29 @@ def ld_analysis_page():
     # --------------------------------------------------------
     # 3. Pull shared objects
     # --------------------------------------------------------
-    positions = st.session_state["positions"]
-    sid = st.session_state["sid"]
+    geno_table = st.session_state["geno_table"]
+    # a table on disk can be closed while the session still holds it (Clear session data in
+    # any session, or the server's registry making room): stop before any read
+    if _gp.table_released(geno_table):
+        _released()
+    positions = geno_table.positions
+    sid = geno_table.sid
 
-    chroms = canonicalize_chr(st.session_state["chroms"])
+    chroms = canonicalize_chr(geno_table.chroms)
 
-    geno_df = st.session_state["geno_df"]
+    # The genotype frame's index is all this page reads of it (the sample IDs); the shared
+    # functions it is passed to read nothing else. On disk the GWAS page keeps the store
+    # frame (the index and a row column) or None, so the IDs then come from GWAS_CTX or
+    # the table.
+    try:
+        _samples = _gp.sample_index(
+            st.session_state.get("geno_df"),
+            (st.session_state.get("GWAS_CTX") or {}).get("geno_index"),
+            geno_table.iid)
+    except ValueError as e:
+        st.error(str(e))
+        st.stop()
+    geno_df = pd.DataFrame(index=_samples)
     pcs = st.session_state.get("pcs", None)
     geno_encoding = st.session_state.get("geno_encoding", None)
 
@@ -447,41 +265,29 @@ def ld_analysis_page():
         geno_df,
         ld_trait,
     )
-    _geno_ld_aligned = None  # lazy, built after geno_ld is ready
     # -------------------------------------------------
-    # Canonical genotype matrices (SIMPLIFIED)
+    # The genotype table, read in windows and blocks (gwas.guipost.PostTable)
     # -------------------------------------------------
-
-    # LD uses imputed dosages directly (stable LD estimation)
-    geno_ld = np.asarray(st.session_state["geno_imputed"], float)
-
-    # Pre-masked genotype matrix (phenotype-aligned)
-    _geno_ld_aligned = geno_ld[_keep_mask_global, :]
-
-    # -------------------------------------------------
-    # Hard-call conversion ONLY when encoding supports it
-    # -------------------------------------------------
+    # LD uses imputed dosages directly (stable LD estimation): post.ld reads each window
+    # as the float64 copy np.asarray(geno_imputed, float) gave, post.ld_aligned its
+    # phenotype-aligned rows, and post.hard the hard calls (np.rint) when the encoding
+    # supports them, else the dosages. No whole copy of the table is made or kept.
     geno_encoding = st.session_state.get("geno_encoding", "dosage012")
+    post = _gp.post_table(geno_table, _keep_mask_global, geno_encoding=geno_encoding,
+                          samples=geno_df.index)
 
-    if geno_encoding == "dosage012":
-        geno_hard = np.rint(geno_ld)
-    else:
-        geno_hard = geno_ld.copy()
-
-    geno_hard, chroms_now, pos_now, sid_now = _sync_variant_axes(
-        geno_hard,
+    chroms_now, pos_now, sid_now = _sync_variant_axes(
+        post.shape[1],
         chroms,
         positions,
         sid,
     )
 
-    # Store LD-local arrays (both LD-specific and legacy keys)
-    st.session_state["ld_geno_hard"] = geno_hard
+    # Store the LD page's SNP labels (both LD-specific and legacy keys)
     st.session_state["ld_chroms"] = chroms_now
     st.session_state["ld_positions"] = pos_now
     st.session_state["ld_sid"] = sid_now
 
-    st.session_state["geno_hard"] = geno_hard
     st.session_state["chroms"] = chroms_now
     st.session_state["positions"] = pos_now
     st.session_state["sid"] = sid_now
@@ -494,8 +300,7 @@ def ld_analysis_page():
     # -------------------------------------------------
     # FIX: keep SNP metadata ALWAYS aligned with genotype columns
     # -------------------------------------------------
-    G_now = np.asarray(geno_hard)
-    m_now = int(G_now.shape[1])
+    m_now = int(post.shape[1])
 
     chroms_now = np.asarray(chroms, dtype=object)
     pos_now = np.asarray(positions, dtype=int)
@@ -506,7 +311,7 @@ def ld_analysis_page():
     if not (len(chroms_now) == len(pos_now) == len(sid_now) == m_now):
         st.error(
             "SNP axis mismatch detected:\n"
-            f"geno_hard columns = {m_now}\n"
+            f"genotype columns  = {m_now}\n"
             f"chroms            = {len(chroms_now)}\n"
             f"positions         = {len(pos_now)}\n"
             f"sid               = {len(sid_now)}\n\n"
@@ -570,6 +375,9 @@ def ld_analysis_page():
     sort_cols = [c for c in ["Chr", "Pos", "SNP", "PValue"] if c in gwas_df.columns]
     gwas_hash = _hash_df(
         gwas_df.sort_values(sort_cols).reset_index(drop=True) if sort_cols else gwas_df.reset_index(drop=True))
+    # the blocks depend on the GWAS results and on the table (its identity and the rows the
+    # detection reads): rebuilt when any of them changes
+    auto_sig = f"{gwas_hash}::T{post.identity}::R{post.keep_key}"
 
     existing = st.session_state["haplo_df_auto"].get(trait_col, None)
     existing_empty = (existing is None) or (isinstance(existing, pd.DataFrame) and existing.empty)
@@ -580,13 +388,19 @@ def ld_analysis_page():
     needs_rebuild = (
             (trait_col not in st.session_state["haplo_df_auto"])
             or existing_empty
-            or (old_hash != gwas_hash)
+            or (old_hash != auto_sig)
     )
 
     if needs_rebuild:
         with st.spinner("Auto-detecting LD blocks (first visit or GWAS changed)…"):
-            geno_ld_masked = _geno_ld_aligned
-            haplo_tmp = find_ld_clusters_genomewide(
+            # the phenotype-aligned rows, read window by window (the detector's bounded r2
+            # cache keeps the last windows). When every sample is aligned and the LD Blocks
+            # tab is at its defaults, the tab's detection is this one: SharedDetection keeps
+            # the result for it, so a first visit detects once.
+            geno_ld_masked = post.ld_aligned
+            haplo_tmp = _gp.SharedDetection(
+                st.session_state, find_ld_clusters_genomewide, post.identity,
+            ).find_ld_clusters_genomewide(
                 gwas_df=gwas_df,
                 chroms=chroms,
                 positions=positions,
@@ -602,8 +416,11 @@ def ld_analysis_page():
                 adj_r2_min=adj_r2_min_global,
             )
 
-            st.session_state["haplo_df_auto"][trait_col] = haplo_tmp
-            st.session_state["haplo_df_auto_hash"][trait_col] = gwas_hash
+            # kept for the most recent traits only (a fixed number)
+            _gp.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_tmp,
+                            _gp.TRAIT_CACHE_MAX)
+            _gp.keep_recent(st.session_state["haplo_df_auto_hash"], trait_col, auto_sig,
+                            _gp.TRAIT_CACHE_MAX)
 
             if isinstance(haplo_tmp, pd.DataFrame) and not haplo_tmp.empty:
                 st.session_state["ld_blocks_final"] = haplo_tmp.copy()
@@ -644,14 +461,18 @@ def ld_analysis_page():
 
     if not isinstance(st.session_state.get("haplo_df_auto"), dict):
         st.session_state["haplo_df_auto"] = {}
-    st.session_state["haplo_df_auto"][trait_col] = haplo_df_auto
+    _gp.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_df_auto,
+                    _gp.TRAIT_CACHE_MAX)
 
     # ============================================================
     # Build shared context for all tabs
     # ============================================================
+    # The tabs get the table's readers (windows and blocks, never a whole table), its
+    # identity for their cache keys, and the GWAS page's table as it is (the haplotype PCA
+    # panel's fallback).
     _ld_ctx = LDContext(
-        geno_ld=geno_ld,
-        geno_hard=geno_hard,
+        geno_ld=post.ld,
+        geno_hard=post.hard,
         chroms=chroms,
         positions=positions,
         sid=sid,
@@ -661,7 +482,7 @@ def ld_analysis_page():
         ph_aligned=_ph_aligned_global,
         y_aligned=_y_aligned_global,
         keep_mask=_keep_mask_global,
-        geno_ld_aligned=_geno_ld_aligned,
+        geno_ld_aligned=post.ld_aligned,
         gwas_df=gwas_df,
         haplo_df_auto=haplo_df_auto,
         ld_decay_kb=ld_decay_kb,
@@ -670,10 +491,12 @@ def ld_analysis_page():
         pcs=pcs,
         geno_encoding=geno_encoding,
         has_annotation=_HAS_ANNOTATION,
-        geno_dosage_raw=st.session_state.get("geno_dosage_raw"),
+        geno_dosage_raw=post.raw,
         meff_val=st.session_state.get("meff_val"),
         sig_rule_label=st.session_state.get("sig_rule", ""),
         custom_thresh=st.session_state.get("custom_sig_thresh"),
+        table_identity=post.identity,
+        geno_view=post.view,
     )
 
     # ============================================================
@@ -708,16 +531,20 @@ def ld_analysis_page():
         tab_gene_annotation.render(_ld_ctx)
 
     with tab2:
+        # the haplotype test is kept in the session under its key (which names the table's
+        # identity); it is not wrapped in st.cache_data, which would hash the whole table
         tab_genome_wide.render(
             _ld_ctx,
             get_r2_cached=get_r2_cached,
-            cached_extract_block_geno=cached_extract_block_geno,
+            cached_extract_block_geno=None,
             compute_block_qc_effects=compute_block_qc_effects,
-            run_haplotype_block_gwas_cached_fn=run_haplotype_block_gwas_cached,
+            run_haplotype_block_gwas_cached_fn=_gp.run_haplotype_tests,
         )
 
 
 
 
-# Always run the page when Streamlit imports the file
-ld_analysis_page()
+# Always run the page when Streamlit imports the file. A table file closed while this run
+# reads it ends the run with the same plain message as the check at the top.
+with _gp.released_guard(lambda: st.session_state.get("geno_table"), _released):
+    ld_analysis_page()

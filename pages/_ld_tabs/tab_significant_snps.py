@@ -43,6 +43,7 @@ def render(ctx: LDContext):
         st.info("Run a GWAS first. This tab reads the GWAS results in session.")
         return
 
+    from gwas import guipost
     from gwas.sigtable import build_significant_snp_table, project_unblocked
     from gwas.significance import frame_for_rule, rule_from_streamlit
 
@@ -64,17 +65,28 @@ def render(ctx: LDContext):
     from gwas.isolated import edge_flank_bp_from_decay
     edge_flank_bp = edge_flank_bp_from_decay(ctx.ld_decay_kb)
     ld_decay_bp = int(ctx.ld_decay_kb * 1000) if ctx.ld_decay_kb else None
-    try:
-        # frame_for_rule: this tab's own custom p-value, not a stored Significant_Custom
-        sig = build_significant_snp_table(
-            frame_for_rule(gwas_df, rule), ctx.haplo_df_auto, rule, ctx.chroms, ctx.positions, ctx.sid,
-            geno_dosage_raw=ctx.geno_dosage_raw, genes=None,
-            seed_p_used=1e-5, top_n_used=0, edge_flank_bp=edge_flank_bp,
-            ld_decay_bp=ld_decay_bp, geno_encoding=ctx.geno_encoding or "dosage012",
-        )
-    except Exception as e:  # never crash the page on a malformed frame
-        st.error(f"Could not build the significant-SNP table: {e}")
-        return
+    geno_encoding = ctx.geno_encoding or "dosage012"
+    seed_p_used, top_n_used = 1e-5, 0
+    # built once per input and kept for reruns: a bounded session cache keyed by the table,
+    # the labels, the GWAS results, the blocks, the rule and every argument of the build
+    sig_key = guipost.sigtable_key(ctx, rule, edge_flank_bp, ld_decay_bp, geno_encoding,
+                                   seed_p_used, top_n_used)
+    sig_cache = guipost.bounded(st.session_state, "_sigtable_cache")
+    sig = guipost.recall(sig_cache, sig_key)
+    if sig is None:
+        try:
+            # frame_for_rule: this tab's own custom p-value, not a stored Significant_Custom
+            sig = build_significant_snp_table(
+                frame_for_rule(gwas_df, rule), ctx.haplo_df_auto, rule, ctx.chroms, ctx.positions, ctx.sid,
+                geno_dosage_raw=ctx.geno_dosage_raw, genes=None,
+                seed_p_used=seed_p_used, top_n_used=top_n_used, edge_flank_bp=edge_flank_bp,
+                ld_decay_bp=ld_decay_bp, geno_encoding=geno_encoding,
+            )
+        except Exception as e:  # never crash the page on a malformed frame
+            st.error(f"Could not build the significant-SNP table: {e}")
+            return
+        guipost.remember(sig_cache, sig_key, sig, guipost.RESULT_CACHE_MAX)
+    sig = sig.copy()           # the cache keeps its own table
 
     if sig.empty:
         st.info(f"No SNPs pass {rule.label}.")
