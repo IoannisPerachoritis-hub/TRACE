@@ -164,6 +164,11 @@ class GenotypeStore:
                 self._fh = None
             self._std_cache.clear()
 
+    @property
+    def closed(self):
+        """True once the table file is closed (read only): every read then raises ValueError."""
+        return self._fh is None
+
     def _read_run(self, a, b):
         """Variants a..b-1 as an int8 (b - a, N) C array (one file read)."""
         a, b = int(a), int(b)

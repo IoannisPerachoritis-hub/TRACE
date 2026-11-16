@@ -400,6 +400,56 @@ def test_bounded_caches():
     assert s["_order"] == ["HAPGWAS::4", "HAPGWAS::5"]
 
 
+# --------------------------------------------------------- a table closed meanwhile (Clear)
+def test_a_closed_disk_table_is_released(tmp_path):
+    """Clear session data and the registry's eviction close a table file: GenotypeStore.closed
+    says so (read only), table_released finds it through the session's table object, and
+    released_guard turns the read error into the page's plain stop. A table in memory is never
+    released; other errors pass through unchanged."""
+    from types import SimpleNamespace
+
+    from gwas.genostore import LazyColumns, write_store
+    from gwas.guitable import SessionTable
+
+    G = _array("F", np.float32)
+    store = write_store(tmp_path / "s", G)
+    view = LazyColumns(store, np.arange(M), fill=np.zeros(M, dtype=np.float32))
+    disk = SessionTable(identity="t", file_identity="f", mode="disk",
+                        parsed=SimpleNamespace(store=store), view=view,
+                        raw=LazyColumns(store, np.arange(M)))
+    memory = SessionTable(identity="t", file_identity="f", mode="memory", view=G, raw=G)
+    ld = gp.reader(disk.view, np.float64)
+    assert not store.closed and not gp.table_released(disk) and not gp.table_released(memory)
+    assert ld[:, np.arange(3)].shape == (N, 3)
+    store.close()
+    assert store.closed and gp.table_released(disk)
+    assert gp.table_released(SessionTable(identity="t", file_identity="f", mode="disk", view=view))
+    assert not gp.table_released(memory) and not gp.table_released(None)
+    with pytest.raises(ValueError, match="is closed"):
+        ld[:, np.arange(3)]
+    with pytest.raises(AttributeError):
+        store.closed = False                         # read only
+
+    class Released(Exception):
+        pass
+
+    def on_released():
+        raise Released()
+
+    with pytest.raises(Released):                    # the table given, or read when it fails
+        with gp.released_guard(disk, on_released):
+            ld[:, np.arange(3)]
+    with pytest.raises(Released):
+        with gp.released_guard(lambda: disk, on_released):
+            ld[:, np.arange(3)]
+    with pytest.raises(ValueError, match="another error"):
+        with gp.released_guard(memory, on_released):
+            raise ValueError("another error")
+    with pytest.raises(KeyError):
+        with gp.released_guard(disk, on_released):
+            raise KeyError("not a read")
+
+
 # --------------------------------------------------------------- the session keys (Clear)
 _FILES = ["pages/Post_GWAS_Analysis.py"] + sorted(
     str(p.relative_to(ROOT)).replace("\\", "/") for p in (ROOT / "pages" / "_ld_tabs").glob("*.py"))

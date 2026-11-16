@@ -31,6 +31,7 @@ remember, keep_recent, remember_family).
 POST_GWAS_SESSION_KEYS / POST_GWAS_SESSION_PREFIXES list every session key the page and its
 tabs write (widget keys excluded), for Clear (gwas.guitable).
 """
+import contextlib
 import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -195,6 +196,42 @@ def post_table(session_table, keep_mask, geno_encoding="dosage012", samples=None
         ld=ld, ld_aligned=ld.lazy_rows(keep), hard=HardCalls(ld, geno_encoding),
         raw=reader(session_table.raw), view=view,
         samples=pd.DataFrame(index=samples), keep_mask=keep)
+
+
+# ------------------------------------------------------------ a table released meanwhile
+RELEASED_MESSAGE = ("This run's genotype table was released: Clear session data was used, or "
+                    "another dataset took its place on this server. Run the GWAS page again.")
+
+
+def table_released(session_table):
+    """True when the session's table is a table file that was closed after the GWAS page left
+    it in the session: Clear session data closes the server's tables, and the server's
+    registry closes its least recently used table when another dataset needs the room
+    (gwas.guitable.TableRegistry). A table in memory stays readable while the session holds
+    it."""
+    if session_table is None or str(getattr(session_table, "mode", "")) != "disk":
+        return False
+    for holder in (getattr(session_table, "parsed", None), getattr(session_table, "view", None)):
+        store = getattr(holder, "store", None)
+        if store is not None and bool(getattr(store, "closed", False)):
+            return True
+    return False
+
+
+@contextlib.contextmanager
+def released_guard(session_table, on_released):
+    """Run a block that reads the table. If a read fails because the table file was closed
+    meanwhile (gwas.genostore raises ValueError for a closed table), call ``on_released``
+    (the page shows RELEASED_MESSAGE and stops); any other error propagates unchanged.
+    ``session_table`` is the session's table, or a function returning it when the error
+    happens."""
+    try:
+        yield
+    except ValueError:
+        table = session_table() if callable(session_table) else session_table
+        if table_released(table):
+            on_released()
+        raise
 
 
 # ---------------------------------------------------------------------------------- keys

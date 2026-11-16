@@ -127,6 +127,13 @@ def compute_block_qc_effects(**kwargs) -> pd.DataFrame:
     return _gp.block_qc_effects(**kwargs, pcs=st.session_state.get("pcs", None),
                                 strict_selfing=st.session_state.get("selfing_mode", False))
 
+
+def _released():
+    """The session's table file was closed after the GWAS page left it here (Clear session
+    data, or the server made room for another dataset): say so plainly and stop."""
+    st.info(_gp.RELEASED_MESSAGE)
+    st.stop()
+
 # --------------------------------------------------------
 # 1. Sanity: require genotype / phenotype (GWAS resolved below)
 # --------------------------------------------------------
@@ -225,6 +232,10 @@ def ld_analysis_page():
     # 3. Pull shared objects
     # --------------------------------------------------------
     geno_table = st.session_state["geno_table"]
+    # a table on disk can be closed while the session still holds it (Clear session data in
+    # any session, or the server's registry making room): stop before any read
+    if _gp.table_released(geno_table):
+        _released()
     positions = geno_table.positions
     sid = geno_table.sid
 
@@ -529,5 +540,7 @@ def ld_analysis_page():
 
 
 
-# Always run the page when Streamlit imports the file
-ld_analysis_page()
+# Always run the page when Streamlit imports the file. A table file closed while this run
+# reads it ends the run with the same plain message as the check at the top.
+with _gp.released_guard(lambda: st.session_state.get("geno_table"), _released):
+    ld_analysis_page()
