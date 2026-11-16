@@ -202,8 +202,9 @@ meanwhile may then use fewer threads, and their last digits differ, as between t
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
 that open the same VCF with the same choice share one table, and the server keeps at most two,
 and a third while a new one is built. It builds one table at a time: a session that needs a new
-table while another is built waits for that build, and then checks the free memory and disk
-again, so the check counts what that build used. The page stops with a plain message when they
+table while another is built waits for that build (its page says "Waiting for another session's
+genotype table to be built…" meanwhile), and then checks the free memory and disk again, so the
+check counts what that build used. The page stops with a plain message when they
 no longer suffice, by the rule of the choice: for Automatic, when an in-memory run would now
 need more than 80% of the free memory (the next run then keeps the table on disk); for In
 memory, more than all of it. When a third is needed, the one used least recently is closed once

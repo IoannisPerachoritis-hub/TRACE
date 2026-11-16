@@ -1033,22 +1033,23 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     _table_reread = _gg.drop_closed_table(st.session_state, vcf_hash, _geno_plan.mode)
     # The server builds one table at a time: a new table's build may wait for another session's,
     # and then checks the free memory and disk again (gwas.guigwas.build_check), stopping plainly
-    # when the plan above no longer holds. A VCF that is gone when its table must be read again
-    # (an upload that Clear session data in another session deleted) is asked for plainly too.
+    # when the plan above no longer holds. Its spinners say which: "Waiting for another session's
+    # genotype table to be built…" during the wait, then "Reading the VCF…" during this session's
+    # own build (gwas.guigwas.table). A VCF that is gone when its table must be read again (an
+    # upload that Clear session data in another session deleted) is asked for plainly too.
     _build_check = _gg.build_check(vcf_path, _geno_plan, geno_work_dir, vcf_hash,
                                    estimate=_gt.gui_estimate_mib)
 
     def _read_table():
         try:
-            return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir, check=_build_check)
+            return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir, check=_build_check,
+                             spinner=st.spinner)
         except _gg.PlanStop as _build_stop:
             _rehydrate_or_stop(str(_build_stop))
         except _gg.VcfGone as _gone:
             _rehydrate_or_stop(str(_gone), level="warning")
 
-    with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
-                    else "Reading the VCF…"):
-        _parsed = _read_table()
+    _parsed = _read_table()
 
     # --- The preprocessing of one trait, kept in the session (one current entry) ---
     # The setup (and the detailed view below) uses the first selected trait that
@@ -1875,7 +1876,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             try:
                 _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
                     vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts,
-                    estimate=_gt.gui_estimate_mib)
+                    estimate=_gt.gui_estimate_mib, spinner=st.spinner)
             except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:
                 _gm_tmp.cleanup()
                 st.error(str(_oc_stop))
@@ -1913,7 +1914,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     for _t, _res, _err, _again in _gg.run_traits_rereading(
                             _parsed, pheno, selected_traits, _opts,
                             lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir,
-                                              check=_oc_check),
+                                              check=_oc_check, spinner=st.spinner),
                             on_start=_on_trait_start, progress=_on_progress):
                         if _again:
                             st.caption(_gg.REREAD_MESSAGE)

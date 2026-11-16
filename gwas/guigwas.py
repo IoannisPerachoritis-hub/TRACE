@@ -151,7 +151,13 @@ def meff(state, table_key, geno_imputed):
 
 
 # ------------------------------------------------------------------------------ the table
-def table(file_identity, mode, vcf_path, work_dir, check=None):
+# The page's spinners while it gets its table: the server builds one table at a time, so a session
+# may first wait for another session's build (of another VCF, or of this one), then build its own.
+WAITING_MESSAGE = "Waiting for another session's genotype table to be built…"
+READING_MESSAGES = {"memory": "Reading the VCF…", "disk": "Reading the VCF into the genotype table on disk…"}
+
+
+def table(file_identity, mode, vcf_path, work_dir, check=None, spinner=None):
     """The server's table of ``vcf_path`` in ``mode`` (gwas.guitable.get_registry): the parsed
     genotypes (gwas.pipeline.ParsedGenotypes, read-only) in memory, or the table file
     (gwas.genostore.StoreParsed) in a folder of the work folder on disk. Shared by the sessions
@@ -159,12 +165,22 @@ def table(file_identity, mode, vcf_path, work_dir, check=None):
     in-memory reader's error, in both modes. ``check`` (build_check) runs when the table has to
     be built, just before the build starts. A VCF that is no longer there raises VcfGone (an
     upload that Clear session data in another session deleted, or a file gone from its
-    location), not FileNotFoundError."""
+    location), not FileNotFoundError. ``spinner`` (st.spinner) shows WAITING_MESSAGE while the
+    call waits for another session's build, and READING_MESSAGES[mode] while it builds the table
+    itself; nothing for a table that is already there."""
     from gwas import guitable
     from gwas.genostore import DeferredParseError
 
+    waiting = building = None
+    if spinner is not None:
+        def waiting():
+            return spinner(WAITING_MESSAGE)
+
+        def building():
+            return spinner(READING_MESSAGES.get(mode, READING_MESSAGES["memory"]))
     try:
-        return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir, check=check)
+        return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir, check=check,
+                                           waiting=waiting, building=building)
     except DeferredParseError as exc:          # on disk: the in-memory parse's own stop
         raise exc.original from None
     except FileNotFoundError:
@@ -550,7 +566,7 @@ class PlanStop(Exception):
     """gwas.storeplan stopped a run before reading (str(): the stop in the page's words)."""
 
 
-def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate=None):
+def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate=None, spinner=None):
     """One-Click's table and its run_metadata.json keys: (parsed, meta, plan).
 
     ``plan`` is gwas.storeplan.plan for One-Click's own options (its models, subsampling and its
@@ -561,7 +577,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
     the call count), which run_trait_pipeline adds to run_metadata.json as cli.py's run does.
     ``estimate`` replaces the CLI's estimate for the choice only (the GUI's own rule); the metadata
     always records the CLI's. Raises PlanStop for a stop, also when a build of the table checks
-    the plan again (build_check). The table is the registry's: One-Click never closes it."""
+    the plan again (build_check). The table is the registry's: One-Click never closes it.
+    ``spinner`` as in table()."""
     from gwas import guitable, storeplan
 
     plan = storeplan.plan(vcf_path, choice=choice, store_base=work_dir,
@@ -574,7 +591,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
     if plan.stop:
         raise PlanStop(guitable.page_stop(plan, work_dir))
     parsed = table(file_identity, plan.mode, vcf_path, work_dir,
-                   check=build_check(vcf_path, plan, work_dir, file_identity, estimate=estimate))
+                   check=build_check(vcf_path, plan, work_dir, file_identity, estimate=estimate),
+                   spinner=spinner)
     meta = plan.metadata(len(parsed.samples), parsed.genotypes.shape[1])
     return parsed, meta, plan
 

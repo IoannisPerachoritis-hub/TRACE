@@ -595,6 +595,64 @@ def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_th
     assert len(reads) == 2 and all("check" in {k.arg for k in n.keywords} for n in reads)
 
 
+def test_the_page_says_when_it_waits_for_another_sessions_build(tmp_path, own_registry, monkeypatch):
+    """The round 2 re-check's q1 m: a session waiting for another session's build saw "Reading the VCF…".
+    The table's spinners now say "Waiting for another session's genotype table to be built…" during the
+    wait and "Reading the VCF…" only during the session's own build (nothing for a table already there),
+    and every table the GWAS page and One-Click read shows them, with no other spinner around."""
+    import ast
+    import contextlib
+    import threading
+
+    from gwas import genostore
+
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    spinners = [ast.unparse(n) for n in ast.walk(page) if isinstance(n, ast.Call) and ast.unparse(n.func) == "st.spinner"]
+    assert not [s for s in spinners if "Reading the VCF" in s]               # none around a wait
+    reads = [n for n in ast.walk(page) if isinstance(n, ast.Call)
+             and ast.unparse(n.func) in ("_gg.table", "_gg.one_click_table")]
+    assert len(reads) == 3
+    assert all({ast.unparse(k.value) for k in n.keywords if k.arg == "spinner"} == {"st.spinner"} for n in reads)
+
+    vcf, _ph = EX1
+    ident = guitable.file_identity(vcf)
+    work = tmp_path / "w"
+    shown = []
+
+    def spinner(text):
+        shown.append(text)
+        return contextlib.nullcontext()
+
+    guigwas.table(ident, "disk", vcf, work, spinner=spinner)                  # its own build
+    assert shown == ["Reading the VCF into the genotype table on disk…"] == [guigwas.READING_MESSAGES["disk"]]
+    shown.clear()
+    guigwas.table(ident, "disk", vcf, work, spinner=spinner)                  # there: nothing
+    assert shown == []
+    real_ingest, started, release = genostore.ingest_vcf, threading.Event(), threading.Event()
+
+    def slow_ingest(*a, **k):
+        started.set()
+        release.wait(30)
+        return real_ingest(*a, **k)
+
+    monkeypatch.setattr(genostore, "ingest_vcf", slow_ingest)
+    other = threading.Thread(target=guigwas.table, args=("another-vcf", "disk", vcf, work))
+    other.start()
+    assert started.wait(30)
+    mine = threading.Thread(target=guigwas.table, args=(ident, "memory", vcf, work), kwargs={"spinner": spinner})
+    mine.start()
+    for _ in range(300):
+        if shown:
+            break
+        mine.join(0.05)
+    mine.join(0.3)
+    assert shown == ["Waiting for another session's genotype table to be built…"] == [guigwas.WAITING_MESSAGE]
+    release.set()
+    other.join(60)
+    mine.join(60)
+    assert shown == [guigwas.WAITING_MESSAGE, "Reading the VCF…"]
+
+
 def test_the_qc_reports_frequencies_and_pc_spectrum_are_kept_per_table(tables, monkeypatch):
     """The QC report's allele frequencies (the table read whole, in pieces on disk) and the PC
     spectrum (a PCA of the pruned table) are made once per table identity, not on every rerun, with

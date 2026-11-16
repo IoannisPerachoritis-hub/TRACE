@@ -483,6 +483,108 @@ def test_a_build_checks_again_once_the_build_before_it_ended(tmp_path, monkeypat
         reg.close_all()
 
 
+def test_a_session_that_waits_for_another_build_is_told_so(tmp_path, monkeypatch):
+    """The round 2 re-check's q1 m: with one build at a time, a session that needs a new table while
+    another session builds one waits, possibly for minutes, and its page said "Reading the VCF…" all
+    along. The registry now says which: the call is in its ``waiting`` context while it waits for the
+    other build, then in its ``building`` context while it checks and builds its own table; a session
+    that builds at once is only in ``building``, and a table already there uses neither. Whatever the
+    contexts raise at their end (a Streamlit stop can, when a spinner is removed), the build lock is
+    released and a table that was built is the registry's."""
+    import contextlib
+    import threading
+    import time
+
+    from gwas import genostore
+
+    reg = gt.TableRegistry()
+    work = tmp_path / "work"
+    real_ingest = genostore.ingest_vcf
+    started, release = threading.Event(), threading.Event()
+    log, log_lock = [], threading.Lock()
+
+    def slow_ingest(*a, **k):
+        started.set()
+        release.wait(30)
+        return real_ingest(*a, **k)
+
+    def phases(name, fail_at_end=()):
+        @contextlib.contextmanager
+        def ctx(kind):
+            with log_lock:
+                log.append((name, kind, "in"))
+            yield
+            with log_lock:
+                log.append((name, kind, "out"))
+            if kind in fail_at_end:
+                raise RuntimeError(f"{name} stopped at the end of {kind}")
+        return {"waiting": lambda: ctx("waiting"), "building": lambda: ctx("building")}
+
+    def wait_for(item):
+        for _ in range(300):
+            with log_lock:
+                if item in log:
+                    return True
+            time.sleep(0.05)
+        return False
+
+    monkeypatch.setattr(genostore, "ingest_vcf", slow_ingest)
+    try:
+        first = threading.Thread(target=reg.get, args=("id-1", "disk", EX1, work), kwargs=phases("A"))
+        first.start()
+        assert started.wait(30)
+        checked = []
+        second = threading.Thread(target=reg.get, args=("id-2", "disk", EX1, work),
+                                  kwargs={**phases("B"), "check": lambda: checked.append(list(log))})
+        second.start()
+        assert wait_for(("B", "waiting", "in"))
+        time.sleep(0.3)
+        assert ("B", "building", "in") not in log and checked == []          # B waits, and is told so
+        release.set()
+        first.join(60)
+        second.join(60)
+        assert log == [("A", "building", "in"), ("B", "waiting", "in"), ("A", "building", "out"),
+                       ("B", "waiting", "out"), ("B", "building", "in"), ("B", "building", "out")]
+        assert checked == [log[:5]]                                          # B's check, in its build
+        log.clear()
+        assert reg.get("id-1", "disk", EX1, work, **phases("C")) is not None and log == []   # there: neither
+        reg.get("id-3", "disk", EX1, work, **phases("D"))                    # no other build: building only
+        assert log == [("D", "building", "in"), ("D", "building", "out")]
+
+        # the contexts raising at their end: the lock is released, a built table is the registry's
+        started.clear()
+        release.clear()
+        log.clear()
+        slow = threading.Thread(target=reg.get, args=("id-4", "disk", EX1, work))
+        slow.start()
+        assert started.wait(30)
+        out = {}
+
+        def stopped_while_waiting():
+            try:
+                reg.get("id-5", "disk", EX1, work, **phases("E", fail_at_end=("waiting",)))
+            except RuntimeError as exc:
+                out["E"] = str(exc)
+
+        waiter = threading.Thread(target=stopped_while_waiting)
+        waiter.start()
+        assert wait_for(("E", "waiting", "in"))
+        release.set()
+        slow.join(60)
+        waiter.join(60)
+        assert out["E"] == "E stopped at the end of waiting" and ("E", "building", "in") not in log
+        assert not reg._build_lock.locked() and ("id-5", "disk") not in reg.keys()
+        with pytest.raises(RuntimeError, match="F stopped at the end of building"):
+            reg.get("id-6", "disk", EX1, work, **phases("F", fail_at_end=("building",)))
+        assert not reg._build_lock.locked() and ("id-6", "disk") in reg.keys()
+        assert _tables_in(work) == sorted(reg.folders())                      # none outside the registry
+        log.clear()
+        assert reg.get("id-6", "disk", EX1, work, **phases("G")) is not None and log == []    # kept: a hit
+    finally:
+        release.set()
+        reg.close_all()
+
+
 # ----------------------------------------------------------- shared kinship arrays
 def test_shared_kinship_and_pcs_are_read_only():
     from gwas import kinship
