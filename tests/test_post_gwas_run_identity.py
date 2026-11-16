@@ -274,6 +274,68 @@ def test_the_ld_blocks_tabs_final_blocks_name_their_trait_and_table(monkeypatch)
                 del st.session_state[k]
 
 
+def test_a_detection_served_from_the_tabs_cache_is_the_final_one(monkeypatch):
+    """The re-check's rc3 case: the LD Blocks tab at r2 0.5, then back at 0.6, whose detection
+    the tab serves from its cache. ld_blocks_final stayed the 0.5 detection under the same key
+    (trait, table), so the GWAS page's block stability aggregated blocks no longer on screen.
+    On a cache hit the tab now writes the blocks on screen, and their key, too."""
+    import streamlit as st
+
+    import pages._ld_tabs.tab_genome_wide as tgw
+    from pages._ld_tabs import LDContext
+
+    rng = np.random.default_rng(6)
+    G = rng.binomial(2, 0.4, (N, M)).astype(float)
+    ids = [f"S{i:02d}" for i in range(N)]
+    positions = (1_000_000 + np.arange(M) * 10_000).astype(np.int64)
+    chroms = np.array(["2"] * M)
+    sid = np.array([f"SL25ch02p{int(p)}" for p in positions])
+    at = {0.6: _blocks(sid, positions),
+          0.5: pd.DataFrame({"Chr": ["2"], "Start (bp)": [int(positions[9])],
+                             "End (bp)": [int(positions[12])], "lead_snp": [str(sid[10])],
+                             "SNP_IDs": [",".join(sid[9:13])], "n_snps": [4]})}
+    pheno = pd.DataFrame({TRAIT: rng.normal(0, 1, N)}, index=ids)
+    gwas_df = pd.DataFrame({"SNP": sid, "Chr": chroms, "Pos": positions,
+                            "PValue": rng.uniform(1e-9, 1.0, M)})
+    detected = []
+
+    def find(**kw):
+        detected.append(kw["ld_threshold"])
+        return at[kw["ld_threshold"]].copy()
+
+    r2 = {"value": 0.6}
+    real_input = st.number_input
+
+    def number_input(label, *a, **k):            # the tab's r2 setting, as a user sets it
+        if label == "r² threshold for cluster definition":
+            return r2["value"]
+        return real_input(label, *a, **k)
+
+    monkeypatch.setattr(tgw, "find_ld_clusters_genomewide", find)
+    monkeypatch.setattr(st, "number_input", number_input)
+    before = set(st.session_state.keys())
+    st.session_state["pheno_used_for_hap"] = pheno
+    try:
+        ctx = LDContext(geno_ld=G, geno_hard=G, chroms=chroms, positions=positions, sid=sid,
+                        geno_df=pd.DataFrame(index=ids), pheno_df=pheno, trait_col=TRAIT,
+                        ph_aligned=pheno, y_aligned=pheno[TRAIT].to_numpy(),
+                        keep_mask=np.ones(N, dtype=bool), geno_ld_aligned=G, gwas_df=gwas_df,
+                        haplo_df_auto=pd.DataFrame(), ld_decay_kb=None, adj_r2_min_global=0.2,
+                        ld_trait=TRAIT, geno_dosage_raw=G, table_identity="T1")
+        for value in (0.6, 0.5, 0.6):
+            r2["value"] = value
+            tgw.render(ctx, get_r2_cached=None, cached_extract_block_geno=None,
+                       compute_block_qc_effects=None,
+                       run_haplotype_block_gwas_cached_fn=lambda *a, **k: (pd.DataFrame(), {}))
+        assert detected == [0.6, 0.5], "the last render was not served from the tab's cache"
+        pd.testing.assert_frame_equal(st.session_state["ld_blocks_final"], at[0.6])
+        assert st.session_state["ld_blocks_final_key"] == (TRAIT, "T1")
+    finally:
+        for k in list(st.session_state.keys()):
+            if k not in before:
+                del st.session_state[k]
+
+
 # ------------------------------------------------------------------------------- the PCs
 def _pcs(rng, n):
     """(pcs, pcs_full) of n samples: the model's 3 PCs and the run's 20."""

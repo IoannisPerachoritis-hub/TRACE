@@ -659,9 +659,6 @@ def render(
 
             guipost.keep_recent(st.session_state["haplo_df_auto"], trait_col, haplo_df_auto,
                                 guipost.TRAIT_CACHE_MAX)
-            st.session_state["ld_blocks_final"] = haplo_df_auto.copy()
-            # which trait and table they are of (the GWAS page's block stability checks)
-            st.session_state["ld_blocks_final_key"] = (trait_col, ctx.table_identity)
             st.session_state["ld_blocks"] = haplo_df_auto.copy()
 
             # --- LD metadata logging ---
@@ -680,6 +677,12 @@ def render(
                                     guipost.RESULT_CACHE_MAX)
         else:
             haplo_df_auto = st.session_state[ld_key]
+        # The blocks on screen, detected now or served from the tab's cache, are the final
+        # ones: the GWAS page's block stability aggregates them. A hit writes them too, so they
+        # are never an earlier detection's (other settings) under the same key.
+        st.session_state["ld_blocks_final"] = haplo_df_auto.copy()
+        # which trait and table they are of (the GWAS page's block stability checks)
+        st.session_state["ld_blocks_final_key"] = (trait_col, ctx.table_identity)
 
         # Show clusters if available
         if not isinstance(haplo_df_auto, pd.DataFrame) or haplo_df_auto.empty:
