@@ -1475,6 +1475,10 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         "iid": st.session_state["iid"],
         "y": st.session_state["y"],
         "pcs": st.session_state["pcs"],
+        # the run's 20 PCs (the haplotype PCA panel). The Post-GWAS page takes both PC
+        # matrices from here, written with the table: a run stopped before the table leaves
+        # its own in the session's "pcs" and "pcs_full", beside the earlier table
+        "pcs_full": st.session_state["pcs_full"],
         "covar_reader": st.session_state["covar_reader"],
         # {SNP: (REF, ALT)}: the lead-SNP box plot names the genotypes (A/A, A/G, G/G)
         "allele_map": (results.get("allele_map") if isinstance(results, dict) else None),

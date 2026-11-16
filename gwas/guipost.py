@@ -33,9 +33,10 @@ server's registry making room) ends the page with a plain message (RELEASED_MESS
 table_released, released_guard).
 
 The GWAS results and M_eff in the session are taken only for the table they were computed on
-(run_table_changed, meff_for_table: the identities the GWAS page records with them), and the
-page records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for the GWAS
-page's block stability.
+(run_table_changed, meff_for_table: the identities the GWAS page records with them), the PCs
+only from what the GWAS page writes with the table (run_pcs, pcs_of_samples), and the page
+records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for the GWAS page's
+block stability.
 
 SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
 result when their inputs are provably the same (the tab at its defaults, every sample
@@ -268,10 +269,12 @@ def run_table_changed(state, session_table):
     """True when the session's GWAS results are not results of this table: the GWAS page records
     the identity of the table its Run GWAS used (RUN_IDENTITY) with gwas_results, and rebuilds
     the session's table on every rerun, so another identity means the table's settings changed
-    since that run. Results without a recorded identity are not taken for this table either."""
+    since that run. Results without a recorded identity are not taken for this table either:
+    gwas_results, or the frame gwas_df alone, which the GWAS page writes during a Run before
+    its results (the MLM frame), so a first Run that did not finish leaves it without one."""
     ran_on = state.get(RUN_IDENTITY)
     if ran_on is None:
-        return "gwas_results" in state
+        return "gwas_results" in state or state.get("gwas_df") is not None
     return str(ran_on) != str(getattr(session_table, "identity", ""))
 
 
@@ -283,6 +286,35 @@ def meff_for_table(state, session_table):
     if of is None or str(of) != str(getattr(session_table, "identity", "")):
         return None
     return state.get("meff_val")
+
+
+def run_pcs(state):
+    """(pcs, pcs_full): the PCs of the GWAS page's run that left the session's table, the PCs of
+    the model and the run's 20 PCs (the haplotype PCA panel), from GWAS_CTX; (None, None)
+    without it. The GWAS page writes GWAS_CTX in the same step as geno_table. It writes the
+    session's own "pcs" and "pcs_full" earlier in its run, so a run of that page that stopped
+    before the table (another trait's samples, at its sample overlap warning) left another
+    sample set's PCs there, beside the earlier table: those keys are not read."""
+    gwas_ctx = state.get("GWAS_CTX")
+    if not isinstance(gwas_ctx, dict):
+        return None, None
+    return gwas_ctx.get("pcs"), gwas_ctx.get("pcs_full")
+
+
+def pcs_of_samples(state, samples, *matrices):
+    """True when every PC matrix of ``matrices`` (None is skipped) is of these ``samples``, the
+    table's sample IDs in its row order: one row per sample, and GWAS_CTX's geno_index, which
+    names those rows, the same IDs in the same order. Always true for run_pcs's PCs in a session
+    the GWAS page left; the LD Blocks tab stops plainly otherwise."""
+    ids = np.asarray(samples).astype(str)
+    present = [np.asarray(m) for m in matrices if m is not None]
+    if not present:
+        return True
+    if any(m.ndim != 2 or m.shape[0] != ids.size for m in present):
+        return False
+    gwas_ctx = state.get("GWAS_CTX")
+    index = gwas_ctx.get("geno_index") if isinstance(gwas_ctx, dict) else None
+    return index is None or np.array_equal(np.asarray(index).astype(str), ids)
 
 
 @contextlib.contextmanager
