@@ -217,6 +217,61 @@ def manhattan_caption(df, max_points=None, keep_p=None):
             "The static Manhattan and the results table have every SNP.")
 
 
+def manhattan_overlay_thinning(df, max_points=None, keep_p=None):
+    """(rows, k): the points of the cross-model overlay's table ``df`` (one row per model and SNP,
+    its "Model" column naming the model) that the overlay draws, as positions in ``df``'s row order,
+    and k. Up to ``max_points`` points in all (MANHATTAN_MAX_POINTS): every row, given as (None, 1).
+    Above: within each model, every SNP with p <= ``keep_p`` (MANHATTAN_KEEP_P) and every k-th of
+    its others in genome order (cumulative position, ties in the table's order), starting with the
+    first, with the same k for every model: the smallest whole number that keeps the drawing at or
+    below ``max_points``. So every region draws each model's background alike (one k over the
+    models' points together would pick the same model's rows wherever k is a multiple of the model
+    count, a SNP's rows lying together). A point without a p-value is among the others. When the
+    points with p <= keep_p alone are more than ``max_points`` they are all drawn and none of the
+    others (k is 0)."""
+    import pandas as pd
+
+    max_points = MANHATTAN_MAX_POINTS if max_points is None else int(max_points)
+    keep_p = MANHATTAN_KEEP_P if keep_p is None else float(keep_p)
+    if len(df) <= max_points:
+        return None, 1
+    p = pd.to_numeric(df["PValue"], errors="coerce").to_numpy(dtype=float)
+    keep = p <= keep_p
+    model = df["Model"].to_numpy()
+    cum = df["CumPos"].to_numpy() if "CumPos" in df.columns else None
+    others = []
+    for m in pd.unique(model):                           # each model's others, in genome order
+        o = np.flatnonzero(~keep & (model == m))
+        if cum is not None:
+            o = o[np.argsort(cum[o], kind="stable")]
+        others.append(o)
+    budget = max_points - int(keep.sum())
+    if budget <= 0:
+        k, picked = 0, []
+    else:
+        k = max(1, -(-sum(o.size for o in others) // budget))
+        while sum(-(-o.size // k) for o in others) > budget:      # each model rounds up
+            k += 1
+        picked = [o[::k] for o in others]
+    return np.sort(np.concatenate([np.flatnonzero(keep), *picked])), k
+
+
+def manhattan_overlay_caption(df, max_points=None, keep_p=None):
+    """The sentence the page shows under the cross-model overlay when it does not draw every point
+    (manhattan_overlay_thinning), or None when it draws them all. It counts points, one per model
+    and SNP, for example "407,980 of 1,200,000 points drawn (400,000 SNPs x 3 models): ..."."""
+    rows, k = manhattan_overlay_thinning(df, max_points, keep_p)
+    if rows is None:
+        return None
+    keep_p = MANHATTAN_KEEP_P if keep_p is None else float(keep_p)
+    per_model = df["Model"].value_counts()
+    what = (f"{int(per_model.iloc[0]):,} SNPs x {per_model.size} models" if per_model.nunique() == 1
+            else f"{per_model.size} models")
+    others = "none of the others" if k == 0 else f"1 in {k:,} of each model's others"
+    return (f"{rows.size:,} of {len(df):,} points drawn ({what}): all with p ≤ {keep_p:g} and "
+            f"{others}. Each model's static Manhattan and the cross-model results have every SNP.")
+
+
 def plot_manhattan_interactive(
     df,
     active_lod,
@@ -301,11 +356,11 @@ def plot_manhattan_overlay(all_res):
     Model, SNP, Chr, Pos, PValue, -log10p) on one genome-wide x, the chromosomes in order 1 Mb
     apart, one colour per model. Returns (figure, the table of every point with its CumPos).
 
-    Above MANHATTAN_MAX_POINTS points in all it draws the points manhattan_thinning chooses over
-    that table (every point with p <= 0.01 and 1 in k of the others, in genome order), as the
-    interactive Manhattan does, and the page shows manhattan_caption of the table under it; the
-    model colours and the axis are those of every point. Up to the limit it is the figure the page
-    drew before, point for point."""
+    Above MANHATTAN_MAX_POINTS points in all it draws the points manhattan_overlay_thinning chooses
+    over that table (within each model, every SNP with p <= 0.01 and 1 in k of the others in genome
+    order, the same k for every model), as the interactive Manhattan thins one model, and the page
+    shows manhattan_overlay_caption of the table under it; the model colours and the axis are those
+    of every point. Up to the limit it is the figure the page drew before, point for point."""
     from gwas.io import _clean_chr_series
 
     df_plot_multi = all_res.copy()
@@ -329,7 +384,7 @@ def plot_manhattan_overlay(all_res):
 
     models_unique = df_plot_multi["Model"].unique().tolist()
     model_color_map = {m: PALETTE_CYCLE[i % len(PALETTE_CYCLE)] for i, m in enumerate(models_unique)}
-    rows, _k = manhattan_thinning(df_plot_multi)
+    rows, _k = manhattan_overlay_thinning(df_plot_multi)
     extra = {}
     drawn = df_plot_multi
     if rows is not None:

@@ -192,13 +192,49 @@ def test_the_overlay_up_to_the_limit_is_ff56e5cs(monkeypatch):
         assert manhattan_caption(table) is None and len(table) == 3 * m
 
 
-def test_above_the_limit_the_overlay_draws_the_rule_over_every_models_points(monkeypatch):
+def _per_model_rule(table, limit):
+    """The overlay's rule written out: within each model, every point with p <= 0.01 and every k-th of
+    its others in genome order, with the smallest k (the same for every model) that keeps the drawing
+    at or below ``limit``."""
+    p = pd.to_numeric(table["PValue"], errors="coerce").to_numpy()
+    keep = np.flatnonzero(p <= MANHATTAN_KEEP_P)
+    others = []
+    for m in table["Model"].unique():
+        o = np.flatnonzero(~(p <= MANHATTAN_KEEP_P) & (table["Model"] == m).to_numpy())
+        others.append(o[np.argsort(table["CumPos"].to_numpy()[o], kind="stable")])
+    k = 1
+    while keep.size + sum(-(-o.size // k) for o in others) > limit:
+        k += 1
+    return np.sort(np.concatenate([keep] + [o[::k] for o in others])), k
+
+
+def _drawn_points(fig):
+    """(model, CumPos, p-value) of every point the overlay draws, in genome order (a SNP's models in the
+    figure's order)."""
+    pts = [(tr.name, float(x), float(cd[3]), i) for i, tr in enumerate(fig.data)
+           for x, cd in zip(tr.x, tr.customdata)]
+    return [(m, x, p) for m, x, p, _i in sorted(pts, key=lambda t: (t[1], t[3]))]
+
+
+def _longest_run_of_one_model(points):
+    """The longest run of one model among the drawn points with p > 0.01, in genome order."""
+    models = [m for m, _x, p in points if not p <= MANHATTAN_KEEP_P]
+    best = run = 0
+    for i, m in enumerate(models):
+        run = run + 1 if i and m == models[i - 1] else 1
+        best = max(best, run)
+    return best
+
+
+def test_above_the_limit_the_overlay_draws_the_rule_within_every_model(monkeypatch):
     monkeypatch.setattr(plotting, "MANHATTAN_MAX_POINTS", 1000)
     res = _all_res(900)                                      # 2,700 points in all
     fig, table = plotting.plot_manhattan_overlay(res)
-    rows, k = manhattan_thinning(table)
-    assert k >= 2 and rows.size <= 1000
+    rows, k = plotting.manhattan_overlay_thinning(table)
+    expected_rows, expected_k = _per_model_rule(table, 1000)
+    assert k == expected_k >= 2 and np.array_equal(rows, expected_rows) and rows.size <= 1000
     assert sum(len(tr.x) for tr in fig.data) == rows.size
+
     def point(m, x, y):
         return m, float(x), repr(float(y))                   # a NaN p-value (one SNP) compares too
 
@@ -210,14 +246,79 @@ def test_above_the_limit_the_overlay_draws_the_rule_over_every_models_points(mon
     full = _ff56e5c_overlay(res)                             # the colours and the axis of every point
     assert [(t.name, t.marker.color) for t in fig.data] == [(t.name, t.marker.color) for t in full.data]
     assert fig.layout.xaxis.tickvals == full.layout.xaxis.tickvals
-    assert manhattan_caption(table).startswith(f"{rows.size:,} of 2,700 SNPs drawn: all with p ≤ 0.01")
+    assert plotting.manhattan_overlay_caption(table) == (
+        f"{rows.size:,} of 2,700 points drawn (900 SNPs x 3 models): all with p ≤ 0.01 and 1 in {k} of "
+        "each model's others. Each model's static Manhattan and the cross-model results have every SNP.")
 
 
 def test_the_overlay_rule_counts_the_points_of_every_model():
     """At the real limit: 3 models x 200,000 SNPs is 600,000 points, so the overlay is thinned although
-    each model alone is under the limit."""
+    each model alone is under the limit; its caption counts points."""
     m = 200_000
-    table = pd.DataFrame({"PValue": np.tile(np.linspace(0.0, 1.0, m), 3), "CumPos": np.tile(np.arange(m), 3)})
-    assert manhattan_thinning(table.iloc[:m]) == (None, 1)
-    rows, k = manhattan_thinning(table)
+    table = pd.DataFrame({"Model": np.repeat(["MLM", "MLMM", "FarmCPU"], m),
+                          "PValue": np.tile(np.linspace(0.0, 1.0, m), 3), "CumPos": np.tile(np.arange(m), 3)})
+    assert plotting.manhattan_overlay_thinning(table.iloc[:m]) == (None, 1)
+    rows, k = plotting.manhattan_overlay_thinning(table)
     assert k == 2 and rows.size <= MANHATTAN_MAX_POINTS
+    assert plotting.manhattan_overlay_caption(table).startswith(
+        f"{rows.size:,} of 600,000 points drawn (200,000 SNPs x 3 models): all with p ≤ 0.01 and 1 in 2 of")
+
+
+def _r9b_table(m, jitter, seed=1):
+    """The round 1 re-check's r9b case, as plot_manhattan_overlay holds it: 2 models of ``m`` SNPs on 12
+    chromosomes of 90 Mb, MLMM's p-values those of MLM with a small jitter (the models agree away from
+    the peaks), the rows in genome order with a SNP's two rows together, MLM first."""
+    rng = np.random.default_rng(seed)
+    chrom = np.repeat(np.arange(1, 13), -(-m // 12))[:m]
+    pos = np.concatenate([np.sort(rng.choice(90_000_000, size=int((chrom == c).sum()), replace=False)) + 1
+                          for c in range(1, 13)])
+    cum = pos + (chrom - 1) * 91_000_000                     # each chromosome 1 Mb after the last
+    p_mlm = rng.uniform(size=m)
+    p_mlmm = np.clip(p_mlm * np.exp(rng.normal(0, jitter, size=m)), 0, 1)
+    return pd.DataFrame({"Model": np.tile(["MLM", "MLMM"], m), "CumPos": np.repeat(cum, 2),
+                         "PValue": np.column_stack([p_mlm, p_mlmm]).ravel()})
+
+
+def _windows_of_one_model(table, rows, width=1_000_000):
+    """The share of the windows of ``width`` bp whose drawn points with p > 0.01 are 90% or more of one
+    model."""
+    d = table.iloc[rows]
+    bg = d[~(d["PValue"].to_numpy() <= MANHATTAN_KEEP_P)]
+    share = bg.groupby(bg["CumPos"] // width)["Model"].agg(lambda s: s.value_counts(normalize=True).iloc[0])
+    return float((share >= 0.9).mean())
+
+
+def test_every_region_draws_each_models_background_at_the_real_limit():
+    """r9b's case (2 models x 300,000 SNPs, MLMM's p-values MLM's with a 5% jitter): k is 2, a multiple
+    of the model count. One k over the models' points together drew one model's background only in
+    91.5% of the 1-Mb windows (each SNP's two rows lie together, so every other point is the same
+    model's until a SNP kept for one model only shifts the picks); within each model, every window
+    draws both models alike."""
+    table = _r9b_table(300_000, 0.05)
+    rows, k = plotting.manhattan_overlay_thinning(table)
+    assert k == 2 and rows.size <= MANHATTAN_MAX_POINTS
+    assert _windows_of_one_model(table, rows) < 0.01
+    bg = table.iloc[rows]
+    bg = bg[~(bg["PValue"].to_numpy() <= MANHATTAN_KEEP_P)]
+    drawn = bg["Model"].value_counts()
+    others = (~(table["PValue"].to_numpy() <= MANHATTAN_KEEP_P))
+    for model in ("MLM", "MLMM"):                            # each model: 1 in 2 of its others
+        assert drawn[model] == -(-int((others & (table["Model"] == model).to_numpy()).sum()) // 2)
+    combined, k_combined = manhattan_thinning(table)          # the one k over every point, as before
+    assert k_combined == 2 and _windows_of_one_model(table, combined) > 0.9
+
+
+def test_the_drawn_overlay_alternates_the_models_in_every_region(monkeypatch):
+    """r9b's case scaled down (2 models x 3,000 SNPs, the limit lowered to 5,000, so k is 2): the figure's
+    points with p > 0.01, in genome order, never run long on one model."""
+    monkeypatch.setattr(plotting, "MANHATTAN_MAX_POINTS", 5_000)
+    table = _r9b_table(3_000, 0.05)
+    res = pd.DataFrame({"Model": table["Model"], "SNP": [f"s{i // 2}" for i in range(len(table))],
+                        "Chr": (table["CumPos"] // 91_000_000 + 1).astype(str),
+                        "Pos": table["CumPos"] % 91_000_000, "PValue": table["PValue"]})
+    res["-log10p"] = -np.log10(np.clip(res["PValue"].astype(float), 1e-300, 1.0))
+    res = pd.concat([res[res["Model"] == "MLM"], res[res["Model"] == "MLMM"]], ignore_index=True)
+    fig, overlay = plotting.plot_manhattan_overlay(res)
+    assert _longest_run_of_one_model(_drawn_points(fig)) <= 4
+    rows, k = plotting.manhattan_overlay_thinning(overlay)
+    assert k == 2 and sum(len(tr.x) for tr in fig.data) == rows.size

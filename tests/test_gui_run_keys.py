@@ -82,6 +82,20 @@ def test_the_block_stability_uses_only_this_trait_and_tables_blocks():
     assert 'st.session_state.get("ld_blocks_final", None)' not in page
 
 
+def test_the_not_aggregated_caption_says_to_tick_subsampling_again():
+    """The caption shown when the session's blocks are another trait's or table's lists every step: the
+    subsampling box is drawn only on a Run and another page clears it, so after the Post-GWAS page the
+    user clicks Run GWAS, ticks subsampling again and runs once more."""
+    text = guigwas.BLOCKS_NOT_AGGREGATED
+    assert text.startswith("Not aggregated: the Post-GWAS page's LD blocks belong to another trait")
+    steps = ["open the Post-GWAS page", "click Run GWAS", "tick subsampling again", "click Run GWAS once more"]
+    assert all(s in text for s in steps) and [text.index(s) for s in steps] == sorted(text.index(s) for s in steps)
+    captions = [ast.unparse(n.args[0]) for n in ast.walk(_page()) if isinstance(n, ast.Call)
+                and ast.unparse(n.func) == "st.caption" and n.args]
+    assert "_gg.BLOCKS_NOT_AGGREGATED" in captions
+    assert "Not aggregated" not in PAGE.read_text(encoding="utf-8")       # one text, in gwas.guigwas
+
+
 def test_the_subsampling_key_names_the_threshold_exactly_and_the_workers():
     """KEY-4 and KEY-11: two thresholds that print alike with two digits, or another number of
     workers, are other results."""

@@ -16,10 +16,11 @@ Where the table is kept
     page_message, page_stop
                         gwas.storeplan's message and stops in the page's words (no command-line
                         flags)
-    TableRegistry       at most two tables per server, keyed by (file identity, mode): the parsed
-                        genotypes in memory (read-only arrays) or a table file on disk in its own
-                        folder, _trace_geno_store_gui_<pid>_<random>. A folder is removed when its
-                        entry is evicted, by Clear and when the server stops normally
+    TableRegistry       at most two tables per server, and a third while a new one is built (one
+                        build at a time), keyed by (file identity, mode): the parsed genotypes in
+                        memory (read-only arrays) or a table file on disk in its own folder,
+                        _trace_geno_store_gui_<pid>_<random>. A folder is removed when its entry
+                        is evicted, by Clear and when the server stops normally
     get_registry        the server's registry, held under st.cache_resource
     SessionTable        the small object the GWAS page leaves in the session for One-Click and the
                         Post-GWAS page
@@ -360,10 +361,14 @@ class TableRegistry:
     disk    a table file built by gwas.genostore.ingest_vcf in its own new folder in the work
             folder (``_trace_geno_store_gui_<pid>_<random>``)
 
-    A new table is built first; only once it is open is the least recently used entry evicted
-    (a disk entry's table is closed and its folder deleted), so a VCF that cannot be read
-    closes nothing. A table is built outside the registry's lock, one build per key at a time:
-    other sessions' look-ups, other builds and the folder listing do not wait for it.
+    One table is built at a time, whichever its key, and outside the registry's lock: other
+    sessions' look-ups, the folder listing and Clear do not wait for a build. A session that
+    needs a new table while another is built waits for that build to end, then looks again: the
+    table it waited for may be the one it needs, and after a failed build it builds the table
+    itself, with no other build running. A new table is built first; only once it is open is the
+    least recently used entry evicted (a disk entry's table is closed and its folder deleted
+    before the next build starts), so a VCF that cannot be read closes nothing. So the registry
+    keeps at most ``max_entries`` tables, and one more while a new one is built.
     ``close_all`` (Clear, and the server's normal stop) drops everything.
 
     The limit counts the registry's own entries. An evicted in-memory table is not closed (it
@@ -376,7 +381,7 @@ class TableRegistry:
         self.max_entries = int(max_entries)
         self._lock = threading.RLock()       # the entries; never held while a table is built
         self._entries = OrderedDict()
-        self._builds = {}                    # key -> the lock its build holds
+        self._build_lock = threading.Lock()  # held by the one build that runs
         self._building_dirs = set()          # folders of disk tables being built
         atexit.register(self.close_all)
 
@@ -386,8 +391,13 @@ class TableRegistry:
             self._entries.move_to_end(key)
         return entry
 
-    def get(self, identity, mode, vcf_path, work_dir=None, log=None):
-        """The table of ``vcf_path`` in ``mode`` ("memory" or "disk"), built if needed."""
+    def get(self, identity, mode, vcf_path, work_dir=None, log=None, check=None):
+        """The table of ``vcf_path`` in ``mode`` ("memory" or "disk"), built if needed.
+
+        ``check``, when given, is called with no arguments just before a new table is built, once
+        no other build runs (so after any build this session waited for), and never for a table
+        that is already here: the caller's check of the free memory and disk, made again then
+        (gwas.guigwas.build_check). An exception from it builds nothing and reaches the caller."""
         if mode not in ("memory", "disk"):
             raise ValueError(f"unknown table mode {mode!r}")
         key = (str(identity), mode)
@@ -395,27 +405,23 @@ class TableRegistry:
             entry = self._hit(key)
             if entry is not None:
                 return entry["parsed"]
-            build = self._builds.setdefault(key, threading.Lock())
-        evicted = []
-        with build:                                   # one build per key
-            try:
-                with self._lock:
-                    entry = self._hit(key)            # built meanwhile by another session
-                    if entry is not None:
-                        return entry["parsed"]
-                entry = self._open(mode, vcf_path, work_dir, log)      # a failure evicts nothing
-                with self._lock:
-                    self._entries[key] = entry
-                    self._entries.move_to_end(key)
-                    self._building_dirs.discard(entry.get("dir"))
-                    while len(self._entries) > self.max_entries:
-                        evicted.append(self._entries.popitem(last=False)[1])
-            finally:
-                with self._lock:
-                    if self._builds.get(key) is build:
-                        del self._builds[key]
-        for old in evicted:
-            self._release(old)
+        with self._build_lock:                        # one build at a time
+            with self._lock:
+                entry = self._hit(key)                # built by the build this session waited for
+                if entry is not None:
+                    return entry["parsed"]
+            if check is not None:
+                check()
+            entry = self._open(mode, vcf_path, work_dir, log)      # a failure evicts nothing
+            with self._lock:
+                self._entries[key] = entry
+                self._entries.move_to_end(key)
+                self._building_dirs.discard(entry.get("dir"))
+                evicted = []
+                while len(self._entries) > self.max_entries:
+                    evicted.append(self._entries.popitem(last=False)[1])
+            for old in evicted:                       # outside the registry's lock
+                self._release(old)
         return entry["parsed"]
 
     def _open(self, mode, vcf_path, work_dir, log):
@@ -662,7 +668,8 @@ VCF_KEYS = ("_persist_vcf_path", "_persist_vcf_name", "_vcf_source")
 # whether the VCF came from a box this visit (vcf_input's ``live``).
 VCF_LIVE_KEY = "_vcf_live"
 # The upload whose copy failed: (its token, the work folder, the message). It is not copied
-# again into that folder on every rerun; another work folder tries again.
+# again into that folder on every rerun; another work folder tries again, and so does the file
+# uploaded again (a new upload, so a new token).
 VCF_SAVE_FAILED_KEY = "_vcf_save_failed"
 # The page's upload boxes: each gets a new key (an empty box) by bumping "_<name>_widget".
 UPLOAD_BOXES = ("vcf_upload", "pheno_upload", "covar_upload")
@@ -677,6 +684,21 @@ def box_key(state, name):
     """The current key of the upload box ``name`` ("vcf_upload", "pheno_upload", "covar_upload")."""
     n = int(state.get(f"_{name}_widget", 0) or 0)
     return name if n == 0 else f"{name}_{n}"
+
+
+def empty_upload_box(state, name):
+    """Give the upload box ``name`` a new key, so the page draws it empty from then on, and drop
+    the old box's state (Streamlit's deserialized copy of its file)."""
+    try:
+        state.pop(box_key(state, name), None)
+    except Exception:                       # a box Streamlit cannot read back: nothing held
+        pass
+    state[f"_{name}_widget"] = int(state.get(f"_{name}_widget", 0) or 0) + 1
+
+
+def work_folder(text):
+    """The work folder the "Large datasets" section names (its text box), else default_work_dir."""
+    return Path(str(text or "").strip() or str(default_work_dir()))
 
 
 def new_page_visit(state):
@@ -694,9 +716,9 @@ class VcfInput:
     """What the GWAS page does with its VCF boxes on one run (vcf_input)."""
 
     caption: str = ""       # the file in use, under the boxes
-    warning: str = ""       # advice for a large upload
+    warning: str = ""       # advice for a large upload, or the VCF in use is gone
     error: str = ""         # a stop: the page shows it and stops
-    rerun: bool = False     # an upload was saved: its box gets a new key and the page reruns
+    saved: bool = False     # an upload was saved by this call: the caller empties its box
     live: bool = False      # the VCF in use was given in this visit (ff56e5c: its box held it)
 
 
@@ -704,6 +726,23 @@ def vcf_path_ready(state):
     """The VCF in use (a typed location, or the upload saved in the work folder) is there."""
     path = state.get("_persist_vcf_path")
     return bool(path) and os.path.isfile(path)
+
+
+# Clear session data deletes the server's saved uploads, in every session (clear_all): a session
+# whose VCF was an upload must then give it again.
+UPLOAD_REMOVED_MESSAGE = "The uploaded VCF was removed by Clear session data: upload it again."
+
+
+def vcf_gone_message(path):
+    """The page's message for a VCF that is no longer at ``path``, or "" while it is there (or no
+    path is given): for an upload TRACE saved (a _trace_upload_gui_* folder), which Clear session
+    data deletes, UPLOAD_REMOVED_MESSAGE; for a file given by its location, the location box's
+    own message."""
+    if not path or os.path.isfile(path):
+        return ""
+    if Path(path).parent.name.startswith(UPLOAD_PREFIX + "_"):
+        return UPLOAD_REMOVED_MESSAGE
+    return f"No file at {path}."
 
 
 def inputs_kept(state):
@@ -718,10 +757,12 @@ def vcf_input(state, location_text, upload, work_dir):
     A typed location that passes check_vcf_location becomes the VCF in use. One that fails stops
     the page with the check's message, and a VCF the location box gave earlier is dropped, so the
     earlier file is never used under the new text. A new upload is saved once into the work
-    folder (save_upload): then Streamlit's copy of it is removed (release_upload), and the page
-    gives the box a new key and reruns. A copy that fails is not tried again in that work folder.
-    With both boxes empty, the VCF given earlier (by its path) stays in use, named in the
-    caption."""
+    folder (save_upload): then Streamlit's copy of it is removed (release_upload), and the caller
+    empties the box (empty_upload_box; the box's own callback, save_vcf_upload, does all this
+    before the page runs). A copy that fails is not tried again in that work folder until the file
+    is uploaded again. With both boxes empty, the VCF given earlier (by its path) stays in use,
+    named in the caption; when it is gone (an upload that Clear session data in another session
+    deleted), the warning says so (vcf_gone_message) and nothing is read."""
     text = str(location_text or "").strip()
     if text:
         loc = check_vcf_location(text)
@@ -755,8 +796,10 @@ def vcf_input(state, location_text, upload, work_dir):
             state["_vcf_source"] = "upload"
             state[VCF_LIVE_KEY] = str(path)
         release_upload(upload)
-        return VcfInput(rerun=True, live=True)
+        return VcfInput(saved=True, live=True)
     if not vcf_path_ready(state):
+        if state.get("_vcf_source") in ("upload", "location"):
+            return VcfInput(warning=vcf_gone_message(state.get("_persist_vcf_path")))
         return VcfInput()
     path = state["_persist_vcf_path"]
     live = state.get(VCF_LIVE_KEY) == path
@@ -775,6 +818,28 @@ def vcf_input(state, location_text, upload, work_dir):
         return VcfInput(caption=f"Genotype file: {path} ({size_text(size)}), the location typed "
                                 "earlier.", live=live)
     return VcfInput(live=live)
+
+
+def save_vcf_upload(state, work_dir, location_text=""):
+    """The VCF upload box's on_change callback, which Streamlit runs before the page: a new upload
+    is saved once into the work folder and Streamlit's copy of it removed (vcf_input), and the box
+    is emptied (empty_upload_box), so the page that follows reads the saved file. Nothing reruns:
+    a rerun from the page dropped the states of the widgets drawn after the box (the QC settings,
+    the sidebar), and the run after it used their defaults. A typed location comes first, as in
+    vcf_input: the upload is then left in its box. A copy that fails leaves the upload in its box,
+    and the page shows why (vcf_input). Returns vcf_input's result, or None (nothing to save)."""
+    if str(location_text or "").strip():
+        return None
+    try:
+        upload = state.get(box_key(state, "vcf_upload"))
+    except Exception:                       # a box Streamlit cannot read back: nothing to save
+        upload = None
+    if upload is None or not hasattr(upload, "read"):   # empty, or a file Streamlit no longer holds
+        return None
+    inp = vcf_input(state, "", upload, work_dir)
+    if inp.saved:
+        empty_upload_box(state, "vcf_upload")
+    return inp
 
 
 def covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):

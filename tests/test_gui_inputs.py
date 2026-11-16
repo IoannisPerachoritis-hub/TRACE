@@ -1,9 +1,10 @@
-"""The GWAS page's input boxes at function level (gwas.guitable: vcf_input, new_page_visit,
-covar_persist_decision, clear_inputs, release_upload, save_upload, stale_folders).
+"""The GWAS page's input boxes at function level (gwas.guitable: vcf_input, save_vcf_upload,
+new_page_visit, covar_persist_decision, clear_inputs, release_upload, save_upload, stale_folders).
 
-A page run is replayed as the page makes it: the visit check before the boxes are drawn, the VCF in
-use from the location box or the upload box (a saved upload makes the page rerun with an empty box),
-then the covariate decision. A page navigation is Streamlit dropping the page's widget states.
+A page run is replayed as the page makes it: an upload arrives through the VCF box's callback, which
+saves it and empties the box before the page runs; then the visit check before the boxes are drawn,
+the VCF in use from the location box or the saved upload, then the covariate decision. A page
+navigation is Streamlit dropping the page's widget states.
 """
 import ast
 import io
@@ -27,15 +28,23 @@ class _Upload(io.BytesIO):
 
 
 def _page_run(state, work, location="", upload=None, covar=False):
-    """One run of the page's input section; returns (VcfInput, covariate decision)."""
+    """One run of the page's input section; returns (VcfInput, covariate decision). An upload arrives
+    through the VCF box's callback (gt.save_vcf_upload), which runs before the page: the box was drawn
+    by an earlier run of the visit (its first run draws it, with nothing given), the callback saves
+    the upload and empties the box, and the page runs once, on the saved file."""
+    if upload is not None:
+        if gt.VISIT_WIDGET_KEY not in state:        # the page is drawn first: the box exists
+            _page_run(state, work, location)
+        state[gt.box_key(state, "vcf_upload")] = upload                     # the browser's upload
+        gt.save_vcf_upload(state, work, location)                           # the box's callback
     gt.new_page_visit(state)
-    inp = gt.vcf_input(state, location, upload, work)
+    inp = gt.vcf_input(state, location, state.get(gt.box_key(state, "vcf_upload")), work)
     state[gt.VISIT_WIDGET_KEY] = "auto"             # the "Large datasets" radio, drawn this run
     if inp.error:
         return inp, None
-    if inp.rerun:                                   # the box gets a new key: the rerun sees it empty
-        state["_vcf_upload_widget"] = int(state.get("_vcf_upload_widget", 0)) + 1
-        return _page_run(state, work, location, None, covar)
+    if inp.saved:                                   # saved by the page itself: the box is emptied
+        gt.empty_upload_box(state, "vcf_upload")
+        inp = gt.vcf_input(state, location, None, work)
     decision = gt.covar_persist_decision(covar, not inp.live, "_persist_covar" in state)
     if decision == "upload":
         state["_persist_covar"] = "covariates"      # the page loads and keeps the upload
@@ -93,7 +102,9 @@ def test_the_covariate_decision_is_ff56e5cs_in_every_workflow(tmp_path):
 
 def test_a_saved_upload_leaves_the_servers_memory(tmp_path, monkeypatch):
     """After the copy into the work folder, Streamlit's record of the upload (the whole file, held by
-    the server for the session) is removed, as Streamlit's chat input removes its files."""
+    the server for the session) is removed, as Streamlit's chat input removes its files. The VCF box's
+    callback does it before the page runs, and drops the box's own copy (its widget state) with it:
+    the box is drawn empty and the page reads the saved file."""
     import types
 
     import streamlit.runtime.scriptrunner as sr
@@ -112,10 +123,19 @@ def test_a_saved_upload_leaves_the_servers_memory(tmp_path, monkeypatch):
     state = {}
     try:
         inp = gt.vcf_input(state, "", upload, tmp_path / "work")
-        assert inp.rerun and inp.live and not inp.error
+        assert inp.saved and inp.live and not inp.error
         assert mgr.get_files("session-1", ["f-1"]) == []                      # the record is gone
         assert Path(state["_persist_vcf_path"]).read_bytes() == data          # the saved copy is used
         assert state["_vcf_source"] == "upload" and state["_persist_vcf_name"] == "panel.vcf.gz"
+        mgr.add_file("session-1", UploadedFileRec(file_id="f-3", name="next.vcf.gz", type="", data=data))
+        (rec3,) = mgr.get_files("session-1", ["f-3"])
+        state["vcf_upload"] = UploadedFile(rec3, FileURLs())                   # the box, as the callback finds it
+        assert gt.save_vcf_upload(state, tmp_path / "work").saved             # the box's callback
+        assert mgr.get_files("session-1", ["f-3"]) == []                      # the record is gone
+        assert "vcf_upload" not in state and gt.box_key(state, "vcf_upload") == "vcf_upload_1"   # emptied
+        page = gt.vcf_input(state, "", state.get(gt.box_key(state, "vcf_upload")), tmp_path / "work")
+        assert page.live and "next.vcf.gz" in page.caption and not page.saved
+        assert Path(state["_persist_vcf_path"]).read_bytes() == data
     finally:
         gt.remove_saved_uploads()
     assert gt.release_upload(_Upload(b"x", "x.vcf", "f-2"))                   # a record not there: no error
@@ -197,12 +217,55 @@ def test_a_failed_copy_leaves_nothing_and_is_not_tried_again(tmp_path):
     state = {}
     first = gt.vcf_input(state, "", _FailingUpload(), work)
     assert first.error.startswith(f"The upload cannot be saved in the work folder {work}")
-    again = gt.vcf_input(state, "", _FailingUpload(), work)                 # the next rerun
-    assert again.error == first.error and list(work.iterdir()) == []
+    rerun = _FailingUpload()
+    again = gt.vcf_input(state, "", rerun, work)                            # the next rerun: not tried
+    assert again.error == first.error and rerun.n == 0 and list(work.iterdir()) == []
+    uploaded_again = _FailingUpload()
+    uploaded_again.file_id = "f-full-2"                                     # the file uploaded again: tried
+    assert gt.vcf_input(state, "", uploaded_again, work).error and uploaded_again.n > 0
     other = tmp_path / "other"                                              # another work folder: tried
     elsewhere = gt.vcf_input(state, "", _FailingUpload(), other)
     assert str(other) in elsewhere.error and list(other.iterdir()) == []
     assert gt.saved_upload_folders() == [] and not gt.vcf_path_ready(state)
+
+
+def test_the_upload_is_saved_in_its_boxs_callback_with_no_rerun(tmp_path):
+    """The VCF box's on_change callback saves a new upload before the page runs (save_vcf_upload), so
+    the page never reruns for it: the rerun it made after a save dropped the states of the widgets
+    drawn after the box (the QC sliders, the sidebar), and the run right after the save used their
+    defaults. A typed location comes first (the upload stays in its box); a copy that fails stays in
+    its box, for the page to show; an upload the page itself saves (in another work folder, after a
+    failed copy) is freed the same way, with the box emptied and no rerun."""
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(page) if isinstance(n, ast.Call)]
+    assert not [n for n in calls if ast.unparse(n.func) == "st.rerun"]                  # no rerun at all
+    (box,) = [n for n in calls if ast.unparse(n.func) == "st.file_uploader" and "Genotype" in ast.unparse(n.args[0])]
+    assert {k.arg: ast.unparse(k.value) for k in box.keywords}["on_change"] == "_save_vcf_upload"
+    (callback,) = [n for n in page.body if isinstance(n, ast.FunctionDef) and n.name == "_save_vcf_upload"]
+    assert "_gt.save_vcf_upload(" in ast.unparse(callback)
+    (saved,) = [n for n in ast.walk(page) if isinstance(n, ast.If) and ast.unparse(n.test) == "_vcf_in.saved"]
+    assert "_gt.empty_upload_box(st.session_state, 'vcf_upload')" in ast.unparse(saved)
+    work = tmp_path / "work"
+    try:
+        held = _Upload(EX1.read_bytes(), "a.vcf.gz", "a1")
+        state = {"vcf_upload": held}
+        assert gt.save_vcf_upload(state, work, str(EX1)) is None and state["vcf_upload"] is held   # a location
+        assert gt.save_vcf_upload({}, work) is None                                              # an empty box
+        from streamlit.runtime.uploaded_file_manager import DeletedFile
+        assert gt.save_vcf_upload({"vcf_upload": DeletedFile("gone")}, work) is None   # a file no longer held
+        blocked = tmp_path / "blocked"
+        blocked.write_text("a file where the work folder should be")
+        failed = gt.save_vcf_upload(state, blocked)                                              # a failed copy
+        assert failed.error and state["vcf_upload"] is held and gt.box_key(state, "vcf_upload") == "vcf_upload"
+        assert gt.vcf_input(state, "", held, blocked).error == failed.error                      # the page shows it
+        inp = gt.vcf_input(state, "", held, work)                       # another work folder: the page saves it
+        assert inp.saved and inp.live
+        gt.empty_upload_box(state, "vcf_upload")                        # ... and empties the box, no rerun
+        assert "vcf_upload" not in state and gt.box_key(state, "vcf_upload") == "vcf_upload_1"
+        after = gt.vcf_input(state, "", None, work)
+        assert after.live and "a.vcf.gz" in after.caption and not after.saved
+    finally:
+        gt.remove_saved_uploads()
 
 
 def test_the_page_names_saved_uploads_left_by_another_server(tmp_path):

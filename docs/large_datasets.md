@@ -132,8 +132,9 @@ file where it is. The upload box takes files up to 2 GB; an upload is held in th
 while it arrives (twice at its end), before TRACE can check anything, so bigger files should go
 through the location box. An uploaded file is written once to the work folder (below) and read
 from there; TRACE then removes the server's copy of the upload from memory and empties the upload
-box. A copy that fails (a full disk, for one) leaves nothing in the work folder and is not tried
-again until you choose another work folder.
+box. A copy that fails (a full disk, for one) leaves nothing in the work folder, and the page says
+why. It is not tried again on every rerun, only when you upload the file again or choose another
+work folder.
 
 A location that fails the check (a typo, another file type) stops the page with the reason; the
 file an earlier location gave is not used under the new text.
@@ -172,10 +173,10 @@ HTML downloads only).
 variable `TRACE_GENO_STORE_DIR`, else a folder `trace_gui` in the system's temporary folder. The
 same section can change it, and the check includes its free space. Each table file gets its own
 folder, `_trace_geno_store_gui_<process>_<random>`, and each saved upload its own
-`_trace_upload_gui_<process>_<random>`; TRACE keeps at most two tables, and removes a folder
-when its table is no longer kept and when the server stops normally. Table folders and saved
-uploads left by a run or a server that did not stop are named on the page with their size; they
-are never deleted automatically.
+`_trace_upload_gui_<process>_<random>`; TRACE keeps at most two tables, and a third while a new
+one is built, and removes a folder when its table is no longer kept and when the server stops
+normally. Table folders and saved uploads left by a run or a server that did not stop are named
+on the page with their size; they are never deleted automatically.
 
 **What the pages do with the table on disk.** The GWAS page runs its preprocessing (sample
 matching, phenotype and SNP QC, the fill of missing calls, kinship, the QC report) on the table
@@ -184,8 +185,9 @@ subsampling read it in pieces. One-Click uses the same table, and its `run_metad
 where the table was kept, as the CLI's does. The Post-GWAS page reads only the window or block
 each tab shows. The results are the same as with the table in memory, byte for byte. Not
 available with the table on disk: LD-kNNi imputation (choose mean imputation, or keep the table
-in memory), and the haplotype PCA panel's own PCs when the GWAS run kept fewer than two PCs (the
-panel then says why).
+in memory), and the haplotype PCA panel in a session without the GWAS page's PCs, since the panel
+would then compute its own from the whole table (it says why). Every GWAS page run leaves those
+PCs (its PCA, up to 20 PCs, whatever number of PCs the models use).
 
 **Subsampling.** With the table on disk, the iterations run one after another. In memory with
 more than one core, the page first checks that the workers fit in the free memory (each worker
@@ -198,14 +200,21 @@ meanwhile may then use fewer threads, and their last digits differ, as between t
 (see "Reproducibility" above).
 
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
-that open the same VCF with the same choice share one table, and the server keeps at most two.
-When a third is needed, the one used least recently is closed, once the new one is open (a file
-that cannot be read closes nothing). A session that still held a closed table (closed this way,
-or by Clear session data in another session) reads the VCF again: the GWAS page on its next run,
-One-Click for the trait it was running and the ones after it, each with a note on the page. A
-Run GWAS that was reading the table at that moment stops with a message, and the next run reads
-it again. The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not
-closed: it stays in memory while a session still holds it, until that session's next run.
+that open the same VCF with the same choice share one table, and the server keeps at most two,
+and a third while a new one is built. It builds one table at a time: a session that needs a new
+table while another is built waits for that build, and then checks the free memory and disk
+again, so the check counts what that build used (the page stops with a plain message when they
+no longer suffice). When a third is needed, the one used least recently is closed once the new
+one is open (a file that cannot be read closes nothing), before the next build starts. A session
+that still held a closed table (closed this way, or by Clear session data in another session)
+reads the VCF again: the GWAS page on its next run, One-Click for the trait it was running and
+the ones after it, each with a note on the page. A Run GWAS that was reading the table at that
+moment stops with a message, and the next run reads it again. Clear session data in another
+session also deletes the uploads the server saved, so a VCF that was uploaded cannot be read
+again: the page then says "The uploaded VCF was removed by Clear session data: upload it again",
+on its next run or when it would read the VCF again. A VCF given by its location is read again.
+The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not closed: it
+stays in memory while a session still holds it, until that session's next run.
 
 **Clear session data** frees this server's genotype tables (in memory, and the table files with
 their folders on disk), the uploads it saved, every cached result, and the cache files that
@@ -213,7 +222,8 @@ earlier versions of TRACE left in Streamlit's cache folder (`~/.streamlit/cache`
 there are not touched). It also drops this session's data and results on both pages, and
 empties the VCF location box, the upload boxes and the trait selection, so nothing is read again
 until you give the files again; the other settings stay. On a shared server Clear affects every
-session, since the tables are the server's.
+session, since the tables and the saved uploads are the server's: another session's uploaded VCF
+must then be uploaded again.
 
 **The interactive Manhattan.** Above 500,000 SNPs it draws every SNP with p ≤ 0.01 and one in k of
 the others, in genome order, with k the smallest whole number that keeps the drawing at 500,000
@@ -221,8 +231,11 @@ points or fewer. A caption under the figure says so ("N of M SNPs drawn: ..."). 
 Manhattan and the results table keep every SNP. The reason is the browser: Streamlit sends a
 figure in one message, of at most 200 MB by default, and at 1,070,795 SNPs the full figure was
 157 MB; the thinned one is 53 MB, and a figure at the limit 73 MB. Below the limit nothing
-changes. The cross-model "Overlay Manhattan by model" follows the same rule over the points of
-all its models together (three models of 200,000 SNPs are 600,000 points), with the same caption.
+changes. The cross-model "Overlay Manhattan by model" is thinned when the points of all its
+models together are more than 500,000 (three models of 200,000 SNPs are 600,000 points): within
+each model it draws every SNP with p ≤ 0.01 and one in k of the others, with the same k for every
+model, so every region shows each model's points alike. Its caption counts points ("N of M points
+drawn (S SNPs x 3 models): ...").
 
 ## Checking that both modes agree
 

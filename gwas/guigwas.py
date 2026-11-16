@@ -17,6 +17,8 @@ whose names start with an underscore, which Streamlit leaves out of the key)
 The table, in memory or on disk (the same results either way)
     table               the server's table of the VCF (gwas.guitable's registry): the parsed
                         genotypes in memory, or the table file on disk
+    build_check         the page's check of the free memory and disk, made again when a new
+                        table's build starts (the server builds one table at a time)
     preprocess          the page's preprocessing of one trait (gwas.qc._gwas_pipeline_stages: on
                         disk through gwas.storepipe.TraitStore, at the CLI's places), kept in the
                         session: one current preprocessing per session, replaced when a setting
@@ -124,19 +126,79 @@ def meff(state, table_key, geno_imputed):
 
 
 # ------------------------------------------------------------------------------ the table
-def table(file_identity, mode, vcf_path, work_dir):
+def table(file_identity, mode, vcf_path, work_dir, check=None):
     """The server's table of ``vcf_path`` in ``mode`` (gwas.guitable.get_registry): the parsed
     genotypes (gwas.pipeline.ParsedGenotypes, read-only) in memory, or the table file
     (gwas.genostore.StoreParsed) in a folder of the work folder on disk. Shared by the sessions
     and never closed by a page: the registry owns it. A VCF the reader refuses raises the
-    in-memory reader's error, in both modes."""
+    in-memory reader's error, in both modes. ``check`` (build_check) runs when the table has to
+    be built, just before the build starts. A VCF that is no longer there raises VcfGone (an
+    upload that Clear session data in another session deleted, or a file gone from its
+    location), not FileNotFoundError."""
     from gwas import guitable
     from gwas.genostore import DeferredParseError
 
     try:
-        return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir)
+        return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir, check=check)
     except DeferredParseError as exc:          # on disk: the in-memory parse's own stop
         raise exc.original from None
+    except FileNotFoundError:
+        gone = guitable.vcf_gone_message(vcf_path)
+        if gone:
+            raise VcfGone(gone) from None
+        raise
+
+
+class VcfGone(Exception):
+    """The VCF in use is no longer there, so its table cannot be built (str(): the page's message,
+    gwas.guitable.vcf_gone_message)."""
+
+
+def vcf_identity(vcf_path):
+    """gwas.guitable.file_identity of the VCF in use (the page's vcf_hash); VcfGone instead of
+    FileNotFoundError when the file is no longer there, as when Clear session data in another
+    session deleted an upload after the page checked that its VCF is there."""
+    from gwas import guitable
+
+    try:
+        return guitable.file_identity(vcf_path)
+    except FileNotFoundError:
+        gone = guitable.vcf_gone_message(vcf_path)
+        if gone:
+            raise VcfGone(gone) from None
+        raise
+
+
+# The server builds one table at a time (gwas.guitable.TableRegistry), so a build may wait for
+# another session's: the page's check of the free memory and disk, made before the wait, is made
+# again when the build starts, and then counts what the builds before it used.
+BUILD_CHECK_NOTE = ("TRACE checked the free memory and disk again just before reading the VCF, "
+                    "since another session may have read a genotype table meanwhile. ")
+
+
+def build_check(vcf_path, plan, work_dir, file_identity, estimate=None):
+    """The check a new table's build makes when it starts (table's ``check``): ``plan``
+    (gwas.storeplan.plan's decision for this VCF, made with ``estimate``) made again for the mode
+    it chose, on the memory and disk free now. Raises PlanStop, in the page's words, when that
+    plan stops: on disk when the drive is now too full, in memory when the estimate is now above
+    the free memory (for Automatic, whose next run then keeps the table on disk, it says so)."""
+    from gwas import guitable, storeplan
+
+    def check():
+        again = storeplan.plan(vcf_path, choice=plan.mode, store_base=work_dir, estimate=estimate,
+                               size_of=guitable.vcf_size_of(file_identity), **(plan.options or {}))
+        if not again.stop:
+            return
+        if plan.choice == "auto" and again.stop_kind == "memory":
+            stop = (f"An in-memory run would now need about "
+                    f"{again.estimate_mib * storeplan.MIB / storeplan.GB:.1f} GB of memory, and "
+                    f"{again.available_bytes / storeplan.GB:.1f} GB are free. Run again: Automatic "
+                    "then keeps the table on disk.")
+        else:
+            stop = guitable.page_stop(again, work_dir)
+        raise PlanStop(BUILD_CHECK_NOTE + stop)
+
+    return check
 
 
 # ---------------------------------------------------------------------- the preprocessing
@@ -181,13 +243,17 @@ def preprocess(state, key, parsed, pheno, trait_col, maf_thresh, miss_thresh, no
 
 # --------------------------------------------------------- a table file closed meanwhile
 # The registry closes a table file when another dataset needs its place, and Clear session data
-# (in any session) closes them all: a session that still holds one then reads it again.
+# (in any session) closes them all: a session that still holds one then reads the VCF again. Clear
+# also deletes the server's saved uploads, so a session whose VCF was an upload is asked for it
+# again instead (gwas.guitable.UPLOAD_REMOVED_MESSAGE; VcfGone).
 REREAD_MESSAGE = ("This session's genotype table was closed (Clear session data in another "
                   "session, or the server making room for another dataset), so TRACE read the "
                   "VCF again.")
 CLOSED_MESSAGE = ("This session's genotype table was closed while this run read it (Clear "
                   "session data in another session, or the server making room for another "
-                  "dataset). Run again: TRACE then reads the VCF again.")
+                  "dataset). Run again: TRACE then reads the VCF again, from its location or "
+                  "from the saved upload. Clear session data also deletes the saved uploads: "
+                  "the page then asks you to upload the VCF again.")
 
 
 def table_closed(table):
@@ -353,6 +419,16 @@ def subsampling_settings(state, seed_default, jobs_default):
     return tuple(state.get(k, defaults[k]) for k in SUBSAMPLING_WIDGETS)
 
 
+# The caption when the session holds LD blocks of another trait or table only (stability_blocks gives
+# None). The subsampling box is drawn only on a Run, and opening another page clears it, so a user
+# coming back from the Post-GWAS page ticks it again before the Run that aggregates.
+BLOCKS_NOT_AGGREGATED = (
+    "Not aggregated: the Post-GWAS page's LD blocks belong to another trait or another genotype "
+    "table. To aggregate this run's blocks: open the Post-GWAS page after this run, come back and "
+    "click Run GWAS, tick subsampling again in this section (its box is shown only on a Run, and "
+    "opening another page clears it), then click Run GWAS once more.")
+
+
 def stability_blocks(state, trait, table_key):
     """The LD blocks the GWAS page's per-block subsampling stability aggregates, or None when the
     session has none of this trait and this table: the Post-GWAS page's last blocks
@@ -447,8 +523,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
     (gwas.storeplan.Plan.metadata: the mode the table has, the CLI's estimate for these options and
     the call count), which run_trait_pipeline adds to run_metadata.json as cli.py's run does.
     ``estimate`` replaces the CLI's estimate for the choice only (the GUI's own rule); the metadata
-    always records the CLI's. Raises PlanStop for a stop. The table is the registry's: One-Click
-    never closes it."""
+    always records the CLI's. Raises PlanStop for a stop, also when a build of the table checks
+    the plan again (build_check). The table is the registry's: One-Click never closes it."""
     from gwas import guitable, storeplan
 
     plan = storeplan.plan(vcf_path, choice=choice, store_base=work_dir,
@@ -460,7 +536,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
                           size_of=guitable.vcf_size_of(file_identity))
     if plan.stop:
         raise PlanStop(guitable.page_stop(plan, work_dir))
-    parsed = table(file_identity, plan.mode, vcf_path, work_dir)
+    parsed = table(file_identity, plan.mode, vcf_path, work_dir,
+                   check=build_check(vcf_path, plan, work_dir, file_identity, estimate=estimate))
     meta = plan.metadata(len(parsed.samples), parsed.genotypes.shape[1])
     return parsed, meta, plan
 

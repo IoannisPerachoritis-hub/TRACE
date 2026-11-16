@@ -25,7 +25,6 @@ from gwas.pipeline import is_phenotype_qc_stop
 from gwas import guitable as _gt
 from gwas import guigwas as _gg
 from gwas import storeplan as _storeplan
-from pathlib import Path as _Path
 from gwas.windows import ld_window_kb
 from utils.pub_theme import plotly_html_bytes
 from gwas.utils import _mean_impute_cols
@@ -50,7 +49,8 @@ from gwas.stability import _make_run_manifest
 from gwas.significance import add_significance_columns
 from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
-    plot_manhattan_interactive, plot_manhattan_overlay, manhattan_caption, plot_qq, compute_lambda_gc,
+    plot_manhattan_interactive, plot_manhattan_overlay, manhattan_caption, manhattan_overlay_caption,
+    plot_qq, compute_lambda_gc,
     download_matplotlib_fig, download_plotly_fig,
     _build_gwas_results_zip, _append_metadata_to_zip, _combine_gwas_zips,
     PALETTE, export_matplotlib,
@@ -328,6 +328,17 @@ def _clear_session_data():
     included."""
     _gt.clear_inputs(st.session_state)
     return _gt.clear_all(st.session_state, keys=_CLEAR_KEYS, prefixes=_CLEAR_PREFIXES)
+
+
+def _save_vcf_upload():
+    """The VCF upload box's callback (it runs before the page): a new upload is saved once in the
+    work folder, Streamlit's copy of it is removed and the box emptied (gwas.guitable
+    .save_vcf_upload), so this run reads the saved file, with no rerun that would drop the states
+    of the widgets drawn after the box. The work folder and the location box are read from the
+    session, where their widgets keep their values."""
+    _gt.save_vcf_upload(
+        st.session_state, _gt.work_folder(st.session_state.get("geno_store_dir")),
+        "" if _gt.path_input_disabled() else st.session_state.get("vcf_location", ""))
 # =========================
 # 1. Data upload & basic QC
 # =========================
@@ -338,10 +349,11 @@ with st.container():
         # the first run of a visit of this page (Streamlit has dropped its widgets): the VCF
         # given in an earlier visit is read from the session (gwas.guitable.new_page_visit)
         _gt.new_page_visit(st.session_state)
-        # once an upload is saved in the work folder, Streamlit's copy of it is removed and the
-        # box gets a new key, which empties it (gwas.guitable.vcf_input below)
+        # a new upload is saved in the work folder by the box's callback, before this run: then
+        # Streamlit's copy of it is removed and the box gets a new key, which empties it
         _vcf_box = _gt.box_key(st.session_state, "vcf_upload")
-        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key=_vcf_box)
+        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key=_vcf_box,
+                                    on_change=_save_vcf_upload)
         _vcf_location = ""
         if not _gt.path_input_disabled():
             _vcf_location = st.text_input(
@@ -399,25 +411,25 @@ with st.container():
                      "The default comes from the environment variable TRACE_GENO_STORE_DIR, "
                      "else a folder in the system's temporary folder.",
             )
-        geno_work_dir = _Path(_work_dir_text.strip() or str(_gt.default_work_dir()))
+        geno_work_dir = _gt.work_folder(_work_dir_text)
 
         # ---- The VCF in use: a typed location, else the upload saved once ----
         # A location that fails the check stops the page (an earlier location is dropped, so the
-        # earlier file is never used under the new text). A new upload is saved once, then
-        # Streamlit's copy of it is removed, the box's own reference to it dropped and the box
-        # given a new key (an empty box), and the page reruns: its bytes leave the server's
-        # memory with this run. A copy that fails is not tried again in that work folder.
+        # earlier file is never used under the new text). A new upload was saved by the box's
+        # callback before this run (_save_vcf_upload): its bytes left the server's memory then.
+        # An upload saved here instead (one held while a location was typed, or tried again in
+        # another work folder after a failed copy) is freed the same way: Streamlit's copy is
+        # removed, the box emptied for the next run, and this run reads the saved file, with no
+        # rerun that would drop the states of the widgets below. A copy that fails is not tried
+        # again in that work folder until the file is uploaded again.
         _vcf_in = _gt.vcf_input(st.session_state, _vcf_location, vcf_file, geno_work_dir)
         if _vcf_in.error:
             st.error(_vcf_in.error)
             st.stop()
-        if _vcf_in.rerun:
-            try:
-                st.session_state.pop(_vcf_box, None)
-            except Exception:
-                pass
-            st.session_state["_vcf_upload_widget"] = int(st.session_state.get("_vcf_upload_widget", 0)) + 1
-            st.rerun()
+        if _vcf_in.saved:
+            _gt.empty_upload_box(st.session_state, "vcf_upload")
+            vcf_file = None
+            _vcf_in = _gt.vcf_input(st.session_state, _vcf_location, None, geno_work_dir)
         if _vcf_in.caption:
             st.caption(_vcf_in.caption)
         if _vcf_in.warning:
@@ -461,8 +473,9 @@ LA1589,12.8,7.3
                  "the uploads it saved, every cached result and TRACE's cache files, and this "
                  "session's data and results, the Post-GWAS page's too. It also empties the "
                  "VCF location box, the upload boxes and the trait selection: give the files "
-                 "again to run. The tables are the server's, so on a shared server Clear frees "
-                 "every session's.",
+                 "again to run. The tables and saved uploads are the server's, so on a shared "
+                 "server Clear frees every session's (an uploaded VCF must then be uploaded "
+                 "again).",
             on_click=_clear_session_data,
         ):
             st.success("Session data cleared.")
@@ -971,8 +984,13 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
 
     # --- Build stable cache keys ---
     # the file's content hash, read in pieces once per (path, size, modification time): the
-    # value hash_bytes gives the whole file, so every key and seed built on it is unchanged
-    vcf_hash = _gt.file_identity(vcf_path)
+    # value hash_bytes gives the whole file, so every key and seed built on it is unchanged. A VCF
+    # gone since the check above (an upload that Clear session data in another session deleted)
+    # is asked for plainly.
+    try:
+        vcf_hash = _gg.vcf_identity(vcf_path)
+    except _gg.VcfGone as _gone:
+        _rehydrate_or_stop(str(_gone), level="warning")
     # the raw table's fingerprint from the new-upload check above (the table has not
     # changed since: only an idempotent column-name strip ran in between)
     pheno_hash = _pheno_raw_fp
@@ -1011,9 +1029,20 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # making room for another dataset), what was built on it is dropped and the registry gives
     # a fresh table (gwas.guigwas.drop_closed_table); the page says so once.
     _table_reread = _gg.drop_closed_table(st.session_state, vcf_hash, _geno_plan.mode)
+    # The server builds one table at a time: a new table's build may wait for another session's,
+    # and then checks the free memory and disk again (gwas.guigwas.build_check), stopping plainly
+    # when the plan above no longer holds. A VCF that is gone when its table must be read again
+    # (an upload that Clear session data in another session deleted) is asked for plainly too.
+    _build_check = _gg.build_check(vcf_path, _geno_plan, geno_work_dir, vcf_hash,
+                                   estimate=_gt.gui_estimate_mib)
 
     def _read_table():
-        return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+        try:
+            return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir, check=_build_check)
+        except _gg.PlanStop as _build_stop:
+            _rehydrate_or_stop(str(_build_stop))
+        except _gg.VcfGone as _gone:
+            _rehydrate_or_stop(str(_gone), level="warning")
 
     with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
                     else "Reading the VCF…"):
@@ -1841,7 +1870,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
                     vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts,
                     estimate=_gt.gui_estimate_mib)
-            except _gg.PlanStop as _oc_stop:
+            except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:
                 _gm_tmp.cleanup()
                 st.error(str(_oc_stop))
                 st.stop()
@@ -1869,22 +1898,33 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
 
                 # a trait that fails because the table file was closed meanwhile (Clear session
                 # data in another session, or the server making room for another dataset) runs
-                # again, with the traits after it, on a fresh table (gwas.guigwas)
-                for _t, _res, _err, _again in _gg.run_traits_rereading(
-                        _parsed, pheno, selected_traits, _opts,
-                        lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir),
-                        on_start=_on_trait_start, progress=_on_progress):
-                    if _again:
-                        st.caption(_gg.REREAD_MESSAGE)
-                    if _res is None:
-                        _failed[_t] = _err
-                        st.error(f"Trait `{_t}` failed: {_last_line(_err)}")
-                    else:
-                        # keep only what the summary and the downloads need
-                        _done[_t] = dict(_res.summary, zip_name=_res.zip_name,
-                                         zip_bytes=_res.zip_bytes)
-                        _elapsed.append(_time_mod.time() - _clock["t0"])
-                    del _res
+                # again, with the traits after it, on a fresh table (gwas.guigwas), whose build
+                # checks the free memory and disk again first; an uploaded VCF that Clear deleted
+                # is asked for plainly
+                _oc_check = _gg.build_check(vcf_path, _oc_plan, geno_work_dir, vcf_hash,
+                                            estimate=_gt.gui_estimate_mib)
+                try:
+                    for _t, _res, _err, _again in _gg.run_traits_rereading(
+                            _parsed, pheno, selected_traits, _opts,
+                            lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir,
+                                              check=_oc_check),
+                            on_start=_on_trait_start, progress=_on_progress):
+                        if _again:
+                            st.caption(_gg.REREAD_MESSAGE)
+                        if _res is None:
+                            _failed[_t] = _err
+                            st.error(f"Trait `{_t}` failed: {_last_line(_err)}")
+                        else:
+                            # keep only what the summary and the downloads need
+                            _done[_t] = dict(_res.summary, zip_name=_res.zip_name,
+                                             zip_bytes=_res.zip_bytes)
+                            _elapsed.append(_time_mod.time() - _clock["t0"])
+                        del _res
+                except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:    # no fresh table
+                    _gm_tmp.cleanup()
+                    _status.update(label="Full analysis stopped", state="error")
+                    st.error(str(_oc_stop))
+                    st.stop()
                 _gm_tmp.cleanup()
                 del _parsed      # the registry keeps the table (it is shared, never closed here)
                 if _failed:
@@ -2660,10 +2700,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                     else:
                         st.warning("No LD blocks could be matched to subsampling SNP results.")
                 elif _other_blocks:
-                    st.caption(
-                        "Not aggregated: the Post-GWAS page's LD blocks belong to another trait or "
-                        "another genotype table. Open the Post-GWAS page after this run, then click "
-                        "Run GWAS again to aggregate its blocks.")
+                    st.caption(_gg.BLOCKS_NOT_AGGREGATED)
                 else:
                     st.write(
                         "No LD blocks available for aggregation. "
@@ -3209,14 +3246,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             )
 
             # Optional: overlay Manhattan by model (shared genome-wide x). Above 500,000 points
-            # in all (every model's SNPs), it draws the interactive Manhattan's subset, with its
-            # caption (gwas.plotting.plot_manhattan_overlay); its HTML is built once, for the
-            # download.
+            # in all (every model's SNPs), it draws within each model the interactive Manhattan's
+            # subset, with one k for every model, and a caption that counts points
+            # (gwas.plotting.plot_manhattan_overlay); its HTML is built once, for the download.
             st.markdown("### Overlay Manhattan by model (genome-wide x)")
             fig_overlay, df_plot_multi = plot_manhattan_overlay(all_res)
             show_plot(fig_overlay, "wide")
-            if manhattan_caption(df_plot_multi):
-                st.caption(manhattan_caption(df_plot_multi))
+            _overlay_caption = manhattan_overlay_caption(df_plot_multi)
+            if _overlay_caption:
+                st.caption(_overlay_caption)
             st.caption("Data: \"Download cross-model results (CSV)\" below.")
             download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html",
                                 label="Download overlay Manhattan",
