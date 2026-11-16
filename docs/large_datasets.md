@@ -152,6 +152,40 @@ folder, `_trace_geno_store_gui_<process>_<random>`; TRACE keeps at most two, and
 when its table is no longer kept and when the server stops normally. Folders left by a server that
 did not stop are named on the page with their size; they are never deleted automatically.
 
+**What the pages do with the table on disk.** The GWAS page runs its preprocessing (sample
+matching, phenotype and SNP QC, the fill of missing calls, kinship, the QC report) on the table
+at the same places as the CLI. MLM, MLMM, FarmCPU, the OLS effects, LD decay, M_eff and
+subsampling read it in pieces. One-Click uses the same table, and its `run_metadata.json` records
+where the table was kept, as the CLI's does. The Post-GWAS page reads only the window or block
+each tab shows. The results are the same as with the table in memory, byte for byte. Not
+available with the table on disk: LD-kNNi imputation (choose mean imputation, or keep the table
+in memory), and the haplotype PCA panel's own PCs when the GWAS run kept fewer than two PCs (the
+panel then says why).
+
+**Subsampling.** With the table on disk, the iterations run one after another. In memory with
+more than one core, the page first checks that the workers fit in the free memory (each worker
+after the first needs about 300 MiB and 12 bytes per genotype call). If they do not, it runs the
+iterations one after another and says so. The results are the same either way.
+
+**Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
+that open the same VCF with the same choice share one table, and the server keeps at most two.
+When a third is needed, the one used least recently is closed. A page that still needed it asks
+you to run the GWAS page again.
+
+**Clear session data** frees this server's genotype tables (in memory, and the table files with
+their folders on disk), the uploads it saved, every cached result, and the cache files that
+earlier versions of TRACE left in Streamlit's cache folder (`~/.streamlit/cache`; other apps' files
+there are not touched). It also drops this session's data and results on both pages; the widget
+settings stay. On a shared server Clear affects every session, since the tables are the server's.
+
+**The interactive Manhattan.** Above 500,000 SNPs it draws every SNP with p ≤ 0.01 and one in k of
+the others, in genome order, with k the smallest whole number that keeps the drawing at 500,000
+points or fewer. A caption under the figure says so ("N of M SNPs drawn: ..."). The static
+Manhattan and the results table keep every SNP. The reason is the browser: Streamlit sends a
+figure in one message, of at most 200 MB by default, and at 1,070,795 SNPs the full figure was
+157 MB; the thinned one is 53 MB, and a figure at the limit 73 MB. Below the limit nothing
+changes.
+
 ## Checking that both modes agree
 
 Run the same analysis twice, once with each mode, into two folders, and compare the two ZIPs:

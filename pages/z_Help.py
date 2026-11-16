@@ -29,6 +29,21 @@ Each input file's format:
 the first column, matching the VCF), pick a trait, and click **Run GWAS** or **One-Click
 Full Analysis**. Then open **Post-GWAS Analysis** for LD blocks and haplotype effects;
 every page offers a ZIP download.
+
+**Large datasets:**
+- **Big VCFs.** For a VCF above the 2 GB upload limit, or to skip the upload, type the file's
+  location on this computer in the box under the upload box. TRACE then reads the file where
+  it is.
+- **Where the genotype table is kept.** Before reading, the page checks the memory a run needs.
+  Under **Large datasets**, Automatic keeps the table on disk when it would not fit; In memory and
+  On disk force the choice. The results are the same either way. LD-kNNi imputation needs the
+  table in memory.
+- **Clear session data** frees this server's genotype tables, the uploads it saved and every
+  cached result, on both pages.
+- **The interactive Manhattan.** Above 500,000 SNPs it draws every SNP with p ≤ 0.01 and a
+  sample of the others. The static Manhattan and the results table keep every SNP.
+
+Details: [docs/large_datasets.md](https://github.com/IoannisPerachoritis-hub/TRACE/blob/main/docs/large_datasets.md#in-the-gui).
 """)
 
 # ============================================================
