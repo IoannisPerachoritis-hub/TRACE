@@ -465,7 +465,9 @@ def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_p
         assert guigwas.table_closed(held) and not Path(path).exists()
         nxt = guitable.vcf_input(state, "", None, work)                         # this session's next run
         assert nxt.warning == guitable.UPLOAD_REMOVED_MESSAGE == (
-            "The uploaded VCF was removed by Clear session data: upload it again.")
+            "The uploaded VCF is no longer in the work folder. Clear session data (in any session) deletes "
+            "saved uploads, and the system may clean its temporary folder, where the work folder is by "
+            "default. Upload the VCF again.")
         assert not nxt.error and not guitable.inputs_kept(state)                # nothing is read
         with pytest.raises(guigwas.VcfGone) as gone:          # the setup's hash, the file deleted since
             guigwas.vcf_identity(path)                         # the page checked that it is there
@@ -508,12 +510,89 @@ def test_after_another_sessions_clear_an_uploaded_vcf_is_asked_for_plainly(tmp_p
     assert "reads the VCF again" in guigwas.CLOSED_MESSAGE and "upload the VCF again" in guigwas.CLOSED_MESSAGE
 
 
+def test_one_click_stopped_mid_way_keeps_the_traits_it_finished(tmp_path, own_registry, monkeypatch):
+    """The round 2 re-check's q2 c: One-Click over two traits, the table on disk and the VCF an upload;
+    Clear session data in another session while trait 2 runs closes the table and deletes the saved
+    upload, so no fresh table can be read (VcfGone). The page stopped there with the message only, and
+    trait 1's finished results were lost. Now trait 1 keeps them: its summary and the combined ZIP,
+    whose failed_traits.txt names trait 2 with the plain message, as after a run with a failed trait;
+    the page still stops plainly when no trait finished."""
+    import ast
+    import io
+    import zipfile
+
+    from gwas import pipeline as pl
+    from gwas.plotting import _combine_gwas_zips
+
+    # the page: the trait loop's stop handler stops only when no trait finished, and keeps the rest
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    (loop,) = [n for n in ast.walk(page) if isinstance(n, ast.Try)
+               and any("_gg.run_traits_rereading(" in ast.unparse(s) for s in n.body)]
+    (handler,) = loop.handlers
+    assert ast.unparse(handler.type) == "(_gg.PlanStop, _gg.VcfGone)"
+    stops = [n for n in ast.walk(handler) if isinstance(n, ast.Call) and ast.unparse(n.func) == "st.stop"]
+    guards = [n for n in handler.body if isinstance(n, ast.If) and ast.unparse(n.test) == "not _done"]
+    assert stops and len(guards) == 1 and all(any(s is n for n in ast.walk(guards[0])) for s in stops)
+    assert "_not_run = _gg.traits_not_run(selected_traits, _done, _failed, _oc_stop)" in ast.unparse(handler)
+    assert "_failed.update(_not_run)" in ast.unparse(handler)
+
+    # q2 c, through the loop the page runs
+    vcf, ph = EX1
+    work = tmp_path / "w"
+    opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
+                                  run_label="One-Click Full Analysis")
+    traits = ["Trait1", "Trait2"]
+    upload = io.BytesIO(vcf.read_bytes())
+    upload.name, upload.size, upload.file_id = vcf.name, vcf.stat().st_size, "u-2"
+    state, seen, real = {}, [], pl.run_trait_pipeline
+
+    def clearing(parsed, pheno_df, trait, options, progress=None):
+        seen.append(trait)
+        if len(seen) == 2:
+            guitable.clear_all({}, memo_folder=tmp_path / "memo")    # another session's Clear, during trait 2
+        return real(parsed, pheno_df, trait, options, progress=progress)
+
+    done, failed = {}, {}
+    try:
+        guitable.vcf_input(state, "", upload, work)
+        path = state["_persist_vcf_path"]
+        ident = guitable.file_identity(path)
+        parsed = guigwas.table(ident, "disk", path, work)
+        monkeypatch.setattr(pl, "run_trait_pipeline", clearing)
+        with pytest.raises(guigwas.VcfGone) as stop:
+            for t, res, err, _again in guigwas.run_traits_rereading(
+                    parsed, pd.read_csv(ph, index_col=0), traits, opts,
+                    lambda: guigwas.table(ident, "disk", path, work)):
+                if res is None:
+                    failed[t] = err
+                else:
+                    done[t] = res.zip_bytes
+    finally:
+        guitable.remove_saved_uploads()
+    assert list(done) == ["Trait1"] and failed == {} and seen == ["Trait1", "Trait2"]
+    not_run = guigwas.traits_not_run(traits, done, failed, stop.value)
+    assert not_run == {"Trait2": guitable.UPLOAD_REMOVED_MESSAGE}
+    failed.update(not_run)
+    _name, buf = _combine_gwas_zips(done, pheno_label="example_pheno",
+                                    extra_members={"failed_traits.txt": pl.failed_traits_report(traits, done, failed)})
+    with zipfile.ZipFile(buf) as combined, zipfile.ZipFile(io.BytesIO(done["Trait1"])) as one:
+        assert {n for n in combined.namelist() if n.startswith("Trait1/")} == {f"Trait1/{n}" for n in one.namelist()}
+        assert not [n for n in combined.namelist() if n.startswith("Trait2/")]
+        report = combined.read("failed_traits.txt").decode()
+    assert "1 of 2 traits completed" in report and "Trait1: completed" in report and "Trait2: FAILED" in report
+    assert guitable.UPLOAD_REMOVED_MESSAGE in report
+    assert guigwas.traits_not_run(["A", "B", "C"], {"A": 1}, {"B": "its own error"}, "stopped") == {"C": "stopped"}
+
+
 def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_then(tmp_path, own_registry,
                                                                                   monkeypatch):
     """The server builds one table at a time, so a build may start after another session's: its check
-    (build_check) makes the plan again for the mode it chose, on the memory and disk free then, and stops
-    in the page's words when that plan stops, building nothing; One-Click's table too. A table already
-    there is not checked again. Every table the GWAS page reads passes the check."""
+    (build_check) makes the plan again on the memory and disk free then, by the rule that chose its mode,
+    and stops in the page's words when that plan no longer holds, building nothing; One-Click's table too.
+    Automatic in memory stops by Automatic's own rule (the estimate above 80% of the free memory), exactly
+    when Automatic's next plan keeps the table on disk, and says so; In memory by its own (the estimate
+    above the free memory). A table already there is not checked again. Every table the GWAS page reads
+    passes the check."""
     import ast
 
     from gwas import pipeline as pl
@@ -534,16 +613,42 @@ def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_th
     checks = {c: guigwas.build_check(vcf, p, work, ident, **gui) for c, p in plans.items()}
     for check in checks.values():
         check()                                                      # nothing changed: no stop
-    free.update(memory=[2**20], disk=[2**20])                        # another build used them meanwhile
+    need = plans["auto"].estimate_mib * storeplan.MIB
+
+    def automatic_next_plan_mode():
+        return storeplan.plan(vcf, choice="auto", store_base=work, models=("mlm", "mlmm", "farmcpu"),
+                              size_of=guitable.vcf_size_of(ident), **gui).mode
+
+    # the round 2 re-check's q6: between Automatic's 80% and all the free memory, Automatic's next plan
+    # keeps the table on disk, so its build stops and says so; In memory builds
+    for fraction, stops in ((0.79, False), (0.81, True), (0.9, True)):
+        free.update(memory=[int(need / fraction)], disk=[100 * 2**30])
+        assert (automatic_next_plan_mode() == "disk") == stops
+        checks["memory"]()                                           # In memory: it still fits
+        if not stops:
+            checks["auto"]()
+            continue
+        with pytest.raises(guigwas.PlanStop) as stop:
+            guigwas.table(ident, "memory", vcf, work, check=checks["auto"])
+        assert str(stop.value).startswith(guigwas.BUILD_CHECK_NOTE)
+        assert str(stop.value).endswith("are free (Automatic keeps the table in memory up to 80% of the free "
+                                        "memory). Run again: Automatic then keeps the table on disk.")
+        assert own_registry.keys() == []                             # nothing built
+    free.update(memory=[2**20], disk=[100 * 2**30])                 # another build used the memory meanwhile
+    with pytest.raises(guigwas.PlanStop) as stop:
+        guigwas.table(ident, "memory", vcf, work, check=checks["auto"])
+    assert str(stop.value).endswith("Run again: Automatic then keeps the table on disk.")
+    free.update(memory=[2**20], disk=[2**20])                        # ... and the disk
     said = {}
     for c, check in checks.items():
         with pytest.raises(guigwas.PlanStop) as stop:
             guigwas.table(ident, plans[c].mode, vcf, work, check=check)
         said[c] = str(stop.value)
     assert all(s.startswith(guigwas.BUILD_CHECK_NOTE) for s in said.values())
-    assert said["auto"].endswith("are free. Run again: Automatic then keeps the table on disk.")
+    assert "so Automatic would now keep the table on disk. The genotype table on disk needs" in said["auto"]
     assert "Choose On disk under Large datasets" in said["memory"]
     assert f"in {work}, and 0.0 GB are free there. Free some space" in said["disk"]
+    assert said["auto"].endswith(said["disk"][len(guigwas.BUILD_CHECK_NOTE):])     # the disk's own stop
     assert own_registry.keys() == [] and not list(work.glob(f"{guitable.GUI_STORE_PREFIX}_*"))
 
     free.update(memory=[64 * 2**30], disk=[100 * 2**30])
@@ -562,6 +667,64 @@ def test_a_new_tables_build_checks_the_plan_again_on_the_memory_and_disk_free_th
     page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
     reads = [n for n in ast.walk(page) if isinstance(n, ast.Call) and ast.unparse(n.func) == "_gg.table"]
     assert len(reads) == 2 and all("check" in {k.arg for k in n.keywords} for n in reads)
+
+
+def test_the_page_says_when_it_waits_for_another_sessions_build(tmp_path, own_registry, monkeypatch):
+    """The round 2 re-check's q1 m: a session waiting for another session's build saw "Reading the VCF…".
+    The table's spinners now say "Waiting for another session's genotype table to be built…" during the
+    wait and "Reading the VCF…" only during the session's own build (nothing for a table already there),
+    and every table the GWAS page and One-Click read shows them, with no other spinner around."""
+    import ast
+    import contextlib
+    import threading
+
+    from gwas import genostore
+
+    page = ast.parse((REPO / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8"))
+    spinners = [ast.unparse(n) for n in ast.walk(page) if isinstance(n, ast.Call) and ast.unparse(n.func) == "st.spinner"]
+    assert not [s for s in spinners if "Reading the VCF" in s]               # none around a wait
+    reads = [n for n in ast.walk(page) if isinstance(n, ast.Call)
+             and ast.unparse(n.func) in ("_gg.table", "_gg.one_click_table")]
+    assert len(reads) == 3
+    assert all({ast.unparse(k.value) for k in n.keywords if k.arg == "spinner"} == {"st.spinner"} for n in reads)
+
+    vcf, _ph = EX1
+    ident = guitable.file_identity(vcf)
+    work = tmp_path / "w"
+    shown = []
+
+    def spinner(text):
+        shown.append(text)
+        return contextlib.nullcontext()
+
+    guigwas.table(ident, "disk", vcf, work, spinner=spinner)                  # its own build
+    assert shown == ["Reading the VCF into the genotype table on disk…"] == [guigwas.READING_MESSAGES["disk"]]
+    shown.clear()
+    guigwas.table(ident, "disk", vcf, work, spinner=spinner)                  # there: nothing
+    assert shown == []
+    real_ingest, started, release = genostore.ingest_vcf, threading.Event(), threading.Event()
+
+    def slow_ingest(*a, **k):
+        started.set()
+        release.wait(30)
+        return real_ingest(*a, **k)
+
+    monkeypatch.setattr(genostore, "ingest_vcf", slow_ingest)
+    other = threading.Thread(target=guigwas.table, args=("another-vcf", "disk", vcf, work))
+    other.start()
+    assert started.wait(30)
+    mine = threading.Thread(target=guigwas.table, args=(ident, "memory", vcf, work), kwargs={"spinner": spinner})
+    mine.start()
+    for _ in range(300):
+        if shown:
+            break
+        mine.join(0.05)
+    mine.join(0.3)
+    assert shown == ["Waiting for another session's genotype table to be built…"] == [guigwas.WAITING_MESSAGE]
+    release.set()
+    other.join(60)
+    mine.join(60)
+    assert shown == [guigwas.WAITING_MESSAGE, "Reading the VCF…"]
 
 
 def test_the_qc_reports_frequencies_and_pc_spectrum_are_kept_per_table(tables, monkeypatch):

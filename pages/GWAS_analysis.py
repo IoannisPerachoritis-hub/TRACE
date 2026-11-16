@@ -302,10 +302,12 @@ def _stop_if_table_closed(table):
 
 
 def _rehydrate_or_stop(msg=None, level="error"):
-    """Show the persisted last-run results (if any) instead of blanking, then stop."""
+    """Show the persisted last-run results (if any) instead of blanking, then stop. The message
+    is then followed by "Showing your last completed run below instead." as a sentence of its own
+    (gwas.guigwas.with_last_run_note)."""
     if _has_persisted_gwas():
         if msg:
-            st.warning(f"{msg}; showing your last completed run below instead.")
+            st.warning(_gg.with_last_run_note(msg))
         _render_last_run_results()
     elif msg:
         getattr(st, level, st.error)(msg)
@@ -1031,22 +1033,23 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     _table_reread = _gg.drop_closed_table(st.session_state, vcf_hash, _geno_plan.mode)
     # The server builds one table at a time: a new table's build may wait for another session's,
     # and then checks the free memory and disk again (gwas.guigwas.build_check), stopping plainly
-    # when the plan above no longer holds. A VCF that is gone when its table must be read again
-    # (an upload that Clear session data in another session deleted) is asked for plainly too.
+    # when the plan above no longer holds. Its spinners say which: "Waiting for another session's
+    # genotype table to be built…" during the wait, then "Reading the VCF…" during this session's
+    # own build (gwas.guigwas.table). A VCF that is gone when its table must be read again (an
+    # upload that Clear session data in another session deleted) is asked for plainly too.
     _build_check = _gg.build_check(vcf_path, _geno_plan, geno_work_dir, vcf_hash,
                                    estimate=_gt.gui_estimate_mib)
 
     def _read_table():
         try:
-            return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir, check=_build_check)
+            return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir, check=_build_check,
+                             spinner=st.spinner)
         except _gg.PlanStop as _build_stop:
             _rehydrate_or_stop(str(_build_stop))
         except _gg.VcfGone as _gone:
             _rehydrate_or_stop(str(_gone), level="warning")
 
-    with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
-                    else "Reading the VCF…"):
-        _parsed = _read_table()
+    _parsed = _read_table()
 
     # --- The preprocessing of one trait, kept in the session (one current entry) ---
     # The setup (and the detailed view below) uses the first selected trait that
@@ -1091,7 +1094,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     if results is None:
         _rehydrate_or_stop(
             "No selected trait can be analysed: "
-            + "; ".join(f"{t}: {e}" for t, e in _setup_failed.items()))
+            + " ".join(_gg.as_sentence(f"{t}: {e}") for t, e in _setup_failed.items()))
     if _table_reread:
         st.caption(_gg.REREAD_MESSAGE)
     # the detailed view's trait: its normalisation keys the caches and the records below
@@ -1873,7 +1876,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             try:
                 _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
                     vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts,
-                    estimate=_gt.gui_estimate_mib)
+                    estimate=_gt.gui_estimate_mib, spinner=st.spinner)
             except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:
                 _gm_tmp.cleanup()
                 st.error(str(_oc_stop))
@@ -1907,11 +1910,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 # is asked for plainly
                 _oc_check = _gg.build_check(vcf_path, _oc_plan, geno_work_dir, vcf_hash,
                                             estimate=_gt.gui_estimate_mib)
+                _not_run = {}
                 try:
                     for _t, _res, _err, _again in _gg.run_traits_rereading(
                             _parsed, pheno, selected_traits, _opts,
                             lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir,
-                                              check=_oc_check),
+                                              check=_oc_check, spinner=st.spinner),
                             on_start=_on_trait_start, progress=_on_progress):
                         if _again:
                             st.caption(_gg.REREAD_MESSAGE)
@@ -1925,24 +1929,43 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                             _elapsed.append(_time_mod.time() - _clock["t0"])
                         del _res
                 except (_gg.PlanStop, _gg.VcfGone) as _oc_stop:    # no fresh table
-                    _gm_tmp.cleanup()
-                    _status.update(label="Full analysis stopped", state="error")
-                    st.error(str(_oc_stop))
-                    st.stop()
+                    if not _done:                   # nothing finished: the plain stop
+                        _gm_tmp.cleanup()
+                        _status.update(label="Full analysis stopped", state="error")
+                        st.error(str(_oc_stop))
+                        st.stop()
+                    # the traits that finished keep their results (their summaries and the
+                    # combined ZIP below, as after a run with a failed trait); the others are
+                    # reported with the stop's plain message
+                    _not_run = _gg.traits_not_run(selected_traits, _done, _failed, _oc_stop)
+                    _failed.update(_not_run)
+                    st.error(f"Not run: {', '.join(f'`{t}`' for t in _not_run)}. {_oc_stop}")
                 _gm_tmp.cleanup()
                 del _parsed      # the registry keeps the table (it is shared, never closed here)
-                if _failed:
+                if _not_run:
+                    _status.update(label=(f"Full analysis stopped: {len(_not_run)} of "
+                                          f"{_n_total} traits not run"), state="error")
+                elif _failed:
                     _status.update(label=(f"Full analysis finished: {len(_failed)} of "
                                           f"{_n_total} traits failed"), state="error")
                 else:
                     _status.update(label="Full analysis complete!", state="complete")
                 # Replace the trait-progress banner with a final summary
                 # so it doesn't keep showing "ETA: ~Xm remaining" forever.
-                _trait_progress.success(
-                    f"**Done.** Processed {len(_done)}/{_n_total} traits in "
-                    f"{_fmt_secs(sum(_elapsed))}."
-                    + (f" Failed: {', '.join(f'`{t}`' for t in _failed)}." if _failed else "")
-                )
+                if _not_run:
+                    _failed_own = [t for t in _failed if t not in _not_run]
+                    _trait_progress.error(
+                        f"**Stopped.** Processed {len(_done)}/{_n_total} traits in "
+                        f"{_fmt_secs(sum(_elapsed))}."
+                        + (f" Failed: {', '.join(f'`{t}`' for t in _failed_own)}." if _failed_own else "")
+                        + f" Not run: {', '.join(f'`{t}`' for t in _not_run)}."
+                    )
+                else:
+                    _trait_progress.success(
+                        f"**Done.** Processed {len(_done)}/{_n_total} traits in "
+                        f"{_fmt_secs(sum(_elapsed))}."
+                        + (f" Failed: {', '.join(f'`{t}`' for t in _failed)}." if _failed else "")
+                    )
 
             # --- Combined ZIP when several traits were selected (with the error report) ---
             _combined_zip_name = None
@@ -1960,6 +1983,9 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # --- Per-trait results summary (tabs when >1 trait) ---
             def _render_one_trait_summary(_t):
                 _td = _done.get(_t)
+                if _t in _not_run:
+                    st.error(f"`{_t}` was not run: {_not_run[_t]}")
+                    return
                 if _td is None:
                     st.error(f"`{_t}` failed: {_last_line(_failed.get(_t, ''))}")
                     with st.expander("Error details"):

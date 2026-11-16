@@ -345,6 +345,14 @@ def page_stop(plan, work_dir):
 
 
 # --------------------------------------------------------------------------- the registry
+def _context(factory):
+    """``factory()``, a context the registry stays in (a page's spinner), or a context that does
+    nothing when no factory is given."""
+    import contextlib
+
+    return factory() if factory is not None else contextlib.nullcontext()
+
+
 def _read_only(parsed):
     """Mark every array of a parsed VCF read-only (the in-memory parse is shared by sessions)."""
     for v in vars(parsed).values() if hasattr(parsed, "__dict__") else ():
@@ -391,13 +399,20 @@ class TableRegistry:
             self._entries.move_to_end(key)
         return entry
 
-    def get(self, identity, mode, vcf_path, work_dir=None, log=None, check=None):
+    def get(self, identity, mode, vcf_path, work_dir=None, log=None, check=None, waiting=None,
+            building=None):
         """The table of ``vcf_path`` in ``mode`` ("memory" or "disk"), built if needed.
 
         ``check``, when given, is called with no arguments just before a new table is built, once
         no other build runs (so after any build this session waited for), and never for a table
         that is already here: the caller's check of the free memory and disk, made again then
-        (gwas.guigwas.build_check). An exception from it builds nothing and reaches the caller."""
+        (gwas.guigwas.build_check). An exception from it builds nothing and reaches the caller.
+
+        ``waiting`` and ``building``, when given, are called with no arguments for a context the
+        call stays in while it waits for another session's build, and while it checks and builds
+        the table itself: the page's spinners (gwas.guigwas.table). Neither is used for a table
+        that is already here. Whatever they raise, the build lock is released and a table that
+        was built is in the registry."""
         if mode not in ("memory", "disk"):
             raise ValueError(f"unknown table mode {mode!r}")
         key = (str(identity), mode)
@@ -405,23 +420,34 @@ class TableRegistry:
             entry = self._hit(key)
             if entry is not None:
                 return entry["parsed"]
-        with self._build_lock:                        # one build at a time
+        held = self._build_lock.acquire(blocking=False)   # one build at a time
+        try:
+            if not held:                              # another session's build runs: wait for it
+                with _context(waiting):
+                    self._build_lock.acquire()
+                    held = True
             with self._lock:
                 entry = self._hit(key)                # built by the build this session waited for
                 if entry is not None:
                     return entry["parsed"]
-            if check is not None:
-                check()
-            entry = self._open(mode, vcf_path, work_dir, log)      # a failure evicts nothing
-            with self._lock:
-                self._entries[key] = entry
-                self._entries.move_to_end(key)
-                self._building_dirs.discard(entry.get("dir"))
-                evicted = []
-                while len(self._entries) > self.max_entries:
-                    evicted.append(self._entries.popitem(last=False)[1])
-            for old in evicted:                       # outside the registry's lock
-                self._release(old)
+            evicted = []
+            try:
+                with _context(building):
+                    if check is not None:
+                        check()
+                    entry = self._open(mode, vcf_path, work_dir, log)  # a failure evicts nothing
+                    with self._lock:
+                        self._entries[key] = entry
+                        self._entries.move_to_end(key)
+                        self._building_dirs.discard(entry.get("dir"))
+                        while len(self._entries) > self.max_entries:
+                            evicted.append(self._entries.popitem(last=False)[1])
+            finally:
+                for old in evicted:                   # outside the registry's lock
+                    self._release(old)
+        finally:
+            if held:
+                self._build_lock.release()
         return entry["parsed"]
 
     def _open(self, mode, vcf_path, work_dir, log):
@@ -728,16 +754,19 @@ def vcf_path_ready(state):
     return bool(path) and os.path.isfile(path)
 
 
-# Clear session data deletes the server's saved uploads, in every session (clear_all): a session
-# whose VCF was an upload must then give it again.
-UPLOAD_REMOVED_MESSAGE = "The uploaded VCF was removed by Clear session data: upload it again."
+# Clear session data deletes the server's saved uploads, in every session (clear_all), and the
+# system may clean its temporary folder, where the work folder is by default (default_work_dir): a
+# session whose VCF was an upload must then give it again.
+UPLOAD_REMOVED_MESSAGE = ("The uploaded VCF is no longer in the work folder. Clear session data (in "
+                          "any session) deletes saved uploads, and the system may clean its temporary "
+                          "folder, where the work folder is by default. Upload the VCF again.")
 
 
 def vcf_gone_message(path):
     """The page's message for a VCF that is no longer at ``path``, or "" while it is there (or no
     path is given): for an upload TRACE saved (a _trace_upload_gui_* folder), which Clear session
-    data deletes, UPLOAD_REMOVED_MESSAGE; for a file given by its location, the location box's
-    own message."""
+    data deletes and the system's cleaning of its temporary folder can remove,
+    UPLOAD_REMOVED_MESSAGE; for a file given by its location, the location box's own message."""
     if not path or os.path.isfile(path):
         return ""
     if Path(path).parent.name.startswith(UPLOAD_PREFIX + "_"):

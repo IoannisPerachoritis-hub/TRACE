@@ -26,8 +26,14 @@ The table, in memory or on disk (the same results either way)
     column_means        the imputed table's per-SNP means (the QC report's MAF histogram)
     subsampling         the page's subsampling; in memory with several workers, the workers'
                         memory is checked first
+
+The page's messages
+    with_last_run_note  a stop's message when the page shows the last completed run instead: the
+                        message, then "Showing your last completed run below instead." as a
+                        sentence of its own
 """
 import contextlib
+import re
 
 import numpy as np
 import pandas as pd
@@ -106,6 +112,25 @@ if st is not None:
                              max_entries=8)(ld_decay)
 
 
+# ----------------------------------------------------------------------- the page's messages
+LAST_RUN_NOTE = "Showing your last completed run below instead."
+
+
+def as_sentence(text):
+    """``text`` ending as a sentence: a full stop is added unless it ends with one already, or with
+    ! or ? (a closing quote or bracket may follow them)."""
+    text = str(text).strip()
+    if not text or re.search(r"[.!?][\"')\]]*$", text):
+        return text
+    return f"{text}."
+
+
+def with_last_run_note(msg):
+    """The message of a stop after which the page shows the last completed run (the page's
+    _rehydrate_or_stop): ``msg`` as a sentence, then LAST_RUN_NOTE as a sentence of its own."""
+    return f"{as_sentence(msg)} {LAST_RUN_NOTE}"
+
+
 # ----------------------------------------------------------------------------------- M_eff
 MEFF_KEY = "_trace_meff"
 
@@ -126,7 +151,13 @@ def meff(state, table_key, geno_imputed):
 
 
 # ------------------------------------------------------------------------------ the table
-def table(file_identity, mode, vcf_path, work_dir, check=None):
+# The page's spinners while it gets its table: the server builds one table at a time, so a session
+# may first wait for another session's build (of another VCF, or of this one), then build its own.
+WAITING_MESSAGE = "Waiting for another session's genotype table to be built…"
+READING_MESSAGES = {"memory": "Reading the VCF…", "disk": "Reading the VCF into the genotype table on disk…"}
+
+
+def table(file_identity, mode, vcf_path, work_dir, check=None, spinner=None):
     """The server's table of ``vcf_path`` in ``mode`` (gwas.guitable.get_registry): the parsed
     genotypes (gwas.pipeline.ParsedGenotypes, read-only) in memory, or the table file
     (gwas.genostore.StoreParsed) in a folder of the work folder on disk. Shared by the sessions
@@ -134,12 +165,22 @@ def table(file_identity, mode, vcf_path, work_dir, check=None):
     in-memory reader's error, in both modes. ``check`` (build_check) runs when the table has to
     be built, just before the build starts. A VCF that is no longer there raises VcfGone (an
     upload that Clear session data in another session deleted, or a file gone from its
-    location), not FileNotFoundError."""
+    location), not FileNotFoundError. ``spinner`` (st.spinner) shows WAITING_MESSAGE while the
+    call waits for another session's build, and READING_MESSAGES[mode] while it builds the table
+    itself; nothing for a table that is already there."""
     from gwas import guitable
     from gwas.genostore import DeferredParseError
 
+    waiting = building = None
+    if spinner is not None:
+        def waiting():
+            return spinner(WAITING_MESSAGE)
+
+        def building():
+            return spinner(READING_MESSAGES.get(mode, READING_MESSAGES["memory"]))
     try:
-        return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir, check=check)
+        return guitable.get_registry().get(file_identity, mode, vcf_path, work_dir, check=check,
+                                           waiting=waiting, building=building)
     except DeferredParseError as exc:          # on disk: the in-memory parse's own stop
         raise exc.original from None
     except FileNotFoundError:
@@ -178,25 +219,37 @@ BUILD_CHECK_NOTE = ("TRACE checked the free memory and disk again just before re
 
 def build_check(vcf_path, plan, work_dir, file_identity, estimate=None):
     """The check a new table's build makes when it starts (table's ``check``): ``plan``
-    (gwas.storeplan.plan's decision for this VCF, made with ``estimate``) made again for the mode
-    it chose, on the memory and disk free now. Raises PlanStop, in the page's words, when that
-    plan stops: on disk when the drive is now too full, in memory when the estimate is now above
-    the free memory (for Automatic, whose next run then keeps the table on disk, it says so)."""
+    (gwas.storeplan.plan's decision for this VCF, made with ``estimate``) made again on the memory
+    and disk free now, by the rule that chose its mode. Raises PlanStop, in the page's words, when
+    that plan no longer holds: on disk when the drive is now too full; In memory when the estimate
+    is now above the free memory; Automatic in memory when Automatic's own plan would now keep the
+    table on disk (the estimate above AUTO_MEMORY_FRACTION of the free memory). The stop then says
+    that the next run keeps the table on disk, or gives that plan's own stop when the disk has no
+    room for it either."""
     from gwas import guitable, storeplan
 
+    def again_for(choice):
+        return storeplan.plan(vcf_path, choice=choice, store_base=work_dir, estimate=estimate,
+                              size_of=guitable.vcf_size_of(file_identity), **(plan.options or {}))
+
     def check():
-        again = storeplan.plan(vcf_path, choice=plan.mode, store_base=work_dir, estimate=estimate,
-                               size_of=guitable.vcf_size_of(file_identity), **(plan.options or {}))
-        if not again.stop:
-            return
-        if plan.choice == "auto" and again.stop_kind == "memory":
-            stop = (f"An in-memory run would now need about "
-                    f"{again.estimate_mib * storeplan.MIB / storeplan.GB:.1f} GB of memory, and "
-                    f"{again.available_bytes / storeplan.GB:.1f} GB are free. Run again: Automatic "
-                    "then keeps the table on disk.")
-        else:
-            stop = guitable.page_stop(again, work_dir)
-        raise PlanStop(BUILD_CHECK_NOTE + stop)
+        if plan.choice == "auto" and plan.mode == "memory":
+            again = again_for("auto")                  # Automatic's own rule, as its next plan
+            if again.mode == "memory":
+                return
+            short = (f"An in-memory run would now need about "
+                     f"{again.estimate_mib * storeplan.MIB / storeplan.GB:.1f} GB of memory, and "
+                     f"{again.available_bytes / storeplan.GB:.1f} GB are free (Automatic keeps the "
+                     f"table in memory up to {storeplan.AUTO_MEMORY_FRACTION:.0%} of the free memory)")
+            if again.stop:
+                stop = (f"{short}, so Automatic would now keep the table on disk. "
+                        + guitable.page_stop(again, work_dir))
+            else:
+                stop = f"{short}. Run again: Automatic then keeps the table on disk."
+            raise PlanStop(BUILD_CHECK_NOTE + stop)
+        again = again_for(plan.mode)
+        if again.stop:
+            raise PlanStop(BUILD_CHECK_NOTE + guitable.page_stop(again, work_dir))
 
     return check
 
@@ -329,6 +382,16 @@ def run_traits_rereading(parsed, pheno, traits, options, reread, on_start=None, 
             fresh = False
         if not restart:
             break
+
+
+def traits_not_run(traits, done, failed, stop):
+    """One-Click stopped before its last trait (PlanStop or VcfGone: the table could not be read
+    again). The traits it finished keep their results (``done``: the page shows their summaries
+    and builds the combined ZIP, as after a run with a failed trait); each trait it did not
+    complete, the one it was running included, is reported with the stop's plain message.
+    Returns {trait: message} for those traits, in the selection's order."""
+    message = str(stop)
+    return {t: message for t in traits if t not in done and t not in failed}
 
 
 def n_snps(results):
@@ -513,7 +576,7 @@ class PlanStop(Exception):
     """gwas.storeplan stopped a run before reading (str(): the stop in the page's words)."""
 
 
-def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate=None):
+def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate=None, spinner=None):
     """One-Click's table and its run_metadata.json keys: (parsed, meta, plan).
 
     ``plan`` is gwas.storeplan.plan for One-Click's own options (its models, subsampling and its
@@ -524,7 +587,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
     the call count), which run_trait_pipeline adds to run_metadata.json as cli.py's run does.
     ``estimate`` replaces the CLI's estimate for the choice only (the GUI's own rule); the metadata
     always records the CLI's. Raises PlanStop for a stop, also when a build of the table checks
-    the plan again (build_check). The table is the registry's: One-Click never closes it."""
+    the plan again (build_check). The table is the registry's: One-Click never closes it.
+    ``spinner`` as in table()."""
     from gwas import guitable, storeplan
 
     plan = storeplan.plan(vcf_path, choice=choice, store_base=work_dir,
@@ -537,7 +601,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
     if plan.stop:
         raise PlanStop(guitable.page_stop(plan, work_dir))
     parsed = table(file_identity, plan.mode, vcf_path, work_dir,
-                   check=build_check(vcf_path, plan, work_dir, file_identity, estimate=estimate))
+                   check=build_check(vcf_path, plan, work_dir, file_identity, estimate=estimate),
+                   spinner=spinner)
     meta = plan.metadata(len(parsed.samples), parsed.genotypes.shape[1])
     return parsed, meta, plan
 

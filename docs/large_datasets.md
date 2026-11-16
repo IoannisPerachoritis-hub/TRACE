@@ -202,19 +202,27 @@ meanwhile may then use fewer threads, and their last digits differ, as between t
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
 that open the same VCF with the same choice share one table, and the server keeps at most two,
 and a third while a new one is built. It builds one table at a time: a session that needs a new
-table while another is built waits for that build, and then checks the free memory and disk
-again, so the check counts what that build used (the page stops with a plain message when they
-no longer suffice). When a third is needed, the one used least recently is closed once the new
-one is open (a file that cannot be read closes nothing), before the next build starts. A session
+table while another is built waits for that build (its page says "Waiting for another session's
+genotype table to be built…" meanwhile), and then checks the free memory and disk again, so the
+check counts what that build used. The page stops with a plain message when they no longer
+suffice, by the rule of the choice: for Automatic, when an in-memory run would now need more
+than 80% of the free memory (the next run then keeps the table on disk); for In memory, more
+than all of it. When a third is needed, the one used least recently is closed once the new one
+is open (a file that cannot be read closes nothing), before the next build starts. A session
 that still held a closed table (closed this way, or by Clear session data in another session)
 reads the VCF again: the GWAS page on its next run, One-Click for the trait it was running and
 the ones after it, each with a note on the page. A Run GWAS that was reading the table at that
 moment stops with a message, and the next run reads it again. Clear session data in another
 session also deletes the uploads the server saved, so a VCF that was uploaded cannot be read
-again: the page then says "The uploaded VCF was removed by Clear session data: upload it again",
-on its next run or when it would read the VCF again. A VCF given by its location is read again.
-The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not closed: it
-stays in memory while a session still holds it, until that session's next run.
+again: the page then says that the uploaded VCF is no longer in the work folder and asks you to
+upload it again, on its next run or when it would read the VCF again. The same happens when the
+system cleans its temporary folder, where the work folder is by default; on a server that runs
+for days, set `TRACE_GENO_STORE_DIR` to a folder the system does not clean. When One-Click stops
+this way (or when the check of a fresh table stops it), the traits it finished keep their
+results: their summaries and the combined ZIP, whose `failed_traits.txt` names the traits not
+run with the message. A VCF given by its location is read again. The Post-GWAS page asks you to
+run the GWAS page again. A table kept in memory is not closed: it stays in memory while a
+session still holds it, until that session's next run.
 
 **Clear session data** frees this server's genotype tables (in memory, and the table files with
 their folders on disk), the uploads it saved, every cached result, and the cache files that
