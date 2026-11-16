@@ -128,10 +128,20 @@ by `auto`: a run that does not fit under the limit keeps its table on disk.
 **Opening a big VCF.** Next to the upload box, the GWAS page has a box "Or type the VCF's location
 on this computer". It takes a `.vcf` or `.vcf.gz` file on the computer that runs TRACE, checks
 that it exists and can be read, and shows its size. Nothing is uploaded or copied: TRACE reads the
-file where it is. The upload box takes files up to 2 GB; an upload is held in memory twice while it
-arrives, before TRACE can check anything, so bigger files should go through the location box. An
-uploaded file is written once to the work folder (below) and read from there; the upload box is
-then emptied so the browser's copy can be released.
+file where it is. The upload box takes files up to 2 GB; an upload is held in the server's memory
+while it arrives (twice at its end), before TRACE can check anything, so bigger files should go
+through the location box. An uploaded file is written once to the work folder (below) and read
+from there; TRACE then removes the server's copy of the upload from memory and empties the upload
+box. A copy that fails (a full disk, for one) leaves nothing in the work folder and is not tried
+again until you choose another work folder.
+
+A location that fails the check (a typo, another file type) stops the page with the reason; the
+file an earlier location gave is not used under the new text.
+
+TRACE knows a VCF by its content, hashed once for each location, size and modification time. A
+file rewritten in place with the same size and the same modification time (a copy that keeps the
+old file's time stamp, for one) is therefore read as the old one until Clear session data or a
+restart of the server.
 
 On a shared server, whose users should not open the server's own files, set
 `TRACE_DISABLE_PATH_INPUT=1` to hide the location box. In Docker, the location is a path inside
@@ -145,12 +155,27 @@ an in-memory run needs, the free memory) and stops with a plain message when the
 work. The environment variable `TRACE_GENO_STORE` (`auto`, `memory` or `disk`) sets the default,
 so a server or a Docker image can force it.
 
+**The GUI's memory estimate.** An open GUI session holds more than a CLI run: Streamlit itself,
+the page's figures and downloads, the session's own tables, the kinship and PCs of the last
+settings, and, for each SVG download, a headless Chrome that kaleido starts. So the page's check
+and One-Click's add to the CLI's estimate 600 MiB, 8 bytes per genotype call, 512 bytes per pair
+of samples, and 750 MiB plus 2.4 KiB per SNP (up to 500,000 SNPs) for Chrome. The basis is the
+GUI's measured peak (the whole process tree, with every cache full, three models, subsampling
+and SVG exports), which lies at least 14% below this estimate: 1,493 MiB against 2,554 MiB for
+the first example, 2,633 against 3,078 for tomato (166 samples x 44,317 SNPs), and 4,445 against
+6,043 for 1,000 samples x 50,000 SNPs. Automatic chooses by this estimate and the page shows it;
+`run_metadata.json` records the CLI's, so the metadata is the same whichever program ran.
+Chrome is always counted, which is cautious on a server without Chrome (the page then offers
+HTML downloads only).
+
 **Work folder.** Saved uploads and tables kept on disk go into the work folder: the environment
 variable `TRACE_GENO_STORE_DIR`, else a folder `trace_gui` in the system's temporary folder. The
 same section can change it, and the check includes its free space. Each table file gets its own
-folder, `_trace_geno_store_gui_<process>_<random>`; TRACE keeps at most two, and removes a folder
-when its table is no longer kept and when the server stops normally. Folders left by a server that
-did not stop are named on the page with their size; they are never deleted automatically.
+folder, `_trace_geno_store_gui_<process>_<random>`, and each saved upload its own
+`_trace_upload_gui_<process>_<random>`; TRACE keeps at most two tables, and removes a folder
+when its table is no longer kept and when the server stops normally. Table folders and saved
+uploads left by a run or a server that did not stop are named on the page with their size; they
+are never deleted automatically.
 
 **What the pages do with the table on disk.** The GWAS page runs its preprocessing (sample
 matching, phenotype and SNP QC, the fill of missing calls, kinship, the QC report) on the table
@@ -165,18 +190,30 @@ panel then says why).
 **Subsampling.** With the table on disk, the iterations run one after another. In memory with
 more than one core, the page first checks that the workers fit in the free memory (each worker
 after the first needs about 300 MiB and 12 bytes per genotype call). If they do not, it runs the
-iterations one after another and says so. The results are the same either way.
+iterations one after another and says so. The results are the same either way. When the
+iterations run one after another with more than one core chosen, each uses the thread count a
+worker would have, and that limit holds for the whole server process while it runs (one
+subsampling at a time sets it). On a shared server, other sessions' computations that run
+meanwhile may then use fewer threads, and their last digits differ, as between thread counts
+(see "Reproducibility" above).
 
 **Tables shared by sessions.** A table belongs to the server, not to one browser tab: sessions
 that open the same VCF with the same choice share one table, and the server keeps at most two.
-When a third is needed, the one used least recently is closed. A page that still needed it asks
-you to run the GWAS page again.
+When a third is needed, the one used least recently is closed, once the new one is open (a file
+that cannot be read closes nothing). A session that still held a closed table (closed this way,
+or by Clear session data in another session) reads the VCF again: the GWAS page on its next run,
+One-Click for the trait it was running and the ones after it, each with a note on the page. A
+Run GWAS that was reading the table at that moment stops with a message, and the next run reads
+it again. The Post-GWAS page asks you to run the GWAS page again. A table kept in memory is not
+closed: it stays in memory while a session still holds it, until that session's next run.
 
 **Clear session data** frees this server's genotype tables (in memory, and the table files with
 their folders on disk), the uploads it saved, every cached result, and the cache files that
 earlier versions of TRACE left in Streamlit's cache folder (`~/.streamlit/cache`; other apps' files
-there are not touched). It also drops this session's data and results on both pages; the widget
-settings stay. On a shared server Clear affects every session, since the tables are the server's.
+there are not touched). It also drops this session's data and results on both pages, and
+empties the VCF location box, the upload boxes and the trait selection, so nothing is read again
+until you give the files again; the other settings stay. On a shared server Clear affects every
+session, since the tables are the server's.
 
 **The interactive Manhattan.** Above 500,000 SNPs it draws every SNP with p ≤ 0.01 and one in k of
 the others, in genome order, with k the smallest whole number that keeps the drawing at 500,000
@@ -184,7 +221,8 @@ points or fewer. A caption under the figure says so ("N of M SNPs drawn: ..."). 
 Manhattan and the results table keep every SNP. The reason is the browser: Streamlit sends a
 figure in one message, of at most 200 MB by default, and at 1,070,795 SNPs the full figure was
 157 MB; the thinned one is 53 MB, and a figure at the limit 73 MB. Below the limit nothing
-changes.
+changes. The cross-model "Overlay Manhattan by model" follows the same rule over the points of
+all its models together (three models of 200,000 SNPs are 600,000 points), with the same caption.
 
 ## Checking that both modes agree
 

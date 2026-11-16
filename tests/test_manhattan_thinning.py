@@ -127,3 +127,97 @@ def test_when_the_small_p_values_alone_exceed_the_limit(monkeypatch):
     rows, k = manhattan_thinning(df)
     assert k == 0 and np.array_equal(rows, np.arange(12))
     assert "none of the others" in manhattan_caption(df)
+
+
+# ------------------------------------------------------- the cross-model overlay Manhattan
+def _ff56e5c_overlay(all_res):
+    """The GWAS page's "Overlay Manhattan by model" at ff56e5c (pages/GWAS_analysis.py), unchanged."""
+    from gwas.io import _clean_chr_series
+    from utils.pub_theme import PALETTE_CYCLE
+
+    df_plot_multi = all_res.copy()
+    chr_clean, chr_num_multi, order_labels_multi, order_map_multi = _clean_chr_series(df_plot_multi["Chr"])
+    df_plot_multi["Chr"] = chr_clean
+    df_plot_multi["ChrNum"] = chr_num_multi.astype(int)
+    df_plot_multi["Pos"] = df_plot_multi["Pos"].astype(int)
+    df_plot_multi = df_plot_multi.sort_values(["ChrNum", "Pos"]).reset_index(drop=True)
+    gap = 1_000_000
+    offset = 0
+    tick_pos_multi, tick_lab_multi = [], []
+    for chnum in np.sort(df_plot_multi["ChrNum"].unique()):
+        mask = df_plot_multi["ChrNum"] == chnum
+        pos_min = df_plot_multi.loc[mask, "Pos"].min()
+        pos_max = df_plot_multi.loc[mask, "Pos"].max()
+        df_plot_multi.loc[mask, "CumPos"] = df_plot_multi.loc[mask, "Pos"] + offset
+        tick_pos_multi.append(offset + (pos_min + pos_max) / 2)
+        tick_lab_multi.append(str(chnum))
+        offset += (pos_max - pos_min) + gap
+    _models_unique = df_plot_multi["Model"].unique().tolist()
+    _model_color_map = {m: PALETTE_CYCLE[i % len(PALETTE_CYCLE)] for i, m in enumerate(_models_unique)}
+    fig_overlay = px.scatter(
+        df_plot_multi,
+        x="CumPos", y="-log10p", color="Model",
+        color_discrete_map=_model_color_map,
+        hover_data=["SNP", "Chr", "Pos", "PValue"],
+        title="Overlay Manhattan by model",
+        render_mode="webgl"
+    )
+    fig_overlay.update_layout(
+        xaxis_title="Chromosome (cumulative)",
+        yaxis_title="-log10(p)",
+        xaxis=dict(tickmode="array", tickvals=tick_pos_multi, ticktext=tick_lab_multi, showgrid=False),
+        height=520,
+    )
+    return fig_overlay
+
+
+def _all_res(m, models=("MLM", "MLMM", "FarmCPU"), seed=1):
+    """The page's cross-model frame (all_res) of ``m`` SNPs per model."""
+    base = _table(m, seed=seed)
+    rng = np.random.default_rng(seed + 10)
+    parts = []
+    for i, model in enumerate(models):
+        p = base["PValue"].to_numpy() if i == 0 else rng.uniform(size=m)
+        parts.append(pd.DataFrame({"Model": model, "SNP": base["SNP"], "Chr": base["Chr"], "Pos": base["Pos"],
+                                   "PValue": p, "-log10p": -np.log10(np.clip(p, 1e-300, 1.0))}))
+    return pd.concat(parts, ignore_index=True)
+
+
+def test_the_overlay_up_to_the_limit_is_ff56e5cs(monkeypatch):
+    monkeypatch.setattr(plotting, "MANHATTAN_MAX_POINTS", 1000)
+    for m in (100, 333):                                     # 300 and 999 points: below the limit
+        res = _all_res(m)
+        fig, table = plotting.plot_manhattan_overlay(res)
+        assert fig.to_json() == _ff56e5c_overlay(res).to_json(), m
+        assert manhattan_caption(table) is None and len(table) == 3 * m
+
+
+def test_above_the_limit_the_overlay_draws_the_rule_over_every_models_points(monkeypatch):
+    monkeypatch.setattr(plotting, "MANHATTAN_MAX_POINTS", 1000)
+    res = _all_res(900)                                      # 2,700 points in all
+    fig, table = plotting.plot_manhattan_overlay(res)
+    rows, k = manhattan_thinning(table)
+    assert k >= 2 and rows.size <= 1000
+    assert sum(len(tr.x) for tr in fig.data) == rows.size
+    def point(m, x, y):
+        return m, float(x), repr(float(y))                   # a NaN p-value (one SNP) compares too
+
+    drawn = {point(tr.name, x, y) for tr in fig.data for x, y in zip(tr.x, tr.y)}
+    expected = table.iloc[rows]
+    assert drawn == {point(m, x, y) for m, x, y in zip(expected["Model"], expected["CumPos"],
+                                                        expected["-log10p"])}
+    assert set(np.flatnonzero(table["PValue"].to_numpy() <= MANHATTAN_KEEP_P)) <= set(rows.tolist())
+    full = _ff56e5c_overlay(res)                             # the colours and the axis of every point
+    assert [(t.name, t.marker.color) for t in fig.data] == [(t.name, t.marker.color) for t in full.data]
+    assert fig.layout.xaxis.tickvals == full.layout.xaxis.tickvals
+    assert manhattan_caption(table).startswith(f"{rows.size:,} of 2,700 SNPs drawn: all with p ≤ 0.01")
+
+
+def test_the_overlay_rule_counts_the_points_of_every_model():
+    """At the real limit: 3 models x 200,000 SNPs is 600,000 points, so the overlay is thinned although
+    each model alone is under the limit."""
+    m = 200_000
+    table = pd.DataFrame({"PValue": np.tile(np.linspace(0.0, 1.0, m), 3), "CumPos": np.tile(np.arange(m), 3)})
+    assert manhattan_thinning(table.iloc[:m]) == (None, 1)
+    rows, k = manhattan_thinning(table)
+    assert k == 2 and rows.size <= MANHATTAN_MAX_POINTS

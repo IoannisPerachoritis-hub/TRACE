@@ -288,17 +288,22 @@ def test_workers_fit_rule():
 
 
 @pytest.mark.parametrize("choice", ["auto", "memory", "disk"])
-def test_one_click_records_where_the_table_is_kept_as_the_cli_does(tmp_path, choice):
+def test_one_click_records_where_the_table_is_kept_as_the_cli_does(tmp_path, choice, monkeypatch):
     """One-Click's table is the registry's, in the mode of its own plan, and run_metadata.json gets the
     CLI's five keys for it (gwas.storeplan.Plan.metadata): the same values as a CLI run with
-    --geno-store <choice> on the same file and options, and the same results in both modes."""
+    --geno-store <choice> on the same file and options, and the same results in both modes. The free
+    memory both plans read is pinned high, so Automatic keeps this small table in memory whatever
+    else runs on the machine."""
     import io
     import json
     import zipfile
 
     import cli
     from gwas import pipeline as pl
+    from gwas import storeplan
     from gwas.storeplan import MODE_KEYS
+
+    monkeypatch.setattr(storeplan, "available_memory_bytes", lambda: 64 * 2 ** 30)
 
     vcf, ph = EX1
     opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
@@ -329,3 +334,131 @@ def test_one_click_records_where_the_table_is_kept_as_the_cli_does(tmp_path, cho
         assert {k: gui_meta[k] for k in MODE_KEYS} == {k: cli_meta[k] for k in MODE_KEYS}
     finally:
         reg.close_all()
+
+
+# ------------------------------------------------- a table file closed while a session holds it
+@pytest.fixture()
+def own_registry(monkeypatch):
+    """A registry of the test's own, as the page's table() sees it (gwas.guitable.get_registry)."""
+    reg = guitable.TableRegistry()
+    monkeypatch.setattr(guitable, "get_registry", lambda: reg)
+    yield reg
+    reg.close_all()
+
+
+def test_a_closed_table_is_dropped_and_read_again_on_the_next_run(tmp_path, own_registry):
+    """Another session's Clear (or the registry making room) closes the session's table file: the
+    page's next run drops what was built on it, takes a fresh table and preprocesses again, with
+    the same values, instead of failing on the closed file."""
+    vcf, ph = EX1
+    ident = guitable.file_identity(vcf)
+    pheno = _page_pheno(ph)
+    state = {}
+    p1 = guigwas.table(ident, "disk", vcf, tmp_path / "w")
+    first = guigwas.preprocess(state, "k", p1, pheno.copy(), "Trait1", **QC)
+    ref = np.asarray(first["geno_imputed"])
+    state["geno_table"] = guitable.SessionTable(identity="i", file_identity=ident, mode="disk", parsed=p1,
+                                                view=first["geno_imputed"])
+    assert not guigwas.table_closed(state["geno_table"])
+    own_registry.drop()
+    assert guigwas.table_closed(state["geno_table"]) and guigwas.table_closed(p1)
+    assert not guigwas.drop_closed_table(dict(state), "another file", "disk")     # not this VCF's
+    assert guigwas.drop_closed_table(state, ident, "disk") and guigwas.PREP_KEY not in state
+    p2 = guigwas.table(ident, "disk", vcf, tmp_path / "w")
+    again = guigwas.preprocess(state, "k", p2, pheno.copy(), "Trait1", **QC)
+    assert p2 is not p1 and not guigwas.table_closed(p2)
+    _eq_array(np.asarray(again["geno_imputed"]), ref, "geno_imputed")
+    mem = guitable.SessionTable(identity="i", file_identity=ident, mode="memory",
+                                parsed=own_registry.get(ident, "memory", vcf))
+    assert not guigwas.table_closed(mem)                                         # never closed
+
+
+def test_a_table_closed_during_the_preprocessing_is_read_again_once(tmp_path, own_registry):
+    vcf, ph = EX1
+    ident = guitable.file_identity(vcf)
+    pheno = _page_pheno(ph)
+    ref = np.asarray(guigwas.preprocess({}, "r", guigwas.table(ident, "disk", vcf, tmp_path / "w"),
+                                        pheno.copy(), "Trait1", **QC)["geno_imputed"])
+    closed = guigwas.table(ident, "disk", vcf, tmp_path / "w")
+    own_registry.drop()
+    state, reads = {}, []
+
+    def reread():
+        reads.append(1)
+        return guigwas.table(ident, "disk", vcf, tmp_path / "w")
+
+    out, used, again = guigwas.preprocess_rereading(state, "k", closed, reread, pheno.copy(), "Trait1", **QC)
+    assert again and reads == [1] and used is not closed and not guigwas.table_closed(used)
+    _eq_array(np.asarray(out["geno_imputed"]), ref, "geno_imputed")
+    pheno["Const"] = 1.0
+    with pytest.raises(ValueError) as exc:                                       # another error: raised
+        guigwas.preprocess_rereading(state, "c", used, reread, pheno.copy(), "Const", **QC)
+    assert is_phenotype_qc_stop(exc.value) and reads == [1]
+
+
+def test_one_click_runs_the_remaining_traits_again_on_a_fresh_table(tmp_path, own_registry, monkeypatch):
+    """A table file closed while One-Click runs its first trait: that trait and the next run on a
+    fresh table, with the results of a run that was not interrupted."""
+    import io
+    import zipfile
+
+    from gwas import pipeline as pl
+
+    vcf, ph = EX1
+    ident = guitable.file_identity(vcf)
+    pheno = pd.read_csv(ph, index_col=0)
+    opts = pl.cli_default_options(vcf=vcf.name, pheno=ph.name, output=None, no_plots=True, no_report=True,
+                                  run_label="One-Click Full Analysis")
+
+    def tables(res):
+        with zipfile.ZipFile(io.BytesIO(res.zip_bytes)) as zf:
+            return {n: zf.read(n) for n in zf.namelist() if n.startswith("tables/")}
+
+    plain = {t: tables(r) for t, r, _e in pl.run_traits(guigwas.table(ident, "disk", vcf, tmp_path / "w"),
+                                                          pheno, ["Trait1", "Trait2"], opts)}
+    p1 = guigwas.table(ident, "disk", vcf, tmp_path / "w")
+    real, seen = pl.run_trait_pipeline, []
+
+    def closing(parsed, pheno_df, trait, options, progress=None):
+        seen.append((trait, parsed))
+        if len(seen) == 1:
+            own_registry.drop()                     # Clear in another session, during the first trait
+        return real(parsed, pheno_df, trait, options, progress=progress)
+
+    monkeypatch.setattr(pl, "run_trait_pipeline", closing)
+    started = []
+    out = list(guigwas.run_traits_rereading(p1, pheno, ["Trait1", "Trait2"], opts,
+                                            lambda: guigwas.table(ident, "disk", vcf, tmp_path / "w"),
+                                            on_start=lambda i, t: started.append((i, t))))
+    assert [(t, err is None, again) for t, _r, err, again in out] == [("Trait1", True, True), ("Trait2", True, False)]
+    assert [t for t, _p in seen] == ["Trait1", "Trait1", "Trait2"] and seen[1][1] is not p1
+    assert started == [(1, "Trait1"), (1, "Trait1"), (2, "Trait2")]
+    assert {t: tables(r) for t, r, _e, _a in out} == plain
+
+
+def test_the_qc_reports_frequencies_and_pc_spectrum_are_kept_per_table(tables, monkeypatch):
+    """The QC report's allele frequencies (the table read whole, in pieces on disk) and the PC
+    spectrum (a PCA of the pruned table) are made once per table identity, not on every rerun, with
+    the values the page computed on every rerun before."""
+    from gwas import pc_diagnostics as pcd
+
+    pheno = _page_pheno(EX1[1])
+    r = _prep(tables["ex1"]["disk"], pheno, "Trait1")
+    state, calls = {}, []
+    real_means, real_pcd = guigwas.column_means, pcd.compute_pc_diagnostics
+    monkeypatch.setattr(guigwas, "column_means", lambda g, piece=4096: calls.append("means") or real_means(g, piece))
+    monkeypatch.setattr(pcd, "compute_pc_diagnostics", lambda *a, **k: calls.append("pca") or real_pcd(*a, **k))
+    f1 = guigwas.allele_frequencies(state, "id-1", r["geno_imputed"])
+    d1 = guigwas.pc_diagnostics(state, "id-1", r["Z_for_pca"])
+    assert guigwas.allele_frequencies(state, "id-1", r["geno_imputed"]) is f1        # a rerun: kept
+    assert guigwas.pc_diagnostics(state, "id-1", r["Z_for_pca"]) is d1
+    assert calls == ["means", "pca"]
+    _eq_array(f1, real_means(r["geno_imputed"]) / 2.0, "allele frequencies")
+    assert not f1.flags.writeable
+    ref = real_pcd(r["Z_for_pca"], n=int(r["Z_for_pca"].shape[0]), m=int(r["Z_for_pca"].shape[1]),
+                   prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000}, spectrum_depth=20)
+    assert d1["spectrum"].to_csv() == ref["spectrum"].to_csv()
+    guigwas.allele_frequencies(state, "id-2", r["geno_imputed"])                     # another table
+    guigwas.pc_diagnostics(state, "id-2", r["Z_for_pca"])
+    assert calls == ["means", "pca", "means", "pca"]
+    assert {guigwas.FREQ_KEY, guigwas.PC_DIAG_KEY} <= set(guigwas.SESSION_KEYS)       # Clear drops them

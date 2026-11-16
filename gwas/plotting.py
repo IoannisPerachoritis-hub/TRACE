@@ -296,6 +296,63 @@ def plot_manhattan_interactive(
     return fig
 
 
+def plot_manhattan_overlay(all_res):
+    """The GWAS page's cross-model "Overlay Manhattan by model": every model's SNPs (``all_res``:
+    Model, SNP, Chr, Pos, PValue, -log10p) on one genome-wide x, the chromosomes in order 1 Mb
+    apart, one colour per model. Returns (figure, the table of every point with its CumPos).
+
+    Above MANHATTAN_MAX_POINTS points in all it draws the points manhattan_thinning chooses over
+    that table (every point with p <= 0.01 and 1 in k of the others, in genome order), as the
+    interactive Manhattan does, and the page shows manhattan_caption of the table under it; the
+    model colours and the axis are those of every point. Up to the limit it is the figure the page
+    drew before, point for point."""
+    from gwas.io import _clean_chr_series
+
+    df_plot_multi = all_res.copy()
+    chr_clean, chr_num_multi, _order_labels, _order_map = _clean_chr_series(df_plot_multi["Chr"])
+    df_plot_multi["Chr"] = chr_clean
+    df_plot_multi["ChrNum"] = chr_num_multi.astype(int)
+    df_plot_multi["Pos"] = df_plot_multi["Pos"].astype(int)
+    df_plot_multi = df_plot_multi.sort_values(["ChrNum", "Pos"]).reset_index(drop=True)
+
+    gap = 1_000_000
+    offset = 0
+    tick_pos_multi, tick_lab_multi = [], []
+    for chnum in np.sort(df_plot_multi["ChrNum"].unique()):
+        mask = df_plot_multi["ChrNum"] == chnum
+        pos_min = df_plot_multi.loc[mask, "Pos"].min()
+        pos_max = df_plot_multi.loc[mask, "Pos"].max()
+        df_plot_multi.loc[mask, "CumPos"] = df_plot_multi.loc[mask, "Pos"] + offset
+        tick_pos_multi.append(offset + (pos_min + pos_max) / 2)
+        tick_lab_multi.append(str(chnum))
+        offset += (pos_max - pos_min) + gap
+
+    models_unique = df_plot_multi["Model"].unique().tolist()
+    model_color_map = {m: PALETTE_CYCLE[i % len(PALETTE_CYCLE)] for i, m in enumerate(models_unique)}
+    rows, _k = manhattan_thinning(df_plot_multi)
+    extra = {}
+    drawn = df_plot_multi
+    if rows is not None:
+        drawn = df_plot_multi.iloc[rows]
+        extra = {"category_orders": {"Model": models_unique}}       # the models in their order
+    fig_overlay = px.scatter(
+        drawn,
+        x="CumPos", y="-log10p", color="Model",
+        color_discrete_map=model_color_map,
+        hover_data=["SNP", "Chr", "Pos", "PValue"],
+        title="Overlay Manhattan by model",
+        render_mode="webgl",
+        **extra,
+    )
+    fig_overlay.update_layout(
+        xaxis_title="Chromosome (cumulative)",
+        yaxis_title="-log10(p)",
+        xaxis=dict(tickmode="array", tickvals=tick_pos_multi, ticktext=tick_lab_multi, showgrid=False),
+        height=520,
+    )
+    return fig_overlay, df_plot_multi
+
+
 def plot_qq(p_values, lambda_gc_used=None):
     """Reusable QQ plot with 95% confidence band."""
     p_vals = np.clip(p_values.astype(float), 1e-300, 1.0)

@@ -21,7 +21,6 @@ from gwas.utils import (
     put_array_in_session,
     stable_seed, bump_data_version,
 )
-from gwas.io import _clean_chr_series
 from gwas.pipeline import is_phenotype_qc_stop
 from gwas import guitable as _gt
 from gwas import guigwas as _gg
@@ -34,16 +33,16 @@ from gwas.kinship import (
     build_loco_kernels_cached, compute_pcs_full_cached,
     _build_grm_from_Z, _standardize_geno_for_grm,
 )
+# (the cached wrappers that take a whole table as a hashed argument are not imported: the page
+# calls none of them, and every cache it uses is keyed by the table's identity)
 from gwas.models import (
     run_gwas_cached, run_mlmm_core_cached, run_farmcpu_cached,
     add_ols_effects_to_gwas,
     bic_proxy_from_design,
-    build_mlmm_snpdata, standardize_genotypes_for_mlmm_cached,
-    subset_snps_for_mlmm, _ols_fit, _nested_f_test, _one_hot_drop_first,
+    _ols_fit, _nested_f_test, _one_hot_drop_first,
 )
 from gwas.subsampling import subsample_gwas_resampling, aggregate_subsampling_to_ld_blocks
 from gwas.haplotype import (
-    run_haplotype_block_gwas_cached,
     normalize_ld_blocks_schema, block_test_lm_with_pcs,
     freedman_lane_perm_pvalue,
 )
@@ -51,10 +50,10 @@ from gwas.stability import _make_run_manifest
 from gwas.significance import add_significance_columns
 from gwas.plotting import (
     compute_cumulative_positions, plot_manhattan_static,
-    plot_manhattan_interactive, manhattan_caption, plot_qq, compute_lambda_gc,
+    plot_manhattan_interactive, plot_manhattan_overlay, manhattan_caption, plot_qq, compute_lambda_gc,
     download_matplotlib_fig, download_plotly_fig,
     _build_gwas_results_zip, _append_metadata_to_zip, _combine_gwas_zips,
-    PALETTE, PALETTE_CYCLE, export_matplotlib,
+    PALETTE, export_matplotlib,
 )
 from annotation import (ASSEMBLY_NOTE, DESCRIPTIONS_FILE_HELP, GENE_FILE_HELP,
                         chromosomes_without_genes, load_gene_model)
@@ -212,36 +211,20 @@ def _has_persisted_gwas():
 
 def _vcf_file_ready():
     """The VCF in use (a typed location, or the upload saved in the work folder) is there."""
-    _p = st.session_state.get("_persist_vcf_path")
-    return bool(_p) and os.path.isfile(_p)
+    return _gt.vcf_path_ready(st.session_state)
 
 
 def _has_persisted_upload():
     """The genotype file and the phenotype table of a prior run are still available (the
     VCF by its path, the phenotype in memory), so a re-run can proceed without
     re-uploading (Streamlit drops the uploaded-file buffers on page navigation)."""
-    return _vcf_file_ready() and "_persist_pheno" in st.session_state
+    return _gt.inputs_kept(st.session_state)
 
 
-def _covar_persist_decision(covar_file_present, running_from_memory, has_persisted_covar):
-    """How to source the covariate when the uploader holds no file this rerun.
-
-    "upload"  -> a file is present; load it.
-    "session" -> run-from-memory rehydrate (the whole page is sourced from _persist_*);
-                 reuse the persisted covariate.
-    "clear"   -> live session with the uploader emptied; the user removed the covariate,
-                 so drop the persisted one (nothing else ever clears it, so it would
-                 otherwise apply silently to every later trait).
-    "none"    -> no file and nothing persisted.
-    Pure decision (no Streamlit / IO) so both branches are unit-testable without a
-    browser; `running_from_memory` is `phe_file is None` (the phenotype comes from the
-    session: the page is rehydrating; the VCF is always read from its file now).
-    """
-    if covar_file_present:
-        return "upload"
-    if not has_persisted_covar:
-        return "none"
-    return "session" if running_from_memory else "clear"
+# How to source the covariate when its box holds no file (gwas.guitable.covar_persist_decision):
+# "running from memory" is "the VCF was not given in this visit of the page", ff56e5c's
+# `vcf_file is None` (its upload box held the file for the whole visit).
+_covar_persist_decision = _gt.covar_persist_decision
 
 
 def _render_last_run_results(stale=False):
@@ -308,6 +291,16 @@ def _render_last_run_results(stale=False):
             break
 
 
+def _stop_if_table_closed(table):
+    """A read failed because this run's table file was closed meanwhile (Clear session data in
+    another session, or the server making room for another dataset): say so plainly and stop,
+    instead of a traceback or a model's failure; the next run reads the VCF again
+    (gwas.guigwas.drop_closed_table). Returns when the table is open (another error)."""
+    if _gg.table_closed(table):
+        st.info(_gg.CLOSED_MESSAGE)
+        st.stop()
+
+
 def _rehydrate_or_stop(msg=None, level="error"):
     """Show the persisted last-run results (if any) instead of blanking, then stop."""
     if _has_persisted_gwas():
@@ -326,10 +319,14 @@ _CLEAR_KEYS = _gg.SESSION_KEYS
 
 
 def _clear_session_data():
-    """"Clear session data" (gwas.guitable.clear_all): this server's genotype tables (in memory,
-    and the table files with their folders on disk) and the uploads it saved are closed and
-    deleted, every cached result is emptied, TRACE's .memo files are removed from Streamlit's cache
-    folder, and this session's data and results are dropped, the Post-GWAS page's included."""
+    """"Clear session data", the button's callback (it runs before the page): the page's inputs
+    are reset (gwas.guitable.clear_inputs: the location box emptied, new empty upload boxes, no
+    trait selected), so the run after it builds nothing; and gwas.guitable.clear_all closes and
+    deletes this server's genotype tables (in memory, and the table files with their folders on
+    disk) and the uploads it saved, empties every cached result, removes TRACE's .memo files from
+    Streamlit's cache folder and drops this session's data and results, the Post-GWAS page's
+    included."""
+    _gt.clear_inputs(st.session_state)
     return _gt.clear_all(st.session_state, keys=_CLEAR_KEYS, prefixes=_CLEAR_PREFIXES)
 # =========================
 # 1. Data upload & basic QC
@@ -338,22 +335,13 @@ with st.container():
     col_files, col_qc = st.columns([2, 3])
 
     with col_files:
-        # the upload box gets a new key once its file is saved to the work folder, which
-        # empties it and lets Streamlit release its copy of the upload
-        _vcf_widget_n = int(st.session_state.get("_vcf_upload_widget", 0))
-        vcf_file = st.file_uploader(
-            "Upload Genotype (VCF)", type=["vcf", "vcf.gz"],
-            key="vcf_upload" if _vcf_widget_n == 0 else f"vcf_upload_{_vcf_widget_n}")
-        if vcf_file is not None:
-            _vcf_size_mb = vcf_file.size / (1024 * 1024)
-            if _vcf_size_mb > 200:
-                st.warning(
-                    f"VCF file is {_vcf_size_mb:.0f} MB. An upload is held in memory while "
-                    "it arrives, so for large files type the file's location below "
-                    "instead: TRACE then reads it from disk and holds nothing in memory "
-                    "for it. Before reading, TRACE checks the memory and keeps the "
-                    "genotype table on disk when it would not fit (see Large datasets)."
-                )
+        # the first run of a visit of this page (Streamlit has dropped its widgets): the VCF
+        # given in an earlier visit is read from the session (gwas.guitable.new_page_visit)
+        _gt.new_page_visit(st.session_state)
+        # once an upload is saved in the work folder, Streamlit's copy of it is removed and the
+        # box gets a new key, which empties it (gwas.guitable.vcf_input below)
+        _vcf_box = _gt.box_key(st.session_state, "vcf_upload")
+        vcf_file = st.file_uploader("Upload Genotype (VCF)", type=["vcf", "vcf.gz"], key=_vcf_box)
         _vcf_location = ""
         if not _gt.path_input_disabled():
             _vcf_location = st.text_input(
@@ -365,7 +353,8 @@ with st.container():
                      "so this suits files too big to upload. In Docker, give the location "
                      "inside the container (the mounted folder).",
             )
-        phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"], key="pheno_upload")
+        phe_file = st.file_uploader("Upload Phenotype file (.csv or .txt)", type=["csv", "txt", "tsv"],
+                                    key=_gt.box_key(st.session_state, "pheno_upload"))
         # ------------------------------------------------------------
         # Store phenotype file label for reproducible exports
         # ------------------------------------------------------------
@@ -382,7 +371,7 @@ with st.container():
 
         covar_file = st.file_uploader(
             "Upload covariates (optional; .csv/.tsv)",
-            type=["csv", "txt", "tsv"], key="covar_upload",
+            type=["csv", "txt", "tsv"], key=_gt.box_key(st.session_state, "covar_upload"),
             help="Numeric covariates (batch, environment, ...) added as fixed effects "
                  "to the single-trait models alongside the PCs. First column = sample "
                  "ID matching the VCF; remaining columns = numeric covariates. "
@@ -413,36 +402,26 @@ with st.container():
         geno_work_dir = _Path(_work_dir_text.strip() or str(_gt.default_work_dir()))
 
         # ---- The VCF in use: a typed location, else the upload saved once ----
-        if _vcf_location.strip():
-            _loc = _gt.check_vcf_location(_vcf_location)
-            if _loc.ok:
-                st.caption(f"Using {_loc.path} ({_gt.size_text(_loc.size)}).")
-                if st.session_state.get("_persist_vcf_path") != str(_loc.path):
-                    st.session_state["_persist_vcf_path"] = str(_loc.path)
-                    st.session_state["_persist_vcf_name"] = _loc.path.name
-                    st.session_state["_vcf_source"] = "location"
-            else:
-                st.error(_loc.message)
-        elif vcf_file is not None:
-            _token = _gt.new_upload_token(vcf_file)
-            if st.session_state.get("_vcf_upload_token") != _token:
-                try:
-                    _saved_path, _saved_id = _gt.save_upload(vcf_file, geno_work_dir)
-                except OSError as _save_err:
-                    st.error(f"The upload cannot be saved in the work folder {geno_work_dir} "
-                             f"({_save_err}). Choose another work folder under Large datasets.")
-                    st.stop()
-                st.session_state["_persist_vcf_path"] = str(_saved_path)
-                st.session_state["_persist_vcf_name"] = vcf_file.name
-                st.session_state["_vcf_upload_token"] = _token
-                st.session_state["_vcf_source"] = "upload"
-            # empty the upload box (new key) so Streamlit can release its copy
-            st.session_state["_vcf_upload_widget"] = _vcf_widget_n + 1
+        # A location that fails the check stops the page (an earlier location is dropped, so the
+        # earlier file is never used under the new text). A new upload is saved once, then
+        # Streamlit's copy of it is removed, the box's own reference to it dropped and the box
+        # given a new key (an empty box), and the page reruns: its bytes leave the server's
+        # memory with this run. A copy that fails is not tried again in that work folder.
+        _vcf_in = _gt.vcf_input(st.session_state, _vcf_location, vcf_file, geno_work_dir)
+        if _vcf_in.error:
+            st.error(_vcf_in.error)
+            st.stop()
+        if _vcf_in.rerun:
+            try:
+                st.session_state.pop(_vcf_box, None)
+            except Exception:
+                pass
+            st.session_state["_vcf_upload_widget"] = int(st.session_state.get("_vcf_upload_widget", 0)) + 1
             st.rerun()
-        elif _vcf_file_ready() and st.session_state.get("_vcf_source") == "upload":
-            st.caption(f"Genotype file: {st.session_state.get('_persist_vcf_name', '')} "
-                       f"(saved in the work folder, "
-                       f"{_gt.size_text(os.path.getsize(st.session_state['_persist_vcf_path']))}).")
+        if _vcf_in.caption:
+            st.caption(_vcf_in.caption)
+        if _vcf_in.warning:
+            st.warning(_vcf_in.warning)
 
     # ---- Data format guidance (collapsible) ----
     with st.expander("Data format requirements", expanded=False):
@@ -480,12 +459,13 @@ LA1589,12.8,7.3
             "Clear session data",
             help="Frees this server's genotype tables (in memory, and the table files on disk), "
                  "the uploads it saved, every cached result and TRACE's cache files, and this "
-                 "session's data and results, the Post-GWAS page's too. Upload the files, or type "
-                 "the VCF's location, again to run.",
+                 "session's data and results, the Post-GWAS page's too. It also empties the "
+                 "VCF location box, the upload boxes and the trait selection: give the files "
+                 "again to run. The tables are the server's, so on a shared server Clear frees "
+                 "every session's.",
+            on_click=_clear_session_data,
         ):
-            _clear_session_data()
             st.success("Session data cleared.")
-            st.rerun()
 
         st.markdown("**Genotype QC thresholds**")
 
@@ -812,8 +792,10 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     )
     covar_df = None
     _covar_source = None
+    # running from memory: the VCF in use was not given in this visit of the page (ff56e5c's
+    # `vcf_file is None`), whichever box the phenotype came from
     _covar_decision = _covar_persist_decision(
-        covar_file is not None, phe_file is None, "_persist_covar" in st.session_state
+        covar_file is not None, not _vcf_in.live, "_persist_covar" in st.session_state
     )
     if _covar_decision == "upload":
         try:
@@ -996,13 +978,22 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     pheno_hash = _pheno_raw_fp
 
     # --- Where the genotype table is kept: checked before anything is read ---
+    # (the VCF's size is read once per file identity, not on every rerun). The choice is made on
+    # the GUI's own estimate (gwas.guitable.gui_estimate_mib: an open session keeps more than a
+    # CLI run), which the message below shows; run_metadata.json keeps the CLI's.
     _geno_plan = _storeplan.plan(vcf_path, choice=geno_store_choice, store_base=geno_work_dir,
-                                 models=("mlm", "mlmm", "farmcpu"), impute=impute_method)
+                                 models=("mlm", "mlmm", "farmcpu"), impute=impute_method,
+                                 estimate=_gt.gui_estimate_mib, size_of=_gt.vcf_size_of(vcf_hash))
     st.caption(_gt.page_message(_geno_plan))
     if geno_work_dir.exists():
-        _own = _gt.own_folders()
-        for _stale_dir, _stale_bytes in _storeplan.stale_store_folders(geno_work_dir):
-            if _stale_dir not in _own:
+        # table folders and saved uploads that an earlier run or server left (never this server's)
+        for _stale_dir, _stale_bytes, _stale_kind in _gt.stale_folders(geno_work_dir):
+            if _stale_kind == "upload":
+                st.warning(
+                    f"An upload saved by an earlier TRACE server that did not stop is still "
+                    f"here: {_stale_dir} ({_stale_bytes / 1e9:.2f} GB). Delete it to free the "
+                    "space.")
+            else:
                 st.warning(
                     f"A genotype table folder of an earlier TRACE run that did not close is "
                     f"still here: {_stale_dir} ({_stale_bytes / 1e9:.2f} GB). Delete it to free "
@@ -1015,10 +1006,18 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
 
     # --- The genotype table: the server's, in the plan's mode (gwas.guitable's registry) ---
     # In memory the parsed genotypes (read-only, shared by the sessions); on disk a table file
-    # in the work folder, read in pieces. The same results either way.
+    # in the work folder, read in pieces. The same results either way. When the session's table
+    # file was closed since its last run (Clear session data in another session, or the server
+    # making room for another dataset), what was built on it is dropped and the registry gives
+    # a fresh table (gwas.guigwas.drop_closed_table); the page says so once.
+    _table_reread = _gg.drop_closed_table(st.session_state, vcf_hash, _geno_plan.mode)
+
+    def _read_table():
+        return _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+
     with st.spinner("Reading the VCF into the genotype table on disk…" if _geno_plan.mode == "disk"
                     else "Reading the VCF…"):
-        _parsed = _gg.table(vcf_hash, _geno_plan.mode, vcf_path, geno_work_dir)
+        _parsed = _read_table()
 
     # --- The preprocessing of one trait, kept in the session (one current entry) ---
     # The setup (and the detailed view below) uses the first selected trait that
@@ -1035,11 +1034,13 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             impute=impute_method, impute_k=impute_k, impute_l=impute_l, covar=_covar_hash,
             canonical=None)
         try:
-            results = _gg.preprocess(
-                st.session_state, _prep_key, _parsed, pheno.copy(), _setup_trait,
+            # a table file closed while it is read is read again once (a fresh table)
+            results, _parsed, _again = _gg.preprocess_rereading(
+                st.session_state, _prep_key, _parsed, _read_table, pheno.copy(), _setup_trait,
                 maf_thresh, miss_thresh, _norm_for(_setup_trait), drop_alt, ind_miss_thresh,
                 mac_thresh, info_thresh=info_thresh, impute_method=impute_method,
                 impute_k=impute_k, impute_l=impute_l, covar_df=covar_df, show=st.warning)
+            _table_reread = _table_reread or _again
         except _CovariateDropError as _cov_err:
             # no sample keeps its covariate values: the same for every trait
             _rehydrate_or_stop(str(_cov_err))
@@ -1062,6 +1063,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         _rehydrate_or_stop(
             "No selected trait can be analysed: "
             + "; ".join(f"{t}: {e}" for t, e in _setup_failed.items()))
+    if _table_reread:
+        st.caption(_gg.REREAD_MESSAGE)
     # the detailed view's trait: its normalisation keys the caches and the records below
     norm_option = _norm_for(trait_col)
     # One identity for this trait's table (gwas.guigwas.trait_identity): the VCF's identity and
@@ -1280,7 +1283,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 st.caption(f"{_n_alt:,} markers on unplaced/scaffold sequences excluded "
                            "(no valid genomic position).")
             _geno_imp = results["geno_imputed"]
-            _freq = _gg.column_means(_geno_imp) / 2.0     # read in pieces on disk
+            try:
+                # column means / 2, read in pieces on disk; once per table identity
+                _freq = _gg.allele_frequencies(st.session_state, _table_id, _geno_imp)
+            except Exception:
+                _stop_if_table_closed(_parsed)
+                raise
             _maf_vals = np.minimum(_freq, 1.0 - _freq)
             _fig_maf = plot_maf_histogram(_maf_vals, maf_threshold=maf_thresh)
             show_plot(_fig_maf, "small", data=histogram_bins(_fig_maf), data_name="MAF_histogram")
@@ -1323,12 +1331,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 st.info("Prepare/run the GWAS first to compute the PC spectrum.")
             else:
                 try:
-                    from gwas.pc_diagnostics import compute_pc_diagnostics
-                    _diag = compute_pc_diagnostics(
-                        _Zdiag, n=int(_Zdiag.shape[0]), m=int(_Zdiag.shape[1]),
-                        prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
-                        spectrum_depth=20,
-                    )
+                    # the spectrum of the pruned table, once per table identity
+                    _diag = _gg.pc_diagnostics(st.session_state, _table_id, _Zdiag)
                     _sp = _diag["spectrum"]
                     # Plot first: variance explained per PC (%) + cumulative on a secondary axis --
                     # what a user reads to choose a count (raw eigenvalues are scale-dependent; hidden below).
@@ -1727,7 +1731,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             import tempfile as _tempfile
             import time as _time_mod
 
-            from gwas.pipeline import cli_default_options, failed_traits_report, run_traits
+            from gwas.pipeline import cli_default_options, failed_traits_report
 
             def _fmt_secs(_s):
                 _s = max(0.0, float(_s))
@@ -1830,11 +1834,13 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # The genotype table: the server's (gwas.guitable's registry), in the mode One-Click's
             # own plan chooses for its options (the detailed view's table when the modes agree),
             # never parsed again and never closed here; on disk run_traits reads it in pieces, as
-            # the CLI's run does. Where it is kept, and the CLI's estimate for these options, go
-            # into run_metadata.json as in a CLI run (gwas.storeplan.Plan.metadata).
+            # the CLI's run does. The mode is chosen on the GUI's estimate for these options
+            # (gwas.guitable.gui_estimate_mib); where it is kept, and the CLI's estimate, go into
+            # run_metadata.json as in a CLI run (gwas.storeplan.Plan.metadata).
             try:
                 _parsed, _opts._geno_store_meta, _oc_plan = _gg.one_click_table(
-                    vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts)
+                    vcf_hash, vcf_path, geno_store_choice, geno_work_dir, _opts,
+                    estimate=_gt.gui_estimate_mib)
             except _gg.PlanStop as _oc_stop:
                 _gm_tmp.cleanup()
                 st.error(str(_oc_stop))
@@ -1861,9 +1867,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 def _on_progress(_msg):
                     _status.update(label=f"{_clock['trait']}: {str(_msg).strip()[:100]}")
 
-                for _t, _res, _err in run_traits(_parsed, pheno, selected_traits, _opts,
-                                                  on_start=_on_trait_start,
-                                                  progress=_on_progress):
+                # a trait that fails because the table file was closed meanwhile (Clear session
+                # data in another session, or the server making room for another dataset) runs
+                # again, with the traits after it, on a fresh table (gwas.guigwas)
+                for _t, _res, _err, _again in _gg.run_traits_rereading(
+                        _parsed, pheno, selected_traits, _opts,
+                        lambda: _gg.table(vcf_hash, _oc_plan.mode, vcf_path, geno_work_dir),
+                        on_start=_on_trait_start, progress=_on_progress):
+                    if _again:
+                        st.caption(_gg.REREAD_MESSAGE)
                     if _res is None:
                         _failed[_t] = _err
                         st.error(f"Trait `{_t}` failed: {_last_line(_err)}")
@@ -1982,11 +1994,21 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         "nocov" if user_covar_mat is None
         else f"cov{hash_bytes(user_covar_mat.tobytes(), digest_size=8)}"
     )
+    # ... and every setting the Run reads: LOCO, the models, MLMM's and FarmCPU's PCs and
+    # settings, the significance rule and its threshold, and the subsampling settings (drawn
+    # below, so read from the session: gwas.guigwas.subsampling_settings)
+    _run_fp = (
+        bool(use_loco), tuple(sorted(model_choices)), int(n_pcs_mlmm), int(n_pcs_farmcpu),
+        float(mlmm_p_enter), int(mlmm_max_cof),
+        int(farmcpu_max_iter) if "FarmCPU (multi-locus)" in model_choices else None,
+        sig_rule, None if custom_sig_thresh is None else float(custom_sig_thresh),
+        _gg.subsampling_settings(st.session_state, random_seed, min(4, os.cpu_count() or 1)),
+    )
     _scan_fp = hash_bytes(repr((
         trait_col, int(n_pcs), _covar_fp,
         maf_thresh, miss_thresh, ind_miss_thresh, mac_thresh, info_thresh,
         impute_method, impute_k, impute_l,
-        int(drop_alt), vcf_hash, pheno_hash, norm_option,
+        int(drop_alt), vcf_hash, pheno_hash, norm_option, _run_fp,
     )).encode(), digest_size=16)
     # Navigated back (did not click Run this rerun) and results already exist for this
     # trait -> re-display them, with a staleness notice if the inputs have since changed.
@@ -2042,6 +2064,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         )
         st.stop()
     except ValueError as e:
+        _stop_if_table_closed(_parsed)
         logging.exception("MLM GWAS failed (value error)")
         _emsg = str(e).lower()
         if "overlap" in _emsg or "sample" in _emsg:
@@ -2054,6 +2077,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             st.error(f"MLM GWAS failed: {e}")
         st.stop()
     except Exception as e:
+        _stop_if_table_closed(_parsed)
         logging.exception("MLM GWAS failed")
         st.error(f"MLM GWAS failed: {e}")
         st.stop()
@@ -2087,6 +2111,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             sid=sid,
         )
     except Exception as _ols_err:
+        _stop_if_table_closed(_parsed)
         logging.exception("OLS marginal effects computation failed")
         st.warning(f"OLS marginal effects unavailable: {_ols_err}")
 
@@ -2119,9 +2144,12 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             try:
                 meff_val, _meff_eigs = _gg.meff(st.session_state, _table_id, geno_imputed)
                 st.session_state["meff_val"] = meff_val
+                # the table M_eff belongs to: the Post-GWAS page uses meff_val only for it
+                st.session_state["meff_identity"] = _table_id
                 meff_thresh = 0.05 / meff_val
                 _meff_computed = True
             except Exception as e:
+                _stop_if_table_closed(_parsed)
                 logging.exception("M_eff computation failed")
                 st.warning(f"M_eff computation failed ({e}); falling back to Bonferroni.")
                 meff_val = len(gwas_df)
@@ -2386,14 +2414,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # Stable cache key for subsampling results: the table's identity (the genotypes,
             # the trait and its normalisation, the samples, covariates, QC and imputation
             # settings), so an Apply / Remove in the phenotype QC panel or a new upload is a
-            # miss; then the PC count and the subsampling settings.
-            boot_cache_key = (
-                f"BOOT_GWAS::{trait_col}::{_table_id}::pcs{int(n_pcs)}"
-                f"::reps{boot_n_reps}::frac{boot_sample_frac:.2f}"
-                f"::thresh{boot_disc_thresh:.1e}::seed{boot_seed}"
-                f"::loco{boot_use_loco}"
-                f"::n{geno_imputed.shape[0]}x{geno_imputed.shape[1]}"
-            )
+            # miss; then the PC count and the subsampling settings, the threshold exactly and
+            # the cores (gwas.guigwas.subsampling_key).
+            boot_cache_key = _gg.subsampling_key(
+                trait_col, _table_id, n_pcs, boot_n_reps, boot_sample_frac, boot_disc_thresh,
+                boot_seed, boot_use_loco, boot_n_jobs, geno_imputed.shape)
 
             if boot_cache_key not in st.session_state:
                 # one entry per trait (each holds a reps x SNPs p-value matrix)
@@ -2443,7 +2468,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         f"on {int(boot_n_jobs)} cores…"
                     )
 
-                with st.spinner("Running subsampling GWAS resampling…"):
+                with st.spinner("Running subsampling GWAS resampling…"), \
+                        _gg.on_closed_table(lambda: _stop_if_table_closed(_parsed)):
                     boot_disc_df, boot_raw_pvals, boot_meta, boot_note = _gg.subsampling(
                         geno_imputed=geno_imputed,
                         y=y,
@@ -2584,11 +2610,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
             # ---- LD block aggregation ----
             st.markdown("#### Per-LD-block subsampling stability")
 
-            haplo_df_for_agg = st.session_state.get("ld_blocks_final", None)
-            if haplo_df_for_agg is None:
-                haplo_df_for_agg = st.session_state.get("haplo_df_auto", None)
-                if isinstance(haplo_df_for_agg, dict):
-                    haplo_df_for_agg = haplo_df_for_agg.get(trait_col, None)
+            # the Post-GWAS page's blocks of this trait and this table only (gwas.guigwas)
+            haplo_df_for_agg = _gg.stability_blocks(st.session_state, trait_col, _table_id)
+            _other_blocks = haplo_df_for_agg is None and (
+                st.session_state.get("ld_blocks_final") is not None
+                or bool(st.session_state.get("haplo_df_auto")))
 
             with st.container():
                 if haplo_df_for_agg is not None and not haplo_df_for_agg.empty:
@@ -2633,6 +2659,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                         st.session_state["subsampling_block_stability"] = block_stab
                     else:
                         st.warning("No LD blocks could be matched to subsampling SNP results.")
+                elif _other_blocks:
+                    st.caption(
+                        "Not aggregated: the Post-GWAS page's LD blocks belong to another trait or "
+                        "another genotype table. Open the Post-GWAS page after this run, then click "
+                        "Run GWAS again to aggregate its blocks.")
                 else:
                     st.write(
                         "No LD blocks available for aggregation. "
@@ -2850,6 +2881,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         else:
             ld_decay_kb = None
     except Exception:
+        _stop_if_table_closed(_parsed)
         logging.exception("Manual path LD decay computation failed")
         ld_decay_kb = None
     if ld_decay_kb is None:
@@ -2901,22 +2933,26 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         with _tab_map["MLMM"]:
             _mlmm_ph = st.empty()
             _mlmm_ph.info("Computing MLMM (iterative cofactors)...")
-        gwas_mlmm, cof_tbl = run_mlmm_core_cached(
-            _table_id,
-            int(n_pcs_mlmm),
-            p_enter=mlmm_p_enter,
-            max_cof=mlmm_max_cof,
-            window_kb=flank_kb,
-            _geno_imputed=geno_imputed,
-            _sid=sid,
-            _chroms=chroms,
-            _chroms_num=chroms_num,
-            _positions=positions,
-            _iid=iid,
-            _K0=K0,
-            _pheno_reader=pheno_reader,
-            _covar_reader=covar_reader_mlmm,
-        )
+        try:
+            gwas_mlmm, cof_tbl = run_mlmm_core_cached(
+                _table_id,
+                int(n_pcs_mlmm),
+                p_enter=mlmm_p_enter,
+                max_cof=mlmm_max_cof,
+                window_kb=flank_kb,
+                _geno_imputed=geno_imputed,
+                _sid=sid,
+                _chroms=chroms,
+                _chroms_num=chroms_num,
+                _positions=positions,
+                _iid=iid,
+                _K0=K0,
+                _pheno_reader=pheno_reader,
+                _covar_reader=covar_reader_mlmm,
+            )
+        except Exception:
+            _stop_if_table_closed(_parsed)
+            raise
         # Enrich MLMM results to match MLM CSV format
         gwas_mlmm["PValue"] = np.clip(gwas_mlmm["PValue"].astype(float), 1e-300, 1.0)
         gwas_mlmm["-log10p"] = -np.log10(gwas_mlmm["PValue"])
@@ -2925,7 +2961,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         try:
             gwas_mlmm = add_ols_effects_to_gwas(gwas_mlmm, geno_imputed, y, covar_reader_mlmm, sid)
         except Exception:
-            pass
+            _stop_if_table_closed(_parsed)
         gwas_mlmm = add_significance_columns(gwas_mlmm, **_sig_cols)  # MLM's thresholds
         if "snp_imputation_rate" in results:
             _imp = pd.DataFrame({"SNP": sid.astype(str), "ImputationRate": results["snp_imputation_rate"]})
@@ -3009,22 +3045,26 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         with _tab_map["FarmCPU"]:
             _fc_ph = st.empty()
             _fc_ph.info("Computing FarmCPU (multi-locus)...")
-        gwas_farmcpu, pqtn_tbl, conv_info = run_farmcpu_cached(
-            _table_id,
-            int(n_pcs_farmcpu),
-            max_iterations=farmcpu_max_iter,
-            final_scan=farmcpu_final_scan,
-            use_loco=use_loco,
-            _geno_imputed=geno_imputed,
-            _sid=sid,
-            _chroms=chroms,
-            _chroms_num=chroms_num,
-            _positions=positions,
-            _iid=iid,
-            _K0=K0,
-            _pheno_reader=pheno_reader,
-            _covar_reader=covar_reader_farmcpu,
-        )
+        try:
+            gwas_farmcpu, pqtn_tbl, conv_info = run_farmcpu_cached(
+                _table_id,
+                int(n_pcs_farmcpu),
+                max_iterations=farmcpu_max_iter,
+                final_scan=farmcpu_final_scan,
+                use_loco=use_loco,
+                _geno_imputed=geno_imputed,
+                _sid=sid,
+                _chroms=chroms,
+                _chroms_num=chroms_num,
+                _positions=positions,
+                _iid=iid,
+                _K0=K0,
+                _pheno_reader=pheno_reader,
+                _covar_reader=covar_reader_farmcpu,
+            )
+        except Exception:
+            _stop_if_table_closed(_parsed)
+            raise
         # Enrich FarmCPU results to match MLM CSV format
         gwas_farmcpu["PValue"] = np.clip(gwas_farmcpu["PValue"].astype(float), 1e-300, 1.0)
         gwas_farmcpu["-log10p"] = -np.log10(gwas_farmcpu["PValue"])
@@ -3033,7 +3073,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         try:
             gwas_farmcpu = add_ols_effects_to_gwas(gwas_farmcpu, geno_imputed, y, covar_reader_farmcpu, sid)
         except Exception:
-            pass
+            _stop_if_table_closed(_parsed)
         gwas_farmcpu = add_significance_columns(gwas_farmcpu, **_sig_cols)  # MLM's thresholds
         if "snp_imputation_rate" in results:
             _imp_fc = pd.DataFrame({"SNP": sid.astype(str), "ImputationRate": results["snp_imputation_rate"]})
@@ -3168,50 +3208,19 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 mime="text/csv",
             )
 
-            # Optional: overlay Manhattan by model (shared genome-wide x)
+            # Optional: overlay Manhattan by model (shared genome-wide x). Above 500,000 points
+            # in all (every model's SNPs), it draws the interactive Manhattan's subset, with its
+            # caption (gwas.plotting.plot_manhattan_overlay); its HTML is built once, for the
+            # download.
             st.markdown("### Overlay Manhattan by model (genome-wide x)")
-
-            # Use helper to get cumulative positions per model together
-            df_plot_multi = all_res.copy()
-            chr_clean, chr_num_multi, order_labels_multi, order_map_multi = _clean_chr_series(df_plot_multi["Chr"])
-            df_plot_multi["Chr"] = chr_clean
-            df_plot_multi["ChrNum"] = chr_num_multi.astype(int)
-            df_plot_multi["Pos"] = df_plot_multi["Pos"].astype(int)
-            df_plot_multi = df_plot_multi.sort_values(["ChrNum", "Pos"]).reset_index(drop=True)
-
-            gap = 1_000_000
-            offset = 0
-            tick_pos_multi, tick_lab_multi = [], []
-
-            for chnum in np.sort(df_plot_multi["ChrNum"].unique()):
-                mask = df_plot_multi["ChrNum"] == chnum
-                pos_min = df_plot_multi.loc[mask, "Pos"].min()
-                pos_max = df_plot_multi.loc[mask, "Pos"].max()
-                df_plot_multi.loc[mask, "CumPos"] = df_plot_multi.loc[mask, "Pos"] + offset
-                tick_pos_multi.append(offset + (pos_min + pos_max) / 2)
-                tick_lab_multi.append(str(chnum))
-                offset += (pos_max - pos_min) + gap
-
-
-            _models_unique = df_plot_multi["Model"].unique().tolist()
-            _model_color_map = {m: PALETTE_CYCLE[i % len(PALETTE_CYCLE)] for i, m in enumerate(_models_unique)}
-            fig_overlay = px.scatter(
-                df_plot_multi,
-                x="CumPos", y="-log10p", color="Model",
-                color_discrete_map=_model_color_map,
-                hover_data=["SNP", "Chr", "Pos", "PValue"],
-                title="Overlay Manhattan by model",
-                render_mode="webgl"
-            )
-            fig_overlay.update_layout(
-                xaxis_title="Chromosome (cumulative)",
-                yaxis_title="-log10(p)",
-                xaxis=dict(tickmode="array", tickvals=tick_pos_multi, ticktext=tick_lab_multi, showgrid=False),
-                height=520,
-            )
+            fig_overlay, df_plot_multi = plot_manhattan_overlay(all_res)
             show_plot(fig_overlay, "wide")
+            if manhattan_caption(df_plot_multi):
+                st.caption(manhattan_caption(df_plot_multi))
             st.caption("Data: \"Download cross-model results (CSV)\" below.")
-            download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html", label="Download overlay Manhattan")
+            download_plotly_fig(fig_overlay, filename=f"Overlay_Manhattan_{trait_col}.html",
+                                label="Download overlay Manhattan",
+                                html_bytes=plotly_html_bytes(fig_overlay))
 
             # --- Cross-model consensus: which SNPs detected by which models? ---
             st.markdown("### Cross-model consensus")
@@ -3298,6 +3307,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     if "gwas_results" not in st.session_state:
         st.session_state["gwas_results"] = {}
     st.session_state["gwas_results"][trait_col] = selected_df.copy()
+    # this Run's table: the Post-GWAS page reads gwas_results only while the session's table is it
+    st.session_state["gwas_run_identity"] = _table_id
     st.session_state["gwas_df"] = selected_df.copy()
     st.session_state["downstream_model"] = downstream_model
 

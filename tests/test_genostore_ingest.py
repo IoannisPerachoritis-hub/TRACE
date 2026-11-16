@@ -87,6 +87,22 @@ def test_ingest_equals_todays_parse_examples(tmp_path, which, chunk):
         parsed.store.close()
 
 
+def test_the_shared_parse_is_read_only(tmp_path):
+    """The GUI's sessions share one StoreParsed: its metadata and its count arrays cannot be
+    changed in place."""
+    parsed = ingest_vcf(EXAMPLES[0], tmp_path / "s")
+    try:
+        arrays = {name: getattr(parsed, name) for name in ("samples", "chroms", "positions")}
+        arrays.update({f"stats[{k}]": v for k, v in parsed.stats.items() if isinstance(v, np.ndarray)})
+        assert {"stats[n1]", "stats[n2]", "stats[nmiss]", "stats[row_nmiss]", "stats[vmax]"} <= set(arrays)
+        for name, arr in arrays.items():
+            assert not arr.flags.writeable, name
+        with pytest.raises(ValueError):
+            parsed.stats["row_nmiss"][0] = 0
+    finally:
+        parsed.store.close()
+
+
 @pytest.mark.parametrize("chunk", [1, 7, 97, None])
 @pytest.mark.parametrize("variant", ["plain", "crlf_quotes", "gzip", "no_quality"])
 def test_ingest_equals_todays_parse_edge_cases(tmp_path, variant, chunk):

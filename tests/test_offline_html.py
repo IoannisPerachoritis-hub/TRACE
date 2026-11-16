@@ -25,8 +25,9 @@ def test_the_html_embeds_plotly_js_and_loads_no_script():
 
 def test_every_export_uses_the_helper():
     """No Plotly export with include_plotlyjs other than the helper's; the GWAS page's
-    four interactive figures (PCA, MLM, MLMM, FarmCPU) and the per-figure download
-    (export_plotly) go through plotly_html_bytes."""
+    five interactive figures (PCA, MLM, MLMM, FarmCPU, and the cross-model overlay, whose
+    HTML is built once for its download) and the per-figure download (export_plotly) go
+    through plotly_html_bytes."""
     for path in [*ROOT.glob("pages/**/*.py"), *ROOT.glob("utils/*.py"), *ROOT.glob("gwas/*.py"),
                  ROOT / "app.py"]:
         src = path.read_text(encoding="utf-8")
@@ -35,7 +36,7 @@ def test_every_export_uses_the_helper():
         else:
             assert "include_plotlyjs" not in src, path
     page = (ROOT / "pages" / "GWAS_analysis.py").read_text(encoding="utf-8")
-    assert page.count("plotly_html_bytes(") == 4
+    assert page.count("plotly_html_bytes(") == 5
     tree = ast.parse((ROOT / "utils" / "pub_theme.py").read_text(encoding="utf-8"))
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "export_plotly")

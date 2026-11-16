@@ -85,6 +85,21 @@ _META_BLOCK = re.compile(rb'<div class="metadata">(.*?)</div>', re.S)
 _REAL_RUN_TRAITS = pl.run_traits
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _free_memory_for_both():
+    """Automatic decides by the GUI's own estimate in the GUI (gwas.guitable.gui_estimate_mib, which
+    adds the session and Chrome to the CLI's) and by the CLI's in the CLI, so with the free memory
+    between the two thresholds the GUI keeps the table on disk where the CLI keeps it in memory, by
+    design. The comparison needs both to decide alike: the free memory they read is pinned high
+    here, as test_cli_geno_store pins it (the GUI's rule is tested in test_guitable)."""
+    import gwas.storeplan as storeplan
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(storeplan, "available_memory_bytes", lambda: 64 * 2 ** 30)
+    yield
+    mp.undo()
+
+
 # ── helpers ────────────────────────────────────────────────────────────────
 
 def _upload(table=None):

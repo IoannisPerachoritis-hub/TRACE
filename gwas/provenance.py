@@ -11,6 +11,29 @@ another's at the same library, thread count and (for parallel subsampling) worke
 these are recorded in the report's provenance table and in run_metadata.json.
 """
 import os
+import threading
+from contextlib import contextmanager
+
+# threadpoolctl's limits hold for the whole process, and the GUI's sessions are threads of one
+# server process. Two sections that set limits must not overlap: each restores, when it ends,
+# the counts it found when it began, so overlapping sections would leave the process at a
+# worker's thread count for good. Every section holds this lock (limited_threads).
+THREAD_LIMITS_LOCK = threading.RLock()
+
+
+@contextmanager
+def limited_threads(limits):
+    """``threadpoolctl.threadpool_limits(limits=limits)`` (a worker_threadpool_limits dict) under
+    THREAD_LIMITS_LOCK, so no other section changes the limits meanwhile. ``None`` sets nothing
+    and takes no lock. While a section runs, other threads of the process use its counts too."""
+    if limits is None:
+        yield
+        return
+    from threadpoolctl import threadpool_limits
+
+    with THREAD_LIMITS_LOCK, threadpool_limits(limits=limits):
+        yield
+
 
 # joblib starts each process worker with these variables set to the parent's value when the
 # parent's environment has it, and to max(cpu_count // workers, 1) otherwise

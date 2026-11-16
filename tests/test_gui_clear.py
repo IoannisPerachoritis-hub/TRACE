@@ -26,30 +26,31 @@ class _Upload(io.BytesIO):
         self.name, self.size, self.file_id = name, len(data), "f1"
 
 
-def _cache_entries():
-    """Every entry of every st.cache_data and st.cache_resource cache of this process (Streamlit's
-    cache stats: use only when the st.cache_resource caches are empty, see _n_cache_entries)."""
-    from streamlit.runtime.caching import cache_data_api, cache_resource_api
+def _data_cache_entries():
+    """Every entry of every st.cache_data cache of this process (Streamlit's cache stats: the
+    entries are pickled bytes, so sizing them is safe)."""
+    from streamlit.runtime.caching import cache_data_api
 
-    return (cache_data_api.get_data_cache_stats_provider().get_stats()
-            + cache_resource_api.get_resource_cache_stats_provider().get_stats())
+    return cache_data_api.get_data_cache_stats_provider().get_stats()
 
 
 def _n_cache_entries():
-    """How many entries the st.cache_data and st.cache_resource caches of this process hold.
+    """How many entries the st.cache_data and st.cache_resource caches of this process hold,
+    leaving out the server's table registry (gwas.guitable.get_registry), which Clear empties and
+    keeps.
 
     The st.cache_resource entries are counted, not sized: Streamlit's stats size every live value
     with pympler, which raises on a NumPy array that does not own its data (the read-only PCs, for
     one) when that is the first array it sizes in the process, and which array comes first depends
     on the order in which earlier tests first called the cached functions. st.cache_data entries
     are pickled bytes, so their stats are safe."""
-    from streamlit.runtime.caching import cache_data_api, cache_resource_api
+    from streamlit.runtime.caching import cache_resource_api
 
+    registry = getattr(guitable.get_registry, "_function_key", None)
     caches = cache_resource_api._resource_caches
     with caches._caches_lock:
-        function_caches = list(caches._function_caches.values())
-    return (len(cache_data_api.get_data_cache_stats_provider().get_stats())
-            + sum(len(cache._mem_cache) for cache in function_caches))
+        function_caches = [c for k, c in caches._function_caches.items() if k != registry]
+    return len(_data_cache_entries()) + sum(len(cache._mem_cache) for cache in function_caches)
 
 
 @pytest.fixture(autouse=True)
@@ -86,7 +87,7 @@ def test_clear_frees_tables_uploads_cached_results_memo_files_and_session_keys(t
     G = rng.integers(0, 3, size=(30, 60)).astype(np.float32)
     guigwas.ld_decay("clear-test", G, np.repeat(np.array(["1", "2"]), 30), np.tile(np.arange(30) * 1000, 2))
     kinship.compute_pcs_full_cached("clear-test", G, max_pcs=2)
-    assert _n_cache_entries() >= 3
+    assert _n_cache_entries() >= 2                                    # (the registry is not counted)
     # the session: the GWAS page's keys, the Post-GWAS page's, and widget settings that stay
     page_keys = {"_persist_vcf_path": "x", "geno_imputed": 1, "geno_table": 1, guigwas.PREP_KEY: 1,
                  guigwas.MEFF_KEY: 1, "gwas_zip_pheno__T__MLM__n1": {}, "BOOT_GWAS::T::id": {},
@@ -99,7 +100,7 @@ def test_clear_frees_tables_uploads_cached_results_memo_files_and_session_keys(t
 
     out = guitable.clear_all(state, keys=guigwas.SESSION_KEYS, prefixes=guigwas.SESSION_PREFIXES)
 
-    assert _n_cache_entries() == 0 and _cache_entries() == []         # no cached result is left
+    assert _n_cache_entries() == 0 and _data_cache_entries() == []    # no cached result is left
     assert not any(f.exists() for f in folders)                       # the table files and folders
     with pytest.raises(ValueError, match="closed"):                   # ... closed first
         disk.store.gather([0])
@@ -108,7 +109,54 @@ def test_clear_frees_tables_uploads_cached_results_memo_files_and_session_keys(t
     assert out["memo_files"] == len(trace_files) and out["memo_bytes"] == 1000 * len(trace_files)
     assert state == widgets
     assert set(out["session_keys"]) == set(page_keys) | set(post_keys)
-    assert guitable.get_registry().keys() == []                       # a new, empty registry
+    assert guitable.get_registry() is reg and reg.keys() == []        # the same registry, empty
+
+
+def test_clear_keeps_the_one_registry_and_forgets_file_identities(tmp_path, monkeypatch):
+    """Clear empties the server's registry but keeps the object every session uses: a table a
+    session builds while Clear runs lands in it (it is this server's, not a stale folder, and the
+    session's next run finds it), and repeated Clears add no registry and no exit hook. The file
+    identities are forgotten, so a file rewritten in place is hashed again."""
+    import atexit
+    import threading
+
+    from gwas import genostore
+
+    monkeypatch.setenv("TRACE_STREAMLIT_CACHE_DIR", str(tmp_path / "memo"))
+    reg = guitable.get_registry()
+    work = tmp_path / "work"
+    reg.get("clear-race-old", "disk", EX1, work)
+    guitable.file_identity(EX1)
+    assert len(guitable._ID_CACHE) >= 1
+    started, release = threading.Event(), threading.Event()
+    real_ingest = genostore.ingest_vcf
+
+    def slow_ingest(*a, **k):
+        started.set()
+        release.wait(30)
+        return real_ingest(*a, **k)
+
+    monkeypatch.setattr(genostore, "ingest_vcf", slow_ingest)
+    got = {}
+    t = threading.Thread(target=lambda: got.setdefault("b", guigwas.table("clear-race-b", "disk", EX1, work)))
+    t.start()
+    assert started.wait(30)
+    n_hooks = atexit._ncallbacks()
+    for _ in range(3):
+        guitable.clear_all({})                                        # Clear while B builds
+    assert atexit._ncallbacks() == n_hooks                            # no new registry, no new hook
+    assert len(guitable._ID_CACHE) == 0
+    release.set()
+    t.join(60)
+    try:
+        assert guitable.get_registry() is reg
+        assert reg.keys() == [("clear-race-b", "disk")]               # B's table landed in it
+        (folder,) = reg.folders()
+        assert folder in guitable.own_folders()                       # never listed as stale
+        assert guigwas.table("clear-race-b", "disk", EX1, work) is got["b"]   # no second copy
+    finally:
+        guitable.clear_all({})
+    assert reg.keys() == [] and not folder.exists()
 
 
 def test_no_trace_cache_persists_to_disk_any_more():

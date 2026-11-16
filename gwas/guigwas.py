@@ -25,6 +25,8 @@ The table, in memory or on disk (the same results either way)
     subsampling         the page's subsampling; in memory with several workers, the workers'
                         memory is checked first
 """
+import contextlib
+
 import numpy as np
 import pandas as pd
 
@@ -177,6 +179,92 @@ def preprocess(state, key, parsed, pheno, trait_col, maf_thresh, miss_thresh, no
     return out
 
 
+# --------------------------------------------------------- a table file closed meanwhile
+# The registry closes a table file when another dataset needs its place, and Clear session data
+# (in any session) closes them all: a session that still holds one then reads it again.
+REREAD_MESSAGE = ("This session's genotype table was closed (Clear session data in another "
+                  "session, or the server making room for another dataset), so TRACE read the "
+                  "VCF again.")
+CLOSED_MESSAGE = ("This session's genotype table was closed while this run read it (Clear "
+                  "session data in another session, or the server making room for another "
+                  "dataset). Run again: TRACE then reads the VCF again.")
+
+
+def table_closed(table):
+    """True when ``table`` (the registry's table, a SessionTable or a table view) is a table file
+    that was closed: every read of it then raises. A table in memory is never closed."""
+    for holder in (table, getattr(table, "parsed", None), getattr(table, "view", None)):
+        store = getattr(holder, "store", None)
+        if store is not None and bool(getattr(store, "closed", False)):
+            return True
+    return False
+
+
+def drop_closed_table(state, file_identity, mode):
+    """Before the page uses the session's preprocessing: when the table file it was built on was
+    closed, drop it, so the page's next table() is a fresh one from the registry and the
+    preprocessing runs again on it. Returns True when the session's own table of this VCF and mode
+    (the SessionTable the page left) was closed: the page then says so once."""
+    hit = state.get(PREP_KEY)
+    if hit is not None and table_closed(hit[1].get("parsed")):
+        state.pop(PREP_KEY, None)
+    held = state.get("geno_table")
+    return bool(table_closed(held) and str(getattr(held, "file_identity", "")) == str(file_identity)
+                and str(getattr(held, "mode", "")) == str(mode))
+
+
+@contextlib.contextmanager
+def on_closed_table(handler):
+    """Run a block that reads the table; when it raises, ``handler()`` runs first (the page's
+    plain stop when the table file was closed meanwhile), then the error goes on."""
+    try:
+        yield
+    except Exception:
+        handler()
+        raise
+
+
+def preprocess_rereading(state, key, parsed, reread, *args, **kwargs):
+    """preprocess, except that when its table file was closed meanwhile it runs once more on a
+    fresh table from ``reread()``. Returns (results, the table used, whether it was read again)."""
+    try:
+        return preprocess(state, key, parsed, *args, **kwargs), parsed, False
+    except Exception:
+        if not table_closed(parsed):
+            raise
+    parsed = reread()
+    return preprocess(state, key, parsed, *args, **kwargs), parsed, True
+
+
+def run_traits_rereading(parsed, pheno, traits, options, reread, on_start=None, progress=None):
+    """gwas.pipeline.run_traits (One-Click), except that a trait that fails because its table file
+    was closed meanwhile runs again, with the traits after it, on a fresh table from ``reread()``
+    (once per call). Yields (trait, result, error, read_again): read_again is True for the first
+    trait after the table was read again."""
+    from gwas.pipeline import run_traits
+
+    pending, done, reread_left, fresh = list(traits), 0, 1, False
+    while pending:
+        restart = False
+
+        def start(i, trait, _offset=done):
+            if on_start is not None:
+                on_start(_offset + i, trait)
+
+        for trait, result, error in run_traits(parsed, pheno, list(pending), options, on_start=start,
+                                               progress=progress):
+            if result is None and reread_left and table_closed(parsed):
+                reread_left -= 1
+                parsed, fresh, restart = reread(), True, True
+                break
+            pending.pop(0)
+            done += 1
+            yield trait, result, error, fresh
+            fresh = False
+        if not restart:
+            break
+
+
 def n_snps(results):
     """The number of SNPs after QC: the genotype frame's columns in memory; on disk the frame
     holds the sample rows only, so the SNPs are counted from their IDs (the same number)."""
@@ -200,7 +288,90 @@ def column_means(geno_imputed, piece=4096):
     return out
 
 
+# The QC report's allele frequencies and the PC spectrum, once per table identity (one entry each,
+# the current table's), as M_eff: a rerun of the page does not read the table or redo the PCA.
+FREQ_KEY = "_trace_qc_allele_freq"
+PC_DIAG_KEY = "_trace_pc_diagnostics"
+
+
+def allele_frequencies(state, table_key, geno_imputed):
+    """``column_means(geno_imputed) / 2.0`` (the QC report's MAF histogram), computed once per
+    ``table_key`` (the trait table's identity) and kept in the session ``state`` (read-only)."""
+    hit = state.get(FREQ_KEY)
+    if hit is not None and hit[0] == table_key:
+        return hit[1]
+    freq = column_means(geno_imputed) / 2.0
+    freq.setflags(write=False)
+    state[FREQ_KEY] = (table_key, freq)
+    return freq
+
+
+def pc_diagnostics(state, table_key, Z):
+    """The page's PC-selection diagnostics of the pruned table ``Z`` (gwas.pc_diagnostics with the
+    page's settings), computed once per ``table_key`` and kept in the session ``state``."""
+    hit = state.get(PC_DIAG_KEY)
+    if hit is not None and hit[0] == table_key:
+        return hit[1]
+    from gwas.pc_diagnostics import compute_pc_diagnostics
+
+    out = compute_pc_diagnostics(Z, n=int(Z.shape[0]), m=int(Z.shape[1]),
+                                 prune_params={"r2": 0.2, "window_bp": 500_000, "step_bp": 100_000},
+                                 spectrum_depth=20)
+    state[PC_DIAG_KEY] = (table_key, out)
+    return out
+
+
 # ----------------------------------------------------------------------------- subsampling
+def subsampling_key(trait, table_key, n_pcs, n_reps, sample_frac, discovery_thresh, seed, use_loco,
+                    n_jobs, shape):
+    """The session key of one subsampling result of the page ("BOOT_GWAS::<trait>::..."): the trait
+    table's identity, the PC count and every subsampling setting. The discovery threshold is
+    written exactly (repr): the number box takes any value, and two thresholds that print alike
+    with two digits are two thresholds. The workers are named: each one's BLAS threads (cores /
+    workers when no thread count is set) decide the last digits of the p-values."""
+    return (f"BOOT_GWAS::{trait}::{table_key}::pcs{int(n_pcs)}"
+            f"::reps{n_reps}::frac{sample_frac:.2f}"
+            f"::thresh{float(discovery_thresh)!r}::seed{seed}"
+            f"::loco{use_loco}::jobs{int(n_jobs)}"
+            f"::n{int(shape[0])}x{int(shape[1])}")
+
+
+# The subsampling settings of the detailed view (widget key, default when it has not been drawn),
+# for the re-display notice: they are drawn after the notice is decided.
+SUBSAMPLING_WIDGETS = ("boot_n_reps", "boot_sample_frac", "boot_disc_thresh", "boot_seed", "boot_n_jobs",
+                       "boot_use_loco")
+
+
+def subsampling_settings(state, seed_default, jobs_default):
+    """The subsampling settings a Run GWAS would use now, read from the session ``state`` (the
+    widgets' values, or their defaults when not drawn yet: 50 iterations, 0.80, 1e-4, the sidebar's
+    seed, ``jobs_default`` cores, no LOCO); ("none",) without subsampling."""
+    if not state.get("run_subsampling_gwas", False):
+        return ("none",)
+    defaults = dict(boot_n_reps=50, boot_sample_frac=0.80, boot_disc_thresh=1e-4, boot_seed=seed_default,
+                    boot_n_jobs=jobs_default, boot_use_loco=False)
+    return tuple(state.get(k, defaults[k]) for k in SUBSAMPLING_WIDGETS)
+
+
+def stability_blocks(state, trait, table_key):
+    """The LD blocks the GWAS page's per-block subsampling stability aggregates, or None when the
+    session has none of this trait and this table: the Post-GWAS page's last blocks
+    (ld_blocks_final) when ld_blocks_final_key, written with them, is (trait, table identity);
+    else the Post-GWAS page's automatic blocks of this trait (haplo_df_auto) when their signature
+    (haplo_df_auto_hash, "<GWAS hash>::T<table identity>::R<rows>") names this table."""
+    final = state.get("ld_blocks_final")
+    key = state.get("ld_blocks_final_key")
+    if final is not None and isinstance(key, (tuple, list)) and len(key) == 2 \
+            and (str(key[0]), str(key[1])) == (str(trait), str(table_key)):
+        return final
+    auto, sigs = state.get("haplo_df_auto"), state.get("haplo_df_auto_hash")
+    if isinstance(auto, dict) and isinstance(sigs, dict):
+        blocks, sig = auto.get(trait), sigs.get(trait)
+        if blocks is not None and sig is not None and f"::T{table_key}::" in str(sig):
+            return blocks
+    return None
+
+
 def subsampling_workers_fit(n_samples, n_snps_, n_jobs, available=None):
     """(fits, need_bytes, free_bytes): whether ``n_jobs`` subsampling workers fit in the free
     memory. Each worker after the first is a process with its own share of the table:
@@ -252,11 +423,11 @@ def subsampling(geno_imputed, y, sid, chroms, chroms_num, positions, iid, Z_for_
     elif int(n_jobs) <= 1 or is_lazy(geno_imputed):
         out = subsample_gwas_resampling(**args, n_jobs=int(n_jobs), progress_callback=progress_callback)
     else:
-        from threadpoolctl import threadpool_limits
+        # the process-wide limits under one lock (gwas.provenance.limited_threads): another
+        # session's subsampling waits for it instead of interleaving with it
+        from gwas.provenance import limited_threads, worker_threadpool_limits
 
-        from gwas.provenance import worker_threadpool_limits
-
-        with threadpool_limits(limits=worker_threadpool_limits(int(n_jobs))):
+        with limited_threads(worker_threadpool_limits(int(n_jobs))):
             out = subsample_gwas_resampling(**args, n_jobs=1, progress_callback=progress_callback)
     return (*out, note)
 
@@ -285,7 +456,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
                           subsampling=bool(getattr(options, "subsampling", False)),
                           boot_jobs=getattr(options, "boot_jobs", 1),
                           export_qc=bool(getattr(options, "export_qc", False)),
-                          impute=getattr(options, "impute", "mean"), estimate=estimate)
+                          impute=getattr(options, "impute", "mean"), estimate=estimate,
+                          size_of=guitable.vcf_size_of(file_identity))
     if plan.stop:
         raise PlanStop(guitable.page_stop(plan, work_dir))
     parsed = table(file_identity, plan.mode, vcf_path, work_dir)
@@ -299,6 +471,7 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
 SESSION_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_", "BOOT_GWAS::")
 SESSION_KEYS = (
     "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
+    "_vcf_live", "_vcf_save_failed", FREQ_KEY, PC_DIAG_KEY, "meff_identity", "gwas_run_identity",
     "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
     "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
     "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",
