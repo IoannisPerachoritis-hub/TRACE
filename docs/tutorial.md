@@ -122,6 +122,15 @@ When the run finishes you will see the Manhattan and QQ plots, the genomic
 inflation factor (λ_GC), and the significant-SNP table, plus a button to
 download the full results ZIP, the same archive the CLI produces.
 
+**Covariates from the phenotype file.** Under the phenotype file, "Use columns of
+this file as covariates" adds the columns you choose to the models as covariates,
+for example a correlated trait for a conditional GWAS. TRACE uses their values as
+uploaded, never a transformed trait, and the chosen columns leave the trait list.
+Use one source at a time: a covariate file or these columns. The CLI does the same
+with `--covar pheno.csv --covar-cols weight_g`. Adjusting for a correlated,
+heritable trait can create or hide associations at loci that affect that trait
+(Aschard et al. 2015); compare with the unadjusted run.
+
 ### Step 2: Post-GWAS Analysis
 
 Open **Post-GWAS Analysis**. It reuses the QC'd genotype matrix from your GWAS

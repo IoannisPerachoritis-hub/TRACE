@@ -8,6 +8,12 @@ The identity
                         built on it, so a changed setting can never be served another table's result.
     sample_set_hash     the retained samples, as gwas.qc names them for its imputation key
 
+The phenotype table
+    index_phenotype     the uploaded table indexed by sample ID, as the page uses it
+    trait_columns       the traits: the numeric columns but those chosen as covariates
+    PHENO_COVAR_*       "Use columns of this file as covariates": its key, label, help and the
+                        message when a covariate file is given too
+
 Caches keyed by the identity (no table is ever hashed by Streamlit; tables are passed as arguments
 whose names start with an underscore, which Streamlit leaves out of the key)
     ld_decay            the page's per-chromosome LD decay (annotation.compute_ld_decay_by_chromosome)
@@ -77,6 +83,54 @@ def trait_identity(file_identity, *, pheno, trait, norm, maf, miss, ind_miss, ma
         file_identity, pheno=pheno, trait=trait, norm=norm, maf=maf, miss=miss,
         ind_miss=ind_miss, mac=mac, info=info, drop_alt=drop_alt, impute=impute,
         impute_k=impute_k, impute_l=impute_l, covar=covar, canonical=canonical, samples=samples)
+
+
+# ------------------------------------------------------- the phenotype table and its covariates
+# The names of a sample ID column the page looks for, in any case (else the file's first column).
+PHENO_ID_NAMES = frozenset({"accessions", "accession", "sample", "samples", "iid", "genotype", "id",
+                            "sample_id", "sampleid"})
+
+# "Use columns of this file as covariates": the multiselect's key, and the columns kept for a run
+# from memory (as gwas.guitable.covar_persist_decision keeps an uploaded covariate file)
+PHENO_COVAR_KEY = "pheno_covar_cols"
+PHENO_COVAR_KEPT = "_persist_pheno_covar_cols"
+PHENO_COVAR_LABEL = "Use columns of this file as covariates"
+PHENO_COVAR_HELP = (
+    "Columns of the phenotype file to add to the models as covariates, for example a correlated "
+    "trait for a conditional GWAS. TRACE uses their values as uploaded, never a transformed trait, "
+    "and the chosen columns leave the trait list. Samples without a value are dropped, as with a "
+    "covariate file. The CLI does the same with --covar pheno.csv --covar-cols weight_g. "
+    "Adjusting for a correlated, heritable trait can create or hide associations at loci that "
+    "affect that trait (Aschard et al. 2015); compare with the unadjusted run.")
+PHENO_COVAR_TWO_SOURCES = (
+    "Covariates come from one source at a time: the covariate file or columns of the phenotype "
+    "file. Clear the columns chosen under the phenotype file, or remove the covariate file. Clear "
+    "session data removes a covariate file kept from an earlier visit.")
+
+
+def index_phenotype(pheno):
+    """The uploaded phenotype table indexed by sample ID, as the GWAS page uses it: the column
+    names stripped of blanks; the ID column is the first column whose name (in any case) is in
+    PHENO_ID_NAMES, else the first column; its values, stripped of blanks, become the index. The
+    other values stay as uploaded. Returns (table, the ID column, True when the first column was
+    taken because no column had an ID name)."""
+    pheno = pheno.copy()
+    pheno.columns = pheno.columns.astype(str).str.strip()
+    id_col = next((c for c in pheno.columns if c.lower().strip() in PHENO_ID_NAMES), None)
+    from_first = id_col is None
+    if from_first:
+        id_col = pheno.columns[0]
+    pheno[id_col] = pheno[id_col].astype(str).str.strip()
+    pheno = pheno.set_index(id_col)
+    pheno.index = pheno.index.astype(str).str.strip()
+    return pheno, id_col, from_first
+
+
+def trait_columns(pheno, covariate_columns=()):
+    """The page's traits: the numeric columns of the phenotype table, without the columns chosen
+    as covariates."""
+    chosen = set(covariate_columns or ())
+    return [c for c in pheno.select_dtypes(include=[np.number]).columns.tolist() if c not in chosen]
 
 
 # ------------------------------------------------------------------------------- LD decay
@@ -612,7 +666,8 @@ def one_click_table(file_identity, vcf_path, choice, work_dir, options, estimate
 # page's): its inputs, the preprocessing and tables, the run's records and results.
 SESSION_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_", "BOOT_GWAS::")
 SESSION_KEYS = (
-    "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
+    "_persist_vcf_path", "_persist_pheno", "_persist_covar", PHENO_COVAR_KEPT, "_vcf_upload_token",
+    "_vcf_source",
     "_vcf_live", "_vcf_save_failed", FREQ_KEY, PC_DIAG_KEY, "meff_identity", "gwas_run_identity",
     "gwas_run_kernels",                     # the Run's kernels (the Post-GWAS haplotype test's)
     "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",

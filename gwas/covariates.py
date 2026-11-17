@@ -1,4 +1,5 @@
-"""User-supplied covariates for GWAS: loading, column selection, sample alignment.
+"""User-supplied covariates for GWAS: loading, column selection, sample alignment, and the
+covariates taken from columns of the phenotype file (the GWAS page).
 
 The MLM / MLMM / FarmCPU scans already accept a fixed-effect covariate matrix (the
 principal components). These helpers turn a user-supplied covariate file into a
@@ -102,6 +103,18 @@ def select_covariate_columns(covar_df, cols=None):
                 f"other covariates or the intercept). Remove or combine them."
             )
     return out
+
+
+def covariates_from_phenotype(pheno, columns):
+    """The covariate table taken from columns of the phenotype table (the GWAS page's "Use
+    columns of this file as covariates"): ``pheno`` is the uploaded table indexed by sample ID,
+    as the traits use it, with the values as uploaded (never a transformed trait). The columns
+    go through select_covariate_columns, as a covariate file's do, so the table equals the one
+    the CLI builds from ``--covar <the phenotype file> --covar-cols <the columns>``."""
+    columns = list(columns or [])
+    if not columns:
+        raise ValueError("No covariate columns selected.")
+    return select_covariate_columns(pheno, columns)
 
 
 def align_covariates(covar_df, sample_ids):

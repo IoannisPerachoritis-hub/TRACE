@@ -894,9 +894,9 @@ def covar_persist_decision(covar_file_present, running_from_memory, has_persiste
 def clear_inputs(state):
     """The reset of the GWAS page's inputs that "Clear session data" makes before the page runs
     (the button's callback): the location box is emptied, each upload box gets a new key (an
-    empty box, and Streamlit's copy of a file still in it is removed) and the trait selection is
-    dropped. The run after Clear then finds no VCF and no phenotype file and builds nothing
-    until the user gives the files again."""
+    empty box, and Streamlit's copy of a file still in it is removed) and the trait selection
+    and the phenotype columns chosen as covariates are dropped. The run after Clear then finds
+    no VCF and no phenotype file and builds nothing until the user gives the files again."""
     if "vcf_location" in state:
         state["vcf_location"] = ""
     for name in UPLOAD_BOXES:
@@ -907,7 +907,9 @@ def clear_inputs(state):
         if held is not None:
             release_upload(held)
         state[f"_{name}_widget"] = int(state.get(f"_{name}_widget", 0) or 0) + 1
-    for key in ("selected_traits_multiselect", VCF_LIVE_KEY, VCF_SAVE_FAILED_KEY):
+    # "pheno_covar_cols": gwas.guigwas.PHENO_COVAR_KEY (the multiselect "Use columns of this file
+    # as covariates"); its kept copy is in gwas.guigwas.SESSION_KEYS
+    for key in ("selected_traits_multiselect", "pheno_covar_cols", VCF_LIVE_KEY, VCF_SAVE_FAILED_KEY):
         state.pop(key, None)
 
 

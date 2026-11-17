@@ -764,39 +764,44 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     with st.expander("Phenotype file preview", expanded=True):
         st.dataframe(pheno.head())
 
-    # ---- Fix phenotype accession names ----
-    pheno = pheno.copy()
-    pheno.columns = pheno.columns.astype(str).str.strip()
-
-    # Try to find an explicit accession column first (case-insensitive)
-    _possible_cols_lower = {
-        "accessions", "accession", "sample", "samples",
-        "iid", "genotype", "id", "sample_id", "sampleid",
-    }
-    accession_col = None
-    for col in pheno.columns:
-        if col.lower().strip() in _possible_cols_lower:
-            accession_col = col
-            break
-
-    # If not found, fall back to using the first column as accessions
-    if accession_col is None:
-        accession_col = pheno.columns[0]
+    # ---- The sample IDs: a column with a known ID name (any case), else the first column; the
+    #      IDs stripped of blanks become the index (gwas.guigwas.index_phenotype) ----
+    pheno, accession_col, _ids_from_first_column = _gg.index_phenotype(pheno)
+    if _ids_from_first_column:
         st.warning(
             f"No explicit accession column found; using first column '{accession_col}' "
             "as accession IDs."
         )
 
-    # Standardize accession names & use as index
-    pheno[accession_col] = pheno[accession_col].astype(str).str.strip()
-    pheno = pheno.set_index(accession_col)
-    pheno.index = pheno.index.astype(str).str.strip()
+    # ---- Covariates from columns of this file (the CLI's --covar <this file> --covar-cols
+    #      <columns>): their values as uploaded, never a transformed trait. The chosen columns
+    #      leave the trait list. Like an uploaded covariate file, they are kept for a run from
+    #      memory (a new visit of the page) and dropped when the box is emptied ----
+    _pheno_covar_options = list(pheno.columns)
+    if _gg.PHENO_COVAR_KEY not in st.session_state:
+        _pheno_covar_kept = st.session_state.get(_gg.PHENO_COVAR_KEPT) or []
+        if _pheno_covar_kept and not _vcf_in.live:
+            st.session_state[_gg.PHENO_COVAR_KEY] = [c for c in _pheno_covar_kept
+                                                      if c in _pheno_covar_options]
+        else:
+            st.session_state.pop(_gg.PHENO_COVAR_KEPT, None)
+    else:   # only columns of the file in use (a multiselect refuses other values)
+        st.session_state[_gg.PHENO_COVAR_KEY] = [c for c in st.session_state[_gg.PHENO_COVAR_KEY]
+                                                  if c in _pheno_covar_options]
+    pheno_covar_cols = st.multiselect(_gg.PHENO_COVAR_LABEL, _pheno_covar_options,
+                                      key=_gg.PHENO_COVAR_KEY, help=_gg.PHENO_COVAR_HELP)
+    if pheno_covar_cols:
+        st.session_state[_gg.PHENO_COVAR_KEPT] = list(pheno_covar_cols)
+    else:
+        st.session_state.pop(_gg.PHENO_COVAR_KEPT, None)
 
     # --- Optional user covariates (parity with CLI --covar); resolved from the
-    #     upload or from memory (run-from-memory), applied in the single-trait view ---
+    #     upload or from memory (run-from-memory), or taken from columns of the phenotype
+    #     file, applied in the single-trait view ---
     from gwas.covariates import (
         load_covariate_frame as _load_cov,
         select_covariate_columns as _sel_cov,
+        covariates_from_phenotype as _covar_from_pheno,
         align_covariates as _align_cov,
         covariate_drop_message as _covariate_drop_message,
         CovariateDropError as _CovariateDropError,
@@ -808,6 +813,9 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     _covar_decision = _covar_persist_decision(
         covar_file is not None, not _vcf_in.live, "_persist_covar" in st.session_state
     )
+    if pheno_covar_cols and _covar_decision in ("upload", "session"):
+        # one source of covariates at a time: the file, or columns of the phenotype file
+        _rehydrate_or_stop(_gg.PHENO_COVAR_TWO_SOURCES)
     if _covar_decision == "upload":
         try:
             covar_file.seek(0)
@@ -823,6 +831,15 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         # Live session, uploader emptied -> user removed the covariate; drop the
         # persisted copy so it does not silently apply to every later trait.
         st.session_state.pop("_persist_covar", None)
+    if pheno_covar_cols:
+        # the covariate table from the uploaded values, through the covariate file's checks
+        # (gwas.covariates.covariates_from_phenotype); run_metadata.json then names this file
+        # and these columns, as the CLI's --covar <this file> --covar-cols <columns> does
+        try:
+            covar_df = _covar_from_pheno(pheno, pheno_covar_cols)
+        except ValueError as _cov_err:
+            _rehydrate_or_stop(f"Could not use the chosen phenotype columns as covariates: {_cov_err}")
+        _covar_source = phe_file.name if phe_file is not None else "from session"
     # Store RAW phenotype immediately (before zero-handling or transformations)
     # Always refresh pheno_raw when a new phenotype file is loaded
     st.session_state["pheno_raw"] = pheno.copy()
@@ -907,8 +924,9 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # =========================
     # 3. Trait selection
     # =========================
-    # The numeric columns are the traits (the table holds the uploaded values)
-    numeric_traits = pheno.select_dtypes(include=[np.number]).columns.tolist()
+    # The numeric columns are the traits (the table holds the uploaded values), without the
+    # columns chosen as covariates (gwas.guigwas.trait_columns)
+    numeric_traits = _gg.trait_columns(pheno, pheno_covar_cols)
 
     st.markdown("### Select traits for GWAS")
 
@@ -918,6 +936,10 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         st.session_state[_trait_key] = (
             [numeric_traits[0]] if numeric_traits else []
         )
+    elif pheno_covar_cols:
+        # a column chosen as a covariate is no longer a trait
+        st.session_state[_trait_key] = [t for t in st.session_state[_trait_key]
+                                        if t not in pheno_covar_cols]
 
     # Quick-select buttons for large phenotype tables (e.g. metabolomics
     # with thousands of columns). Clicking sets session state *before*

@@ -230,6 +230,15 @@ documented in full (every column, type, and when it's emitted) in
 without a value for a covariate is dropped before SNP QC, kinship and the PCs. A warning
 names the dropped samples, and `run_metadata.json` records their count.
 
+**Covariates from the phenotype file** (the GWAS page's "Use columns of this file as
+covariates"): choose columns of the uploaded phenotype file to use them as covariates, for
+example a correlated trait for a conditional GWAS. TRACE uses their values as uploaded, never a
+transformed trait, and the chosen columns leave the trait list. Use one source at a time: a
+covariate file or these columns. The CLI does the same with
+`--covar pheno.csv --covar-cols weight_g`. Adjusting for a correlated, heritable trait can
+create or hide associations at loci that affect that trait (Aschard et al. 2015); compare with
+the unadjusted run.
+
 Run `trace-gwas --help` for the `--covar` covariate flag and the numeric
 `--sig-thresh` p-value (e.g. `5e-8`); it prints the full CLI parameter list.
 """)
