@@ -161,16 +161,23 @@ st.markdown("""
 
 st.subheader("Haplotype GWAS Results")
 st.markdown("""
+Each LD block's haplotype groups are tested by a mixed model with the GWAS scan's own kinship
+kernel for the block's chromosome (its LOCO kernel, or the whole-genome kernel with
+`--no-loco`), the PCs and any covariates: the null model's heritability is fitted by REML,
+and the F test and its Freedman-Lane permutations are made on the data whitened by that model.
+`--hap-test pcs` (the GUI's "PCs and covariates only") gives the earlier test, with the PCs and
+covariates and no kinship.
+
 | Column | Meaning |
 |--------|---------|
 | **Hap_PValue** | Permutation-based p-value for haplotype effect (Freedman-Lane) |
 | **Hap_FDR_BH** | FDR-adjusted haplotype p-value |
 | **Hap_F_perm** | Observed F-statistic from the permutation test |
 | **Hap_F_param** | Parametric F-statistic (for reference) |
-| **Hap_eta2** | Effect size: proportion of phenotypic variance explained by haplotype differences. Multiply by 100 for percentage. Computed on the PC-residualised phenotype; grows with the haplotype count and is not corrected for block selection. |
+| **Hap_eta2** | Effect size: the share of the phenotype's variance the haplotype groups explain in the test's model, df1·F / (df1·F + df2) of its F (with the kinship-aware test, of the whitened model; with `--hap-test pcs`, on the phenotype after the PCs and covariates). Multiply by 100 for percentage. Grows with the haplotype count and is not corrected for block selection. |
 | **Hap_eta2_ci_low** / **Hap_eta2_ci_high** | 95% confidence interval for Hap_eta2 (noncentral-F inversion of the parametric F). |
 | **Hap_omega2** | Omega-squared: a less upward-biased variance-explained estimate than eta2 (matters when there are many haplotype groups). Can be negative when the parametric F < 1. Reported alongside eta2, not as a replacement. |
-| **Hap_lead_r2** | Additive R² of the block's lead SNP (1 df), on the same PC-residualised phenotype. Comparable across blocks (fixed df), unlike eta2. The lead SNP may not be a block member. |
+| **Hap_lead_r2** | Additive R² of the block's lead SNP (1 df), in the test's model (with the kinship-aware test, of the whitened phenotype and lead SNP after the PCs and covariates; with `--hap-test pcs`, on the phenotype after the PCs and covariates). Comparable across blocks (fixed df), unlike eta2. The lead SNP may not be a block member. |
 | **Hap_n_haplotypes** | Total number of distinct haplotypes observed in the block |
 | **Hap_n_tested** | Number of haplotypes with sufficient sample size for testing |
 | **Hap_n_samples** | Number of samples with non-missing genotypes in the block |
@@ -279,9 +286,12 @@ st.markdown("""
   ALT allele increases the trait. A significant SNP's box plot compares the two:
   `sign-flip` (opposite signs) or `structure-sensitive` (Beta_MLM under half of Beta_OLS)
   means kinship changes the estimate; `concordant` means it does not.
-- **eta-squared**: the proportion of phenotypic variance associated with haplotype
-  differences at an LD block, computed on the phenotype after any principal-component
-  covariates have been removed.
+- **eta-squared**: the share of the phenotype's variance that an LD block's haplotype
+  groups explain in the haplotype test's model: by default the kinship-aware test, whose
+  model holds the kinship, the PCs and any covariates (with the PCs-only test, the
+  phenotype after the PCs and covariates are removed). The LD Blocks & Haplotypes tab
+  shows this η² in its block table, its box plot and its forest plot; the block table's
+  CSV also has the window R² of every SNP in the block's window, another quantity.
 
 Three properties to keep in mind when comparing eta-squared across blocks. It grows with
 the number of haplotype groups, so a block with more groups is not directly comparable

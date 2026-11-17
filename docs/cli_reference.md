@@ -21,10 +21,10 @@ usage: trace-gwas [-h] [--vcf VCF] [--pheno PHENO] [--trait TRAIT [TRAIT ...]]
                   [--ld-seed-mode {suggestive,significant}]
                   [--ld-seed-p LD_SEED_P] [--ld-top-n LD_TOP_N]
                   [--ld-merge-r2 LD_MERGE_R2] [--hap-perms HAP_PERMS]
-                  [--no-annotation] [--genome-build {SL3,SL4}]
-                  [--species {tomato,custom}] [--gene-model GENE_MODEL]
-                  [--gene-desc GENE_DESC] [--no-triage]
-                  [--triage-r2-coherent TRIAGE_R2_COHERENT]
+                  [--hap-test {kinship,pcs}] [--no-annotation]
+                  [--genome-build {SL3,SL4}] [--species {tomato,custom}]
+                  [--gene-model GENE_MODEL] [--gene-desc GENE_DESC]
+                  [--no-triage] [--triage-r2-coherent TRIAGE_R2_COHERENT]
                   [--triage-lead-r2-frac TRIAGE_LEAD_R2_FRAC]
                   [--hap-min-count HAP_MIN_COUNT]
                   [--hap-min-group-size HAP_MIN_GROUP_SIZE]
@@ -154,6 +154,14 @@ LD & post-GWAS:
                         reach it (default: 0.5).
   --hap-perms HAP_PERMS
                         Haplotype permutations (default: 1000)
+  --hap-test {kinship,pcs}
+                        Haplotype block test. 'kinship' (default): a mixed
+                        model with the scan's own kinship kernel for the
+                        block's chromosome (LOCO, or the global kernel with
+                        --no-loco), its null model fitted by REML; the F test
+                        and the Freedman-Lane permutations are made on the
+                        whitened data. 'pcs': the test with the PCs and
+                        covariates alone (no kinship), as before.
   --no-annotation       Skip gene annotation
   --genome-build {SL3,SL4}
                         Tomato gene-model assembly: SL3 = SL3.1 (default), SL4

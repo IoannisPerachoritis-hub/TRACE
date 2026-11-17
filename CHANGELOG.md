@@ -24,8 +24,38 @@ All notable changes to TRACE are documented in this file.
   gets. The last digits of p-values depend on the thread count (by about 1 part in 10 million
   between 1 and 12 threads), so results are byte-identical between runs at the same thread count;
   no default changes.
+- **The haplotype test accounts for kinship, by default** (`--hap-test`). Each LD block's
+  haplotype groups are tested by a mixed model with the GWAS scan's own kinship kernel for the
+  block's chromosome (its LOCO kernel, or the whole-genome kernel with `--no-loco`), the PCs
+  and any covariates: the null model's heritability is fitted by REML, and the F test and its
+  Freedman-Lane permutations are made on the data whitened by that model. `--hap-test pcs`
+  (in the GUI "PCs and covariates only", in the LD Blocks & Haplotypes tab's Settings and in
+  One-Click) keeps the earlier test. The haplotype results gain three columns in both tests:
+  `kinship_model` (the kernel, `none` for the earlier test, or why the kinship-aware test could
+  not test a block), `h2_null` (the null model's heritability) and `eta2_pcs_only` (the earlier
+  test's η², for comparison). A block the kinship-aware test cannot test (for example one whose
+  haplotype groups a covariate defines) is kept with the reason and no statistics (the tab's
+  block table gives it under Tested), never tested another way, and the block FDR is over the
+  blocks with a p-value. `run_metadata.json` records
+  the choice as `Hap_test (--hap-test)`. `LD_blocks_annotated_*` and `LD_triage_*` keep their
+  columns; the new ones are in the report's haplotype tables and the GUI's block table CSV. See
+  docs/outputs.md.
 
 ### Fixed
+- **The haplotype test's parametric F, η² and lead SNP R² now use the user covariates** that
+  its permutations already used, so every statistic of the test has one design (intercept,
+  PCs, covariates). A tested sample without a covariate value stops the test instead of
+  quietly dropping the covariates; the CLI and the GUI drop such samples before the scan, so
+  their runs do not meet it. Without covariates nothing changes.
+- **One η² per LD block on the haplotype tab.** The forest plot showed an η² of its own,
+  computed from the plotted values; it now shows the haplotype test's, as the block table and
+  the box plot do. The block table CSV's value over every SNP in the block's window, "η² (all
+  SNPs in the block window)", is renamed "Window R² (all SNPs in the block window)", with a
+  tooltip on "Download block table (CSV)": it is another quantity, not the test's η².
+- **A haplotype result visited again keeps its block plots and downloads.** Switching the test
+  (or the Run's LOCO choice) back to an earlier one served its statistics without its per-block
+  tables, so the block plots and the assignments downloads were empty; every remembered result
+  now keeps its own.
 - **Quality fields declared per allele stopped the parse.** An imputation-quality field declared
   `Number=A` or `Number=R` in the VCF header (Beagle 5 declares DR2 so) stopped the run with an
   IndexError. It is now read as one value per record, the ALT allele's.

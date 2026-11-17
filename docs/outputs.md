@@ -2,7 +2,8 @@
 
 This page documents the tabular outputs added to TRACE **after the v1.0.1
 release**: the complete significant-SNP tables, the sample-to-haplotype assignments
-of the haplotype test, the LD r² exports behind the Local LD heatmap, and the
+of the haplotype test, the haplotype test's own columns (which test ran, its kernel and its
+null model's heritability), the LD r² exports behind the Local LD heatmap, and the
 per-SNP data behind the regional plot. It starts with
 the significance columns of the per-model GWAS tables: MLM's shipped in v1.0.1
 (`Significant_Custom` in 1.1.0, with the numeric `--sig-thresh` described at the
@@ -10,8 +11,9 @@ end), and MLMM and FarmCPU now carry the same ones under the same rule. The GWAS
 LD-block, haplotype, subsampling and consensus CSVs that shipped in v1.0.1 are
 documented in the in-app **Help & Reference** page ("CSV Column Glossary").
 
-Two related command-line options are covered at the end: `--covar` (new) and the
-numeric branch of `--sig-thresh`. First, the list of every file the results ZIP holds.
+Three related command-line options are covered at the end: `--covar` and `--hap-test`
+(new) and the numeric branch of `--sig-thresh`. First, the list of every file the results ZIP
+holds.
 
 ---
 
@@ -373,10 +375,77 @@ where the labelled lead can fall outside the shaded block.)
 
 ---
 
+## The haplotype test's results
+
+**Which test.** Each LD block's haplotype groups are tested by one of two tests, chosen with
+`--hap-test` (in the GUI: **Post-GWAS Analysis → LD Blocks & Haplotypes → Settings →
+Haplotype test → Test model**, and One-Click's **Haplotype test**):
+
+- `kinship` (the default): a mixed model y = Xβ + Hγ + g + ε, with X the intercept, the PCs
+  and any covariates, H the tested haplotype groups (one column per group but the first), and
+  g ~ N(0, σg² K), where K is the GWAS scan's own kinship kernel for the block's chromosome
+  (its LOCO kernel, or the whole-genome kernel with `--no-loco`), restricted to the block's
+  tested samples. The null model y ~ X is fitted by REML (FaST-LMM's likelihood and search,
+  on the phenotype's residual on X); the nested F test and the Freedman-Lane permutations are
+  made on the data whitened by it. When the REML estimate is h² = 0 the whitening is the
+  identity, and the block is tested exactly as by `pcs`.
+- `pcs`: the earlier test, a nested F test and Freedman-Lane permutations with the PCs and
+  covariates alone (no kinship).
+
+`run_metadata.json` and the report's metadata block record the choice as
+`Hap_test (--hap-test)`.
+
+**Where the results are.** The test's full results table is in the report's haplotype tables
+(`report.html`, one per model) and in the GUI's block table ("Download block table (CSV)",
+`LD_blocks_and_haplotype_tests_<trait>.csv`). `LD_blocks_annotated_<model>.csv` carries its
+main columns (`Hap_*`), and `LD_triage_<model>.csv` its F, η² and degrees of freedom.
+
+**A block the kinship-aware test cannot test** keeps its row, with the reason in
+`kinship_model` and no statistics; it is never tested another way. The reasons: no kernel for
+its chromosome, a tested sample missing from the kernel, a failed REML fit, haplotype groups
+that the intercept, PCs and covariates already span on its tested samples (a covariate that
+defines them), an F test with no degrees of freedom, or a full model that leaves no residual
+variance. `FDR_BH` is then Benjamini-Hochberg over the blocks with a p-value, and the GUI's
+block table says in **Tested** why such a block was not tested.
+
+**The columns about the test** (in both tests; the GUI's name in brackets):
+
+| Column | Type | Meaning |
+|---|---|---|
+| `permutation_type` | str | `Freedman-Lane_residual_permutation_kinship_whitened` (kinship) or `Freedman-Lane_residual_permutation_with_PCs` (pcs). |
+| `kinship_model` | str | The kernel the block was tested with: `LOCO kernel`, or `global kernel` (with `--no-loco`, or a chromosome whose LOCO kernel is the whole-genome one); `none` for the pcs test; `failed: <reason>` for a block the kinship-aware test could not test. [Kinship model] |
+| `h2_null` | float | The null model's REML heritability, σg² / (σg² + σε²), on the block's tested samples; empty for the pcs test and for a failed block. [h² (null model)] |
+| `eta2` | float | The test's η²: df1·F / (df1·F + df2) of the kinship-aware test's F; for the pcs test, the share of variance the haplotype groups explain in the phenotype after the PCs and covariates are removed (equal to df1·F / (df1·F + df2) without PCs and covariates). [η² (haplotype test)] |
+| `eta2_pcs_only` | float | The pcs test's η² for the same block and samples, for comparison; equal to `eta2` with the pcs test. [η² (PCs-only test)] |
+
+`F_param`, `PValue_param`, `F_perm` (= `F_param`), `P_perm` (= `PValue`), `eta2_ci_low`,
+`eta2_ci_high`, `omega2` and `lead_snp_r2` are the chosen test's. With the kinship-aware test
+they are those of the whitened model: `lead_snp_r2` is the r² of the whitened phenotype and the
+whitened lead SNP after the whitened intercept, PCs and covariates are projected out.
+`hap_stats_json` (each group's size, mean and interval) is descriptive, on the phenotype after
+the PCs and covariates are removed, in both tests.
+
+**The GUI's other effect value.** The block table's CSV also has **Window R² (all SNPs in the
+block window)**: the share of the trait's variance, after the PCs, that the haplotype groups of
+every SNP in the block's coordinate window explain over all phenotyped samples (it was named
+`EtaSq`). It is not the test's η², and the tab does not show it. Every value the tab labels η²
+(the block table, the box plot's title, the forest plot) is the test's `eta2`.
+
+---
+
 ## Related CLI options (new since v1.0.1)
 
-The full, generated option list is in [`cli_reference.md`](cli_reference.md); these two
+The full, generated option list is in [`cli_reference.md`](cli_reference.md); these three
 are called out because they are new capabilities.
+
+### `--hap-test {kinship,pcs}`
+
+The haplotype test of every LD block (the section above): `kinship`, the default, the
+kinship-aware test with the scan's own kernels; `pcs`, the earlier test with the PCs and
+covariates alone. With `pcs` the haplotype results are the earlier test's; the report's
+haplotype tables also carry the three columns above (`kinship_model` `none`, an empty
+`h2_null`, `eta2_pcs_only` equal to `eta2`), and the run information records
+`Hap_test (--hap-test)`.
 
 ### `--covar` / `--covar-cols`
 
