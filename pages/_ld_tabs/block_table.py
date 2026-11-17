@@ -3,7 +3,10 @@
 ``merge_block_table`` gives one row per detected LD block (in detection order), with its
 haplotype test when the block was tested and its LD coherence, joined on the block's
 chromosome, start and end. A ``Tested`` column says "yes", or why the block was not
-tested. Columns that repeat a value under two names are shown once:
+tested: the test's own reason for a block it left out, and for a block the kinship-aware
+test could not test (its row has kinship_model "failed: <reason>" and no statistics) "the
+kinship-aware test failed: <reason>". Columns that repeat a value under two names are shown
+once:
 - the test's ``PValue`` is its ``P_perm``: "P (permutation)";
 - the function's ``FDR_BH`` and the tab's ``FDR_qvalue`` are one Benjamini-Hochberg: "FDR q";
 - the block's ``Mean r2`` is the coherence table's ``ldq_r2_mean``: "Mean r²".
@@ -110,6 +113,7 @@ def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, se
 
     # the haplotype test, where the block was tested
     tested = np.zeros(len(out), dtype=bool)
+    failed = [""] * len(out)
     if hap_result is not None and len(hap_result):
         h = hap_result.copy()
         h["_c"] = h["Chr"].map(_canon)
@@ -119,6 +123,12 @@ def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, se
                             if c in h.columns])
         merged = key.merge(h, on=["_c", "_s", "_e"], how="left", indicator=True)
         tested = (merged["_merge"] == "both").to_numpy()
+        # a row the kinship-aware test could not test: its reason, not "yes" (the PCs-only
+        # test's kinship_model is "none", so its blocks are as before)
+        if "kinship_model" in merged.columns:
+            failed = ["the kinship-aware test " + str(m)
+                      if t and str(m).startswith("failed") else ""
+                      for t, m in zip(tested, merged["kinship_model"])]
         hcols = merged.drop(columns=["_c", "_s", "_e", "_merge"])
         hcols = _keep_one(hcols, "P_perm", "PValue", "P_perm", "PValue (differs from P_perm)")
         hcols = _keep_one(hcols, "FDR_qvalue", "FDR_BH", "FDR q", "FDR_BH (differs)")
@@ -127,8 +137,8 @@ def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, se
     # why a block was not tested
     reasons = untested or {}
     out.insert(out.columns.get_loc("Length (kb)") + 1, "Tested", [
-        "yes" if t else reasons.get(f"{c}:{s}-{e}", "not tested")
-        for t, c, s, e in zip(tested, b["Chr"].astype(str), key["_s"], key["_e"])])
+        (f or "yes") if t else reasons.get(f"{c}:{s}-{e}", "not tested")
+        for t, f, c, s, e in zip(tested, failed, b["Chr"].astype(str), key["_s"], key["_e"])])
 
     # the block's LD coherence
     if coherence is not None and len(coherence):

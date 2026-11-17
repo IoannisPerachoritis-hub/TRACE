@@ -608,6 +608,26 @@ def test_the_gui_kinship_test_needs_the_runs_kernels(monkeypatch):
     assert df is None and shown == [gp.NO_RUN_KERNELS_MESSAGE.format(trait="t")]
 
 
+def test_a_block_the_kinship_test_could_not_test_is_not_counted_as_run(monkeypatch):
+    """A block the kinship-aware test could not test (here: the Run's record has no kernel
+    for chromosome 2) is kept with its reason and not counted among the blocks the analysis
+    ran on; with every block tested the line is as before."""
+    import streamlit as st
+    from tests.test_haplotype_kinship import _two_chromosome_panel
+
+    said = []
+    monkeypatch.setattr(st, "success", lambda m, *a, **k: said.append(m))
+    only1 = {"1": _two_chromosome_panel()["K_by_chr"]["1"]}
+    df, shown, _p = _kinship_tab_run(monkeypatch, {"K_by_chr": only1}, {"hap_test": "kinship"})
+    assert shown == [], shown
+    assert df["kinship_model"].tolist() == ["LOCO kernel", "failed: no kernel for chromosome 2"]
+    assert said == ["Haplotype / MLG analysis ran on 1 LD blocks; the kinship-aware test could "
+                    "not test 1 more (the block table's Tested column says why)."], said
+    said.clear()
+    _kinship_tab_run(monkeypatch, {}, {"hap_test": "kinship"})
+    assert said == ["Haplotype / MLG analysis ran on 2 LD blocks."], said
+
+
 def test_haplotype_and_detection_keys_name_the_identity_not_the_shape():
     pcs = np.zeros((N, 2))
     a = gp.haplotype_key("t", 5, 3, pcs, "identityA", 1000, "B", "P", hap_test="kinship",

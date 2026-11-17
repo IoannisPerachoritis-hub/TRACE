@@ -24,9 +24,16 @@ HAP = pd.DataFrame({   # blocks 1 and 3 tested (Chr written differently on purpo
     "P_perm": [0.004, 0.2], "PValue": [0.004, 0.2], "FDR_BH": [0.008, 0.2],
     "FDR_qvalue": [0.008, 0.2], "eta2": [0.31, 0.05], "eta2_ci_low": [0.1, 0.0],
     "eta2_ci_high": [0.5, 0.2], "Window_R2": [0.29, 0.06], "MidPos": [2000.0, 500.0],
-    "kinship_model": ["LOCO kernel", "failed: no kernel for chromosome 3"],
-    "h2_null": [0.42, float("nan")], "eta2_pcs_only": [0.33, 0.06],
+    "kinship_model": ["LOCO kernel", "global kernel"],
+    "h2_null": [0.42, 0.0], "eta2_pcs_only": [0.33, 0.06],
 })
+# the second block as the kinship-aware test reports a block it could not test: the reason,
+# NaN statistics (no FDR q either), the design's degrees of freedom and the PCs-only eta2
+NAN = float("nan")
+HAP_FAILED = HAP.assign(
+    kinship_model=["LOCO kernel", "failed: no kernel for chromosome 3"],
+    P_perm=[0.004, NAN], PValue=[0.004, NAN], FDR_BH=[0.004, NAN], FDR_qvalue=[0.004, NAN],
+    eta2=[0.31, NAN], eta2_ci_low=[0.1, NAN], eta2_ci_high=[0.5, NAN], h2_null=[0.42, NAN])
 COH = pd.DataFrame({
     "Chr": ["2", "2", "3"], "Start (bp)": [1000, 5000, 200], "End (bp)": [3000, 9000, 800],
     "ldq_r2_mean": [0.8, 0.5, 0.7], "ldq_r2_min": [0.6, 0.2, 0.4],
@@ -91,6 +98,24 @@ def test_the_only_eta2_on_the_table_is_the_tests():
     # the download button's tooltip names the CSV's window column in one line
     assert "\n" not in WINDOW_R2_HELP and CSV_ONLY_COLUMNS[0] in WINDOW_R2_HELP
     assert "not the test's η²" in WINDOW_R2_HELP
+
+
+def test_a_block_the_kinship_test_could_not_test_is_not_tested_yes():
+    """Tested says "yes", or why not: for a block the kinship-aware test could not test, its
+    reason (the row's kinship_model), beside the empty statistics; the PCs-only test's rows
+    ("none") stay "yes"."""
+    t = merge_block_table(BLOCKS, HAP_FAILED, COH, untested=WHY)
+    assert t["Tested"].tolist() == [
+        "yes", WHY["2:5000-9000"], "the kinship-aware test failed: no kernel for chromosome 3"]
+    assert t.loc[2, "Kinship model"] == "failed: no kernel for chromosome 3"
+    for col in ("P (permutation)", "FDR q", "η² (haplotype test)", "h² (null model)"):
+        assert pd.isna(t.loc[2, col]), col
+    assert t.loc[2, "η² (PCs-only test)"] == 0.06 and t.loc[2, "Samples tested"] == 40
+    shown = compact_view(t)
+    assert shown.loc[2, "Tested"].startswith("the kinship-aware test failed")
+    pcs = merge_block_table(BLOCKS, HAP.assign(kinship_model="none", h2_null=NAN), COH,
+                            untested=WHY)
+    assert pcs["Tested"].tolist() == ["yes", WHY["2:5000-9000"], "yes"]
 
 
 def test_the_compact_view_and_untested_tables():

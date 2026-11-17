@@ -1056,9 +1056,20 @@ def _render_haplotype_gwas(
         )
     st.session_state["hap_gwas_df_enriched"] = hap_gwas_df
 
-    st.success(
-        f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
-    )
+    # the blocks the kinship-aware test could not test are rows without statistics (their
+    # kinship_model says why): not among the blocks it ran on (the PCs-only test's "none")
+    _n_failed = int(hap_gwas_df.get("kinship_model", pd.Series(dtype=object))
+                    .astype(str).str.startswith("failed").sum())
+    if _n_failed:
+        st.success(
+            f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0] - _n_failed} LD blocks; "
+            f"the kinship-aware test could not test {_n_failed} more (the block table's "
+            f"Tested column says why)."
+        )
+    else:
+        st.success(
+            f"Haplotype / MLG analysis ran on {hap_gwas_df.shape[0]} LD blocks."
+        )
     # every detected block, its haplotype test and its coherence: one table, one CSV
     _show_block_table(hap_gwas_df)
 
