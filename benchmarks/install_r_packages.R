@@ -36,10 +36,12 @@ for (p in pkgs) {
   }
 }
 
-# Install GAPIT3 from GitHub
-cat("Installing GAPIT3 from GitHub...\n")
+# Install GAPIT3 from GitHub, at the commit behind the published tables: 7cb17f32, whose
+# DESCRIPTION says 3.5.0 (no tag of that name exists). It was GitHub's head from 3 Dec 2025 to
+# 10 Mar 2026. GAPIT 4.1.0 (787fea71) gave the same outputs on the four datasets.
+cat("Installing GAPIT3 from GitHub (commit 7cb17f32, version 3.5.0)...\n")
 tryCatch({
-  remotes::install_github("jiabowang/GAPIT3", lib = user_lib,
+  remotes::install_github("jiabowang/GAPIT3@7cb17f32ea95e417a90f6c92a9fd52f6abf8c7e8", lib = user_lib,
                            quiet = FALSE, upgrade = "never")
   cat("  GAPIT3 installed successfully\n")
 }, error = function(e) {

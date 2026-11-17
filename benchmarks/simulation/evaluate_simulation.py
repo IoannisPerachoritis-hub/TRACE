@@ -1,8 +1,13 @@
-"""Evaluate simulation results: Power, FDR, Type I error.
+"""Evaluate the simulation results: power, FDR and the null calibration (type I error, lambda_GC).
 
-Reads truth JSONs and standardized result CSVs from each tool,
-classifies detections as true/false positives, and aggregates
-across replicates.
+Reads the truth JSONs and each tool's standardized results, classifies detections as true or
+false positives and aggregates over the replicates. --mode null evaluates the null phenotypes:
+the type I error at each threshold (the original six, then 0.05/43,749, 0.05/248 and 0.05/249 for
+the corrected template, each with its own label) and lambda_GC per permutation.
+
+    python benchmarks/simulation/evaluate_simulation.py [--data-root DIR] [options below]
+
+Input: benchmarks/simulation/sim_data/ or null_data/. Output: benchmarks/simulation/sim_summary/.
 """
 import json
 from pathlib import Path
@@ -11,7 +16,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+import sys  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 
 def _cluster_significant_snps(
@@ -289,7 +300,10 @@ def evaluate_null(
 
     # Empirical type I error rates
     # Include M_eff threshold (0.05/250 = 2e-4) alongside standard levels
-    thresholds = [0.05, 0.01, 0.001, 2e-4, 5e-5, 0.05 / 43974]
+    # the original list is kept (its 0.05/43974 is the earlier template's m); added: the
+    # corrected template's 0.05/43,749 and M_eff 248 and 249 (250 is 2e-4)
+    thresholds = [0.05, 0.01, 0.001, 2e-4, 5e-5, 0.05 / 43974,
+                  0.05 / 43749, 0.05 / 248, 0.05 / 249]
     print("\n" + "=" * 60)
     print("  NULL CALIBRATION RESULTS")
     print("=" * 60)
@@ -305,12 +319,12 @@ def evaluate_null(
         observed_rate = n_sig / n_total
         expected_rate = t
         ratio = observed_rate / expected_rate if expected_rate > 0 else float("nan")
-        if t < 1e-4:
-            label = "Bonferroni"
-        elif abs(t - 2e-4) < 1e-10:
-            label = "M_eff (0.05/250)"
-        else:
-            label = f"alpha={t}"
+        # one label per threshold (5e-5 was labelled "Bonferroni" as well)
+        label = {0.05: "alpha=0.05", 0.01: "alpha=0.01", 0.001: "alpha=0.001",
+                 2e-4: "M_eff (0.05/250)", 5e-5: "alpha=5e-05 (suggestive)",
+                 0.05 / 43974: "Bonferroni (0.05/43,974, stale m)",
+                 0.05 / 43749: "Bonferroni (0.05/43,749)",
+                 0.05 / 248: "M_eff (0.05/248)", 0.05 / 249: "M_eff (0.05/249)"}[t]
         print(f"    {label:20s}: observed={observed_rate:.6f}, "
               f"expected={expected_rate:.6f}, ratio={ratio:.3f}")
         type1_rows.append({

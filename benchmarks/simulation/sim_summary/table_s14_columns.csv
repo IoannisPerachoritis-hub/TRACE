@@ -1,0 +1,5 @@
+scenario,tp_blocks,fp_blocks,tp_pass_published,fp_pass_published,tp_pass_n,fp_pass_n,n_tp_fits,n_fp_fits,gap_from_fractions,gap_published,gap_equal,precision_no_filter,precision_filter,true_blocks_kept,mark
+0.5 / 5,87,850,78.2,45.6,68,388,1,1,32.5139,32.5,True,0.0928,0.1491,0.7816,computed from Table S14
+0.8 / 5,120,1564,75.8,52.3,91,818,1,1,23.5315,23.5,True,0.0713,0.1001,0.7583,computed from Table S14
+0.8 / 15,131,1492,59.5,47.4,78,707,1,1,12.1559,12.2,True,0.0807,0.0994,0.5954,computed from Table S14
+0.8 / 50,94,595,28.7,34.5,27,205,1,1,-5.7304,-5.7,True,0.1364,0.1164,0.2872,computed from Table S14

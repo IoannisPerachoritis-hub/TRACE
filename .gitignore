@@ -96,5 +96,6 @@ benchmarks/simulation/sim_summary/fp_chromosomal_per_rep.csv
 benchmarks/loco_sensitivity/*
 !benchmarks/loco_sensitivity/compare_loco.py
 !benchmarks/loco_sensitivity/loco_comparison.csv
+!benchmarks/loco_sensitivity/table_s11_*.csv
 benchmarks/plink_qc/results/
 

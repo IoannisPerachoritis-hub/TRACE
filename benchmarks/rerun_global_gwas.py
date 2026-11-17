@@ -1,9 +1,12 @@
-"""Re-run TRACE MLM GWAS with global kinship (--no-loco) for tomato datasets.
+"""TRACE's MLM GWAS with the global kinship (no LOCO): the Platform-Global rows of Table S11.
 
-Generates GWAS result ZIPs in benchmarks/loco_sensitivity/<run>/ using
-global kinship (no LOCO) with the per-panel published PC count
-(benchmarks/published_pc_counts.resolve_k), matching the band auto-PC
-selection. These are used by compare_loco.py for the LOCO ablation table.
+Makes a results ZIP in benchmarks/loco_sensitivity/<run>/ for each run whose QC folder is in the
+data root, at the published PC counts (published_pc_counts.resolve_k; --k-set band for the
+strict band rule's counts). compare_loco.py reads these ZIPs.
+
+    python benchmarks/rerun_global_gwas.py [--data-root DIR] [--k-set band]
+
+Input: benchmarks/qc_data/<run>/ (make_qc_data.sh). Output: loco_sensitivity/<run>/GWAS_*.zip.
 """
 import sys
 import zipfile
@@ -16,6 +19,9 @@ from scipy.linalg import eigh
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 from benchmarks.rerun_trace_mlm import load_qc_dataset
 from benchmarks.published_pc_counts import resolve_k
@@ -30,11 +36,14 @@ from pysnptools.kernelreader import KernelData as PSKernelData
 
 LOCO_DIR = ROOT / "benchmarks" / "loco_sensitivity"
 
-# Only tomato datasets need regeneration (pepper k unchanged)
+# The four panels (pepper added for the Table S11a pepper rows)
 RUNS = {
     "tomato_weight_g": "weight_g",
     "tomato_locule_number": "locule_number",
+    "pepper_FWe": "FWe",
+    "pepper_BX": "BX",
 }
+RUNS = runs_in_root(RUNS)   # the runs whose QC folder is in the data root
 
 
 def run_global_mlm(run_name, trait_name):
@@ -42,7 +51,7 @@ def run_global_mlm(run_name, trait_name):
     # Per-panel published k -- NEVER a silent default. resolve_k raises on an unknown
     # panel, so adding a non-tomato panel to RUNS uses its correct k (e.g. pepper_FWe=2),
     # not the old hardcoded k=0 that silently deflated any panel put through this script.
-    n_pcs = resolve_k(run_name)
+    n_pcs = resolve_k(run_name, OPT.k_set)
     print(f"\n{'='*60}")
     print(f"  {run_name} ({trait_name}) -- GLOBAL kinship, k={n_pcs}")
     print(f"{'='*60}")

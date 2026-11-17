@@ -1,9 +1,15 @@
 #!/usr/bin/env Rscript
-# ──────────────────────────────────────────────────────────────
-# GAPIT3 FarmCPU benchmark on pre-QC'd data from TRACE
-# Reads the identical QC_genotype_matrix.csv and QC_phenotype.csv
-# produced by --export-qc so the ONLY variable is the association engine.
-# ──────────────────────────────────────────────────────────────
+# GAPIT3 FarmCPU on TRACE's QC data: the GAPIT3 side of Table S10 and Figure S6.
+# It reads QC_genotype_matrix.csv and QC_phenotype.csv (TRACE's --export-qc), so the
+# association engine is the only difference.
+#
+#   Rscript benchmarks/run_gapit_farmcpu.R <run_name> [n_pcs]
+#
+# Run it from the data root: it reads benchmarks/qc_data/<run_name>/ and writes
+# benchmarks/results/gapit_farmcpu/<run_name>/ there, with gapit_farmcpu_results_standardized.csv
+# (from GAPIT's (Kansas) file), sessionInfo.txt and packages.txt. The output folder must be
+# empty. n_pcs defaults to the counts the published Table S10 run used (3/0/0/2); the second set
+# of Table S10 passes the MLM counts (2/0/0/0) in a data root of its own.
 
 # Ensure user library is on path (cross-platform: Linux/macOS/Windows)
 user_lib <- Sys.getenv("R_LIBS_USER")
@@ -18,21 +24,28 @@ suppressPackageStartupMessages({
   library(GAPIT)
   library(data.table)
 })
+# the GAPIT that ran, by version and commit (install_r_packages.R installs 3.5.0 at 7cb17f3)
+gapit_desc <- packageDescription("GAPIT")
+cat(sprintf("GAPIT %s, commit %s, from %s\n", gapit_desc$Version,
+            if (is.null(gapit_desc$RemoteSha)) "unknown" else gapit_desc$RemoteSha, find.package("GAPIT")))
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
   cat("Usage: Rscript run_gapit_farmcpu.R <run_name> [n_pcs]\n")
   cat("  run_name: pepper_FWe | pepper_BX | tomato_weight_g | tomato_locule_number\n")
-  cat("  n_pcs:    number of PCs (default: from platform auto-PC)\n")
+  cat("  n_pcs:    number of PCs (default: the counts of the published Table S10 run)\n")
   quit(status = 1)
 }
 
 run_name <- args[1]
-# PC counts matching platform auto-PC selections
-default_pcs <- list(pepper_FWe = 2, pepper_BX = 0,
-                     tomato_weight_g = 0, tomato_locule_number = 0)
+# GAPIT FarmCPU's PC counts as run for the published Table S10 (its 12 Mar 2026 timing.csv
+# files; published_pc_counts.GAPIT_FARMCPU_K_AS_RUN)
+default_pcs <- list(pepper_FWe = 3, pepper_BX = 0,
+                     tomato_weight_g = 0, tomato_locule_number = 2)
 n_pcs <- if (length(args) >= 2) as.integer(args[2]) else default_pcs[[run_name]]
-if (is.null(n_pcs)) n_pcs <- 3  # fallback
+if (is.null(n_pcs) || is.na(n_pcs)) stop(paste("Unknown run_name:", run_name, "-- pass n_pcs explicitly"))
+cat(sprintf("n_pcs = %d (the default for %s: %s)\n", n_pcs, run_name,
+            if (is.null(default_pcs[[run_name]])) "none" else default_pcs[[run_name]]))
 
 cat(sprintf("=== GAPIT3 FarmCPU benchmark: %s (PCs=%d) ===\n", run_name, n_pcs))
 
@@ -40,6 +53,9 @@ cat(sprintf("=== GAPIT3 FarmCPU benchmark: %s (PCs=%d) ===\n", run_name, n_pcs))
 base_dir <- getwd()
 qc_dir <- file.path(base_dir, "benchmarks", "qc_data", run_name)
 out_dir <- file.path(base_dir, "benchmarks", "results", "gapit_farmcpu", run_name)
+# a fresh output folder: the result file is found by listing it
+if (dir.exists(out_dir) && length(list.files(out_dir, all.files = TRUE, no.. = TRUE)) > 0)
+  stop(paste("The output folder is not empty:", out_dir, "-- remove it to run again"))
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 cat(sprintf("QC data dir: %s\n", qc_dir))
@@ -124,6 +140,19 @@ tryCatch({
   gwas_files <- list.files(out_dir, pattern = "GWAS_Results.*\\.csv$",
                             full.names = TRUE)
   gwas_files <- gwas_files[!grepl("StdErr|Filter", gwas_files)]
+  # Both result files are logged and the (Kansas) one is read by name (FarmCPU's own table, as
+  # TRACE-FarmCPU reports). GAPIT writes it, and runs its regional re-scan, only when a marker
+  # passes its cutoff; with none, the only result file is (NYC) and it is FarmCPU's own table,
+  # so it is read then and the log says so.
+  cat(sprintf("Result files: %s\n", paste(basename(gwas_files), collapse = " | ")))
+  kansas <- gwas_files[grepl("(Kansas)", gwas_files, fixed = TRUE)]
+  if (length(kansas) == 1) {
+    gwas_files <- kansas
+  } else if (length(kansas) == 0 && length(gwas_files) == 1 && grepl("(NYC)", gwas_files, fixed = TRUE)) {
+    cat("No (Kansas) file: no marker passed GAPIT's cutoff, so the (NYC) table is FarmCPU's own; reading it\n")
+  } else {
+    stop("no single (Kansas) GWAS_Results file")
+  }
   if (length(gwas_files) > 0) {
     cat(sprintf("Reading: %s\n", basename(gwas_files[1])))
     gwas <- fread(gwas_files[1])
@@ -172,3 +201,11 @@ tryCatch({
 })
 
 cat(sprintf("\n=== GAPIT3 FarmCPU %s complete ===\n", run_name))
+
+# the session and the package versions, written with the outputs
+writeLines(capture.output(sessionInfo()), file.path(out_dir, "sessionInfo.txt"))
+desc_field <- function(v) if (is.null(v)) "" else v
+package_line <- function(p) { d <- packageDescription(p)
+  sprintf("%s %s RemoteSha=%s Packaged=%s Built=%s path=%s", p, desc_field(d$Version),
+          desc_field(d$RemoteSha), desc_field(d$Packaged), desc_field(d$Built), find.package(p)) }
+writeLines(vapply(c("GAPIT", "data.table"), package_line, ""), file.path(out_dir, "packages.txt"))

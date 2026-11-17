@@ -1,8 +1,14 @@
-"""Cross-tool Manhattan plot comparison for tomato locule number.
+"""Figure S7: the Manhattan plots of TRACE, GAPIT3 and rMVP for tomato locule number.
 
-Generates a three-panel stacked Manhattan plot (TRACE, GAPIT3, rMVP)
-showing concordant detection of chr2 (lc/SlWUS) and chr11 (fas/SlCLV3)
-signals. Supplementary Figure S10 for the TRACE Application Note.
+Three stacked panels on one genome axis, each with the Bonferroni line (0.05 / the number of SNPs
+in TRACE's table) and the suggestive line (1e-4); it prints the p-values of the chromosome 2 and
+chromosome 11 lead SNPs in each tool.
+
+    python benchmarks/plots/manhattan_comparison.py [--data-root DIR]
+
+Input: qc_data/tomato_locule_number/platform_GWAS_locule_number.csv, and the tomato_locule_number
+results of GAPIT3 and rMVP (k = 0, where the two ways of passing the PCs to rMVP are the same).
+Output: benchmarks/plots/figure_s7_manhattan_comparison.png (600 dpi) and .pdf, in the data root.
 """
 import sys
 from pathlib import Path
@@ -14,6 +20,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 from utils.pub_theme import (
     apply_matplotlib_theme, MANHATTAN_COLORS, SIG_LINE_COLOR, PALETTE,
@@ -31,7 +40,8 @@ RMVP_CSV = (ROOT / "benchmarks" / "results" / "rmvp"
             / "tomato_locule_number" / "rmvp_results_standardized.csv")
 
 # ── Thresholds ────────────────────────────────────────────────
-N_SNPS = 43_974
+# m from the TRACE table's length (was hard-coded 43_974, the earlier snapshot's m)
+N_SNPS = len(pd.read_csv(TRACE_CSV, usecols=["SNP"]))
 BONF_P = 0.05 / N_SNPS
 BONF_LOD = -np.log10(BONF_P)
 SUGGEST_LOD = 4.0  # -log10(1e-4)
@@ -66,7 +76,7 @@ def _chr_cumpos_bounds(df, chr_col="Chr"):
 def plot_manhattan_comparison(output_path: Path | None = None):
     """Create three-panel stacked Manhattan comparison figure."""
     if output_path is None:
-        output_path = ROOT / "benchmarks" / "plots" / "manhattan_comparison.png"
+        output_path = ROOT / "benchmarks" / "plots" / "figure_s7_manhattan_comparison.png"
 
     datasets = load_all()
 
@@ -215,17 +225,8 @@ def plot_manhattan_comparison(output_path: Path | None = None):
     fig.savefig(output_path, bbox_inches="tight", dpi=600)
     fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
 
-    # Also save to paper/figures/
-    paper_dir = ROOT / "paper" / "figures"
-    paper_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(paper_dir / "figure_s10_manhattan_comparison.png",
-                bbox_inches="tight", dpi=600)
-    fig.savefig(paper_dir / "figure_s10_manhattan_comparison.pdf",
-                bbox_inches="tight")
-
     plt.close(fig)
-    print(f"Saved: {output_path}")
-    print(f"Saved: {paper_dir / 'figure_s10_manhattan_comparison.png'}")
+    print(f"Saved: {output_path} and its PDF")
 
     # Print key SNP p-values across tools
     print("\nKey SNP p-values:")

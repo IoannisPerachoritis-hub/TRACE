@@ -1,11 +1,14 @@
-"""Compare GWAS results across platform, GAPIT3, and rMVP.
+"""TRACE against GAPIT3 and rMVP on the real data: Table S4 and the numbers of Figure S5.
 
-Computes:
-- Lambda GC comparison
-- Jaccard overlap of significant SNPs
-- Rank correlation of p-values
-- Top-hit concordance
-- Runtime comparison
+For each run whose QC folder is in the data root: lambda_GC, Bonferroni counts, Jaccard overlap,
+Spearman rho on p, Pearson on -log10 p and top-k overlap of TRACE's MLM table against GAPIT3's and
+rMVP's, with the unrounded lambda_GC and rho beside the rounded ones (the table rounds once).
+
+    python benchmarks/compare_results.py [--data-root DIR] [--rmvp-pcs-twice]
+
+Input: qc_data/<run>/platform_GWAS_<trait>.csv (rerun_trace_mlm.py), results/gapit/<run>/ and
+results/rmvp/<run>/ (run_gapit.R, run_rmvp.R; results/rmvp_pcs_twice/ with --rmvp-pcs-twice).
+Output: benchmarks/table_s4_comparison.csv (table_s4_comparison_pcs_twice.csv) in the data root.
 """
 import sys
 from pathlib import Path
@@ -15,9 +18,13 @@ import pandas as pd
 from scipy import stats
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 QC_DIR = ROOT / "benchmarks" / "qc_data"
 GAPIT_DIR = ROOT / "benchmarks" / "results" / "gapit"
-RMVP_DIR = ROOT / "benchmarks" / "results" / "rmvp"
+RMVP_DIR = ROOT / "benchmarks" / "results" / OPT.rmvp   # rmvp, or rmvp_pcs_twice
 
 RUNS = {
     "pepper_FWe": {"trait": "FWe", "species": "pepper"},
@@ -25,6 +32,7 @@ RUNS = {
     "tomato_weight_g": {"trait": "weight_g", "species": "tomato"},
     "tomato_locule_number": {"trait": "locule_number", "species": "tomato"},
 }
+RUNS = runs_in_root(RUNS)   # the runs whose QC folder is in the data root
 
 
 def load_platform_results(run_name: str) -> pd.DataFrame | None:
@@ -97,6 +105,7 @@ def compare_run(run_name: str) -> dict:
     for name, df in available.items():
         lam = lambda_gc(df["PValue"].values)
         result[f"lambda_{name}"] = round(lam, 4)
+        result[f"lambda_{name}_unrounded"] = float(lam)   # unrounded beside the rounded value
         print(f"    {name:12s}: {lam:.4f}")
 
     # ── Number of SNPs tested ─────────────────────────────
@@ -144,6 +153,7 @@ def compare_run(run_name: str) -> dict:
                 rho, p = stats.spearmanr(merged["P_a"], merged["P_b"])
                 key = f"spearman_{a_name}_vs_{b_name}"
                 result[key] = round(rho, 4)
+                result[key + "_unrounded"] = float(rho)   # unrounded beside the rounded value
                 print(f"    {a_name} vs {b_name}: rho={rho:.4f} "
                       f"(n={len(merged):,}, p={p:.2e})")
             else:
@@ -216,7 +226,7 @@ def main():
 
     # ── Save comparison table ─────────────────────────────
     comparison = pd.DataFrame(all_results)
-    out_path = ROOT / "benchmarks" / "results" / "comparison_table.csv"
+    out_path = ROOT / "benchmarks" / f"table_s4_comparison{OPT.suffix}.csv"
     comparison.to_csv(out_path, index=False)
     print(f"\n\nComparison table saved to: {out_path}")
 

@@ -1,9 +1,15 @@
 #!/usr/bin/env Rscript
-# ──────────────────────────────────────────────────────────────
-# GAPIT3 MLM benchmark on pre-QC'd data from TRACE
-# Reads the identical QC_genotype_matrix.csv and QC_phenotype.csv
-# produced by --export-qc so the ONLY variable is the association engine.
-# ──────────────────────────────────────────────────────────────
+# GAPIT3 MLM on TRACE's QC data: the GAPIT3 column of Tables S4 and S11.
+# It reads QC_genotype_matrix.csv and QC_phenotype.csv (TRACE's --export-qc), so the
+# association engine is the only difference.
+#
+#   Rscript benchmarks/run_gapit.R <run_name> [n_pcs]
+#
+# Run it from the data root (the repository, or a side analysis's folder): it reads
+# benchmarks/qc_data/<run_name>/ and writes benchmarks/results/gapit/<run_name>/ there, with
+# gapit_results_standardized.csv, sessionInfo.txt and packages.txt. The output folder must be
+# empty. n_pcs defaults to the published count (published_pc_counts.py). GAPIT 3.5.0 at commit
+# 7cb17f3 (install_r_packages.R) made the published tables.
 
 # Ensure user library is on path (cross-platform: Linux/macOS/Windows)
 user_lib <- Sys.getenv("R_LIBS_USER")
@@ -18,21 +24,27 @@ suppressPackageStartupMessages({
   library(GAPIT)
   library(data.table)
 })
+# the GAPIT that ran, by version and commit (install_r_packages.R installs 3.5.0 at 7cb17f3)
+gapit_desc <- packageDescription("GAPIT")
+cat(sprintf("GAPIT %s, commit %s, from %s\n", gapit_desc$Version,
+            if (is.null(gapit_desc$RemoteSha)) "unknown" else gapit_desc$RemoteSha, find.package("GAPIT")))
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
   cat("Usage: Rscript run_gapit.R <run_name> [n_pcs]\n")
   cat("  run_name: pepper_FWe | pepper_BX | tomato_weight_g | tomato_locule_number\n")
-  cat("  n_pcs:    number of PCs (default: from platform auto-PC)\n")
+  cat("  n_pcs:    number of PCs (default: the published count)\n")
   quit(status = 1)
 }
 
 run_name <- args[1]
-# PC counts matching platform auto-PC selections
+# the published PC counts (published_pc_counts.PUBLISHED_K)
 default_pcs <- list(pepper_FWe = 2, pepper_BX = 0,
                      tomato_weight_g = 0, tomato_locule_number = 0)
 n_pcs <- if (length(args) >= 2) as.integer(args[2]) else default_pcs[[run_name]]
-if (is.null(n_pcs)) stop(paste("Unknown run_name:", run_name, "-- pass n_pcs explicitly"))
+if (is.null(n_pcs) || is.na(n_pcs)) stop(paste("Unknown run_name:", run_name, "-- pass n_pcs explicitly"))
+cat(sprintf("n_pcs = %d (the default for %s: %s)\n", n_pcs, run_name,
+            if (is.null(default_pcs[[run_name]])) "none" else default_pcs[[run_name]]))
 
 cat(sprintf("=== GAPIT3 MLM benchmark: %s (PCs=%d) ===\n", run_name, n_pcs))
 
@@ -41,6 +53,9 @@ cat(sprintf("=== GAPIT3 MLM benchmark: %s (PCs=%d) ===\n", run_name, n_pcs))
 base_dir <- getwd()
 qc_dir <- file.path(base_dir, "benchmarks", "qc_data", run_name)
 out_dir <- file.path(base_dir, "benchmarks", "results", "gapit", run_name)
+# a fresh output folder: the result file is found by listing it
+if (dir.exists(out_dir) && length(list.files(out_dir, all.files = TRUE, no.. = TRUE)) > 0)
+  stop(paste("The output folder is not empty:", out_dir, "-- remove it to run again"))
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 cat(sprintf("QC data dir: %s\n", qc_dir))
@@ -133,6 +148,9 @@ tryCatch({
                             full.names = TRUE)
   # Prefer the main results file (not StdErr or Filter)
   gwas_files <- gwas_files[!grepl("StdErr|Filter", gwas_files)]
+  # GAPIT MLM writes one result file: anything but one is an error, never a silent pick
+  cat(sprintf("Result files: %s\n", paste(basename(gwas_files), collapse = " | ")))
+  if (length(gwas_files) != 1) stop("need exactly one GWAS_Results file")
   if (length(gwas_files) > 0) {
     cat(sprintf("Reading: %s\n", basename(gwas_files[1])))
     gwas <- fread(gwas_files[1])
@@ -182,3 +200,11 @@ tryCatch({
 })
 
 cat(sprintf("\n=== GAPIT3 %s complete ===\n", run_name))
+
+# the session and the package versions, written with the outputs
+writeLines(capture.output(sessionInfo()), file.path(out_dir, "sessionInfo.txt"))
+desc_field <- function(v) if (is.null(v)) "" else v
+package_line <- function(p) { d <- packageDescription(p)
+  sprintf("%s %s RemoteSha=%s Packaged=%s Built=%s path=%s", p, desc_field(d$Version),
+          desc_field(d$RemoteSha), desc_field(d$Packaged), desc_field(d$Built), find.package(p)) }
+writeLines(vapply(c("GAPIT", "data.table"), package_line, ""), file.path(out_dir, "packages.txt"))

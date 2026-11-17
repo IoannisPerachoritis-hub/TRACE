@@ -1,7 +1,14 @@
-"""Compare Platform-LOCO vs Platform-Global vs GAPIT3 vs rMVP on real data.
+"""LOCO against Global kinship, and both against GAPIT3 and rMVP: the LOCO rows of Table S11.
 
-Shows that Platform-Global matches GAPIT3/rMVP closely (confirming the
-LOCO divergence explanation), and quantifies LOCO vs Global differences.
+Spearman rho on -log10 p (at least 100 shared SNPs) and lambda_GC for Platform-LOCO,
+Platform-Global, GAPIT3 and rMVP, for each dataset whose QC folder is in the data root.
+
+    python benchmarks/loco_sensitivity/compare_loco.py [--data-root DIR] [--rmvp-pcs-twice]
+
+Input: qc_data/<run>/platform_GWAS_<trait>.csv (rerun_trace_mlm.py), loco_sensitivity/<run>/ with
+exactly one GWAS_*.zip (rerun_global_gwas.py), results/gapit/<run>/ and results/rmvp/<run>/ (the R
+scripts). Output: benchmarks/loco_sensitivity/table_s11_loco_global.csv (table_s11_loco_global_pcs_twice.csv),
+with the unrounded rho and lambda_GC beside the rounded ones.
 """
 import zipfile
 from pathlib import Path
@@ -10,7 +17,12 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-ROOT = Path(__file__).resolve().parent.parent.parent
+import sys  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 DATASETS = {
     "tomato_locule_number": {},
@@ -18,6 +30,7 @@ DATASETS = {
     "pepper_FWe": {},
     "pepper_BX": {},
 }
+DATASETS = runs_in_root(DATASETS)   # the datasets whose QC folder is in the data root
 
 
 def lambda_gc(pvals):
@@ -32,14 +45,18 @@ def lambda_gc(pvals):
 def load_platform_global_results(dataset_name):
     """Load Platform-Global (--no-loco) results from ZIP."""
     result_dir = ROOT / "benchmarks" / "loco_sensitivity" / dataset_name
-    if not result_dir.exists():
-        return None
+    if not result_dir.exists():   # every dataset needs its Global ZIP
+        raise SystemExit(f"{result_dir} is missing; it must hold exactly one GWAS_*.zip")
 
     zip_paths = list(result_dir.glob("GWAS_*.zip"))
     if not zip_paths:
-        return None
+        raise SystemExit(f"{result_dir} holds no GWAS_*.zip; it must hold exactly one")
 
-    zpath = max(zip_paths, key=lambda p: p.stat().st_mtime)
+    # exactly one ZIP, else stop (the newest-by-time rule could read a stale ZIP)
+    if len(zip_paths) != 1:
+        raise SystemExit(f"{result_dir} holds {len(zip_paths)} GWAS_*.zip; it must hold exactly one")
+    zpath = zip_paths[0]
+    print(f"  Platform-Global ZIP: {zpath}")
     with zipfile.ZipFile(zpath) as zf:
         csv_names = [n for n in zf.namelist()
                     if n.startswith("tables/GWAS_") and n.endswith(".csv")
@@ -60,7 +77,7 @@ def load_gapit_results(dataset_name):
 
 def load_rmvp_results(dataset_name):
     """Load rMVP standardized results."""
-    path = ROOT / "benchmarks" / "results" / "rmvp" / dataset_name / "rmvp_results_standardized.csv"
+    path = ROOT / "benchmarks" / "results" / OPT.rmvp / dataset_name / "rmvp_results_standardized.csv"
     if path.exists():
         return pd.read_csv(path)
     return None
@@ -182,6 +199,10 @@ def compare_tools(ds_name, loco_df, global_df, gapit_df, rmvp_df):
                 "n_snps": len(merged),
                 "lambda_gc_1": round(lambdas[t1], 4),
                 "lambda_gc_2": round(lambdas[t2], 4),
+                # the unrounded values beside the rounded ones (the tables round once)
+                "spearman_rho_unrounded": float(rho),
+                "lambda_gc_1_unrounded": float(lambdas[t1]),
+                "lambda_gc_2_unrounded": float(lambdas[t2]),
             })
 
     return pairs
@@ -234,7 +255,7 @@ def run_comparison():
 
     if all_pairs:
         df = pd.DataFrame(all_pairs)
-        out_path = ROOT / "benchmarks" / "loco_sensitivity" / "loco_comparison.csv"
+        out_path = ROOT / "benchmarks" / "loco_sensitivity" / f"table_s11_loco_global{OPT.suffix}.csv"
         df.to_csv(out_path, index=False)
         print(f"\n\nComparison saved to {out_path}")
         print("\n" + df.to_string(index=False))

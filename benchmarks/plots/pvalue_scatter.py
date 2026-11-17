@@ -1,6 +1,13 @@
-"""Generate p-value concordance scatter plots across tools.
+"""Figure S5: the p-value concordance of TRACE, GAPIT3 and rMVP on the real data.
 
-Creates a 4x3 grid of -log10(p) scatter plots for all dataset/tool pairs.
+A grid of -log10 p scatter plots, one row per run whose QC folder is in the data root (four rows
+for the four panels), one column per pair of tools, each with its Spearman rho.
+
+    python benchmarks/plots/pvalue_scatter.py [--data-root DIR] [--rmvp-pcs-twice]
+
+Input: qc_data/<run>/platform_GWAS_<trait>.csv, results/gapit/<run>/, results/rmvp/<run>/.
+Output: benchmarks/plots/figure_s5_pvalue_concordance.png and .pdf (_pcs_twice with
+--rmvp-pcs-twice), in the data root.
 """
 import sys
 from pathlib import Path
@@ -14,13 +21,16 @@ from scipy import stats
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 from utils.pub_theme import apply_matplotlib_theme
 apply_matplotlib_theme()
 
 QC_DIR = ROOT / "benchmarks" / "qc_data"
 GAPIT_DIR = ROOT / "benchmarks" / "results" / "gapit"
-RMVP_DIR = ROOT / "benchmarks" / "results" / "rmvp"
+RMVP_DIR = ROOT / "benchmarks" / "results" / OPT.rmvp   # rmvp, or rmvp_pcs_twice
 
 RUNS = {
     "pepper_FWe": {"trait": "FWe", "species": "Pepper"},
@@ -28,6 +38,7 @@ RUNS = {
     "tomato_weight_g": {"trait": "weight_g", "species": "Tomato"},
     "tomato_locule_number": {"trait": "locule_number", "species": "Tomato"},
 }
+RUNS = runs_in_root(RUNS)   # the runs whose QC folder is in the data root
 
 TOOLS = ["TRACE", "GAPIT3", "rMVP"]
 PAIRS = [("TRACE", "GAPIT3"), ("TRACE", "rMVP"), ("GAPIT3", "rMVP")]
@@ -62,9 +73,9 @@ def load_results(run_name: str) -> dict[str, pd.DataFrame]:
 def plot_scatter_grid(output_path: str | None = None):
     """Generate 4x3 grid of -log10(p) scatter plots."""
     if output_path is None:
-        output_path = ROOT / "benchmarks" / "plots" / "pvalue_scatter_grid.png"
+        output_path = ROOT / "benchmarks" / "plots" / f"figure_s5_pvalue_concordance{OPT.suffix}.png"
 
-    fig, axes = plt.subplots(4, 3, figsize=(12, 14))
+    fig, axes = plt.subplots(len(RUNS), 3, figsize=(12, 3.5 * len(RUNS)))   # four runs: (12, 14)
 
     for row_idx, run_name in enumerate(RUNS):
         info = RUNS[run_name]
@@ -118,7 +129,7 @@ def plot_scatter_grid(output_path: str | None = None):
             ax.set_ylim(0, max_val)
             ax.set_aspect("equal")
 
-            if row_idx == 3:
+            if row_idx == len(RUNS) - 1:
                 ax.set_xlabel(f"$-\\log_{{10}}(p)$ {tool_a}")
             if col_idx == 0:
                 ax.set_ylabel(f"$-\\log_{{10}}(p)$ {tool_b}")
@@ -139,11 +150,8 @@ def plot_scatter_grid(output_path: str | None = None):
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight", dpi=150)
     fig.savefig(Path(output_path).with_suffix(".pdf"), bbox_inches="tight", dpi=150)
-    paper_fig = ROOT / "paper" / "figures"
-    fig.savefig(paper_fig / "figure_s4_pvalue_concordance.png", bbox_inches="tight", dpi=150)
-    fig.savefig(paper_fig / "figure_s4_pvalue_concordance.pdf", bbox_inches="tight", dpi=150)
     plt.close(fig)
-    print(f"Saved: {output_path} and paper/figures/")
+    print(f"Saved: {output_path} and its PDF")
 
 
 def print_concordance_summary():

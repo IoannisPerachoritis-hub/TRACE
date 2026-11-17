@@ -1,16 +1,21 @@
-"""Recovered PC-selection helpers -- benchmark REPRODUCIBILITY ONLY (not shipped).
+"""PC-count rules for reproducing the benchmarks (not shipped with TRACE).
 
-`auto_select_pcs` (lambda-GC band scan + parsimony + directional deflation guard) and
-`select_best_pc_from_lambdas` (its pure-arithmetic FarmCPU picker) were REMOVED from the
-shipped tool (deleted from gwas/models.py in commit 30f84fe). TRACE no longer
-auto-selects PCs -- it uses a fixed --n-pcs (default 0) plus the report-only diagnostics in
-gwas/pc_diagnostics.py (which never decide a PC count).
+TRACE does not choose a PC count: it takes a fixed --n-pcs (default 0) and reports diagnostics
+only (gwas/pc_diagnostics.py). This module keeps two rules for the benchmark scripts:
 
-These two functions are recovered here VERBATIM from the pre-removal commit (30f84fe~1) so the
-historical benchmark reproducers -- rerun_trace_farmcpu (Table S10 FarmCPU concordance),
-check_farmcpu_pc_guard, check_pc_threshold, runtime_benchmark -- remain runnable and reproduce
-the published lambda-GC scan / band-vs-elbow numbers from a clean clone. This module is NOT
-imported by cli.py, pages/, or any shipped code path; it does not re-introduce the selector.
+- select_k_strict_band: the strict band rule behind the paper's PC counts (smallest k with
+  0.95 <= lambda_GC <= 1.05; commit 03095b7), with its fallback and deflation guard. It gave the
+  published counts (published_pc_counts.PUBLISHED_K); band_rule_pc_counts.py runs it on the
+  corrected QC data (published_pc_counts.BAND_RULE_K).
+- auto_select_pcs and select_best_pc_from_lambdas: the selector as it was before its removal from
+  TRACE (commit 6be44c0), with the edge-tolerant band that commit 5227ab5 brought in (a k counts
+  as in the band when lambda_GC is in [0.93, 1.07]). It is a later variant, not the rule behind
+  the paper's counts. auto_select_pcs also runs the lambda_GC scan both rules read
+  (band_rule_pc_counts.py, check_pc_threshold.py). select_best_pc_from_lambdas is not used for
+  the TRACE-FarmCPU benchmark any more: its PC counts are fixed at the published Table S10 run's
+  4/5/10/10 (rerun_trace_farmcpu.py).
+
+Not imported by cli.py, pages/ or any shipped code path.
 """
 import logging
 import numpy as np
@@ -273,6 +278,10 @@ def select_best_pc_from_lambdas(
 ):
     """Pick best PC count from a list of lambda_GC values.
 
+    This is the later, edge-tolerant variant, not the strict band rule behind the paper's PC
+    counts (select_k_strict_band). The TRACE-FarmCPU benchmark no longer uses it: its PC counts
+    are fixed at the published Table S10 run's 4/5/10/10 (rerun_trace_farmcpu.py).
+
     Applies the same edge-tolerant band rule as :func:`auto_select_pcs`,
     plus the directional deflation guard: if ``lambdas[0] < band_lo``
     the kinship is already over-correcting and adding PCs cannot repair
@@ -346,3 +355,34 @@ def select_best_pc_from_lambdas(
             )
 
     return int(best)
+
+
+def select_k_strict_band(lambdas, band_lo=0.95, band_hi=1.05, parsimony_tolerance=0.02):
+    """The strict band rule behind the paper's PC counts (smallest k with 0.95 <= lambda_GC <= 1.05;
+    commit 03095b7), on a lambda_GC scan.
+
+    ``lambdas`` holds lambda_GC for k = 0, 1, 2, ... (rounded to 4 decimals, as auto_select_pcs
+    returns them; NaN for a k that failed). The rule, as commit 03095b7's auto_select_pcs applied
+    it (strategy "band"): the smallest k with band_lo <= lambda_GC <= band_hi; when no k is in the
+    band, the smallest k whose |lambda_GC - 1| is within max(parsimony_tolerance, 0.15 x the best)
+    of the best; then the deflation guard: lambda_GC at k = 0 below band_lo gives k = 0.
+    It gave the published counts (published_pc_counts.PUBLISHED_K) and, on the corrected QC data,
+    published_pc_counts.BAND_RULE_K (band_rule_pc_counts.py). Returns (k, how the rule chose it).
+    """
+    lam = [float(v) for v in lambdas]
+    valid = [i for i, v in enumerate(lam) if np.isfinite(v)]
+    if not valid:
+        return 0, "no finite lambda_GC: k = 0"
+    in_band = [i for i in valid if band_lo <= lam[i] <= band_hi]
+    if in_band:
+        k, how = min(in_band), f"the smallest k with {band_lo} <= lambda_GC <= {band_hi}"
+    else:
+        delta = {i: round(abs(lam[i] - 1.0), 4) for i in valid}
+        best = min(delta.values())
+        tol = max(parsimony_tolerance, best * 0.15)
+        k = min(i for i in valid if delta[i] <= best + tol)
+        how = (f"none in the band: the smallest k within {tol:.4f} of the best |lambda_GC - 1| "
+               f"({best:.4f})")
+    if np.isfinite(lam[0]) and lam[0] < band_lo:
+        k, how = 0, f"deflation guard: lambda_GC at k = 0 is {lam[0]:.4f} < {band_lo} (before it: {how})"
+    return int(k), how

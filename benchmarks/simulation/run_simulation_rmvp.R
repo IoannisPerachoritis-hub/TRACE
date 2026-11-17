@@ -110,6 +110,11 @@ tryCatch({
     map = map_df,
     K = K,
     CV.MLM = if (!is.null(pca)) pca else NULL,
+    # The published simulation benchmark passed the PCs twice: MVP.PCA's PCs as CV.MLM (:90),
+    # and nPC.MLM = n_pcs (default 2, :33), so rMVP added its own PCs again. The kept results
+    # were made this way, so it stays. Measured on 10 replicates of h2_050_q005, the PCs once
+    # against twice: the largest |change in log10 p| is 1.86, and 33 SNPs change side of the
+    # Bonferroni line (0.05/43,974), all toward more hits with the PCs twice.
     nPC.MLM = n_pcs,
     method = "MLM",
     file.output = FALSE,

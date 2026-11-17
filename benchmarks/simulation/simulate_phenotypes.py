@@ -1,8 +1,13 @@
-"""Generate simulated phenotypes from real Varitome genotypes.
+"""Simulated phenotypes on real Varitome genotypes: the simulation benchmark and its null.
 
-Draws QTNs from the real tomato SNP matrix, assigns effect sizes,
-and scales noise to hit a target h². Saves phenotype CSVs + truth
-JSONs. Simulation design follows GAPIT3 (Wang & Zhang 2021).
+Draws QTNs from the tomato QC genotype matrix, gives them effects and scales the noise to a
+target h2 (the design of GAPIT3, Wang and Zhang 2021). Writes phenotype CSVs and truth JSONs.
+
+    python benchmarks/simulation/simulate_phenotypes.py [--data-root DIR] [--mode sim|null|both|template]
+
+--mode template writes only the template (geno_matrix.npy, sample_ids.npy and snp_map.csv in
+benchmarks/simulation/sim_data/) from the data root's tomato_locule_number QC data: the null
+calibration on the corrected data starts there. Input: benchmarks/qc_data/tomato_locule_number/.
 """
 import json
 import sys
@@ -12,6 +17,10 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 
 def load_qc_data(run_name: str = "tomato_locule_number"):
@@ -260,12 +269,22 @@ def generate_null_phenotypes(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Generate simulated phenotypes")
-    parser.add_argument("--mode", choices=["sim", "null", "both"], default="both")
+    parser.add_argument("--mode", choices=["sim", "null", "both", "template"], default="both")
     parser.add_argument("--n-reps", type=int, default=50)
     parser.add_argument("--n-perms", type=int, default=100)
     parser.add_argument("--seed", type=int, default=2026)
     args = parser.parse_args()
 
+    if args.mode == "template":
+        # the template only, written by the save lines of generate_all_scenarios, from the
+        # data root's QC data; no scenario folder is written
+        geno, snp_map, sample_ids, _ = load_qc_data("tomato_locule_number")
+        out = ROOT / "benchmarks" / "simulation" / "sim_data"
+        out.mkdir(parents=True, exist_ok=True)
+        snp_map.to_csv(out / "snp_map.csv", index=False)
+        np.save(out / "geno_matrix.npy", geno)
+        np.save(out / "sample_ids.npy", sample_ids)
+        print(f"Template: {geno.shape[0]} samples x {geno.shape[1]} SNPs -> {out}")
     if args.mode in ("sim", "both"):
         generate_all_scenarios(n_reps=args.n_reps, seed=args.seed)
     if args.mode in ("null", "both"):

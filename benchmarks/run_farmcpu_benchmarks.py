@@ -1,11 +1,16 @@
-"""FarmCPU concordance benchmark: TRACE FarmCPU vs GAPIT3 FarmCPU.
+"""TRACE-FarmCPU against GAPIT3 FarmCPU on the real data: Table S10 and Figure S6.
 
-Orchestrates:
-1. Running GAPIT3 FarmCPU on all 4 real datasets
-2. Loading TRACE FarmCPU + GAPIT3 FarmCPU results
-3. Computing concordance metrics (Spearman, Jaccard, top-hit overlap)
-4. Generating p-value scatter plots
-5. Saving comparison table
+For each run whose QC folder is in the data root: lambda_GC, Bonferroni counts, Jaccard overlap,
+Spearman rho on p and top-10/20 overlap of TRACE-FarmCPU's table (rerun_trace_farmcpu.py, the
+E_F_nogate2_ols arm, read by name) against GAPIT3 FarmCPU's standardized table, with the
+unrounded lambda_GC and rho beside the rounded ones; then the p-value scatter of Figure S6.
+
+    python benchmarks/run_farmcpu_benchmarks.py [--data-root DIR]
+
+Run first: rerun_trace_farmcpu.py, and run_gapit_farmcpu.R for each run with its k (README).
+Input: results/farmcpu_gatefree_concordance/<run>/ and results/gapit_farmcpu/<run>/.
+Output: benchmarks/table_s10_farmcpu_comparison.csv and benchmarks/plots/
+figure_s6_farmcpu_concordance.png and .pdf, in the data root.
 """
 import shutil
 import subprocess
@@ -21,12 +26,17 @@ from scipy import stats
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 from utils.pub_theme import apply_matplotlib_theme
 apply_matplotlib_theme()
 
 QC_DIR = ROOT / "benchmarks" / "qc_data"
 GAPIT_FARMCPU_DIR = ROOT / "benchmarks" / "results" / "gapit_farmcpu"
+# TRACE-FarmCPU's tables: rerun_trace_farmcpu.py's output folder in the data root
+TRACE_FC_DIR = ROOT / "benchmarks" / "results" / "farmcpu_gatefree_concordance"
 
 RSCRIPT = (
     shutil.which("Rscript")
@@ -39,17 +49,18 @@ RUNS = {
     "tomato_weight_g": {"trait": "weight_g", "species": "Tomato"},
     "tomato_locule_number": {"trait": "locule_number", "species": "Tomato"},
 }
+RUNS = runs_in_root(RUNS)   # the runs whose QC folder is in the data root
 
 
 # ── Data loading ─────────────────────────────────────────────
 
 def load_trace_farmcpu(run_name: str) -> pd.DataFrame | None:
     """Load TRACE FarmCPU results from extracted CSV."""
-    qc = QC_DIR / run_name
-    csvs = list(qc.glob("platform_GWAS_FarmCPU_*.csv"))
-    if not csvs:
+    # the E_F_nogate2_ols arm's table, by name (not the first platform_GWAS_FarmCPU_* in qc_data)
+    f = TRACE_FC_DIR / run_name / f"platform_GWAS_FarmCPU_E_F_nogate2_ols_{RUNS[run_name]['trait']}.csv"
+    if not f.exists():
         return None
-    df = pd.read_csv(csvs[0])
+    df = pd.read_csv(f)
     cols = ["SNP", "Chr", "Pos", "PValue"]
     for c in cols:
         if c not in df.columns:
@@ -158,6 +169,9 @@ def compare_run(run_name: str) -> dict:
     # Lambda GC
     result["lambda_TRACE"] = round(lambda_gc(trace["PValue"].values), 4)
     result["lambda_GAPIT3"] = round(lambda_gc(gapit["PValue"].values), 4)
+    # the unrounded values beside the rounded ones (the tables round once)
+    result["lambda_TRACE_unrounded"] = lambda_gc(trace["PValue"].values)
+    result["lambda_GAPIT3_unrounded"] = lambda_gc(gapit["PValue"].values)
 
     # Significant SNPs (Bonferroni)
     n_trace = len(trace)
@@ -179,8 +193,10 @@ def compare_run(run_name: str) -> dict:
     if len(merged) > 10:
         rho, pval = stats.spearmanr(merged["P_trace"], merged["P_gapit"])
         result["spearman_rho"] = round(rho, 4)
+        result["spearman_rho_unrounded"] = float(rho)
     else:
         result["spearman_rho"] = np.nan
+        result["spearman_rho_unrounded"] = np.nan
 
     # Top-10 and top-20 hit overlap
     for top_n in [10, 20]:
@@ -214,7 +230,7 @@ def run_concordance_analysis():
                   f"GAPIT3={result['sig_bonf_GAPIT3']}")
 
     df = pd.DataFrame(all_results)
-    out_path = ROOT / "benchmarks" / "results" / "farmcpu_comparison_table.csv"
+    out_path = ROOT / "benchmarks" / "table_s10_farmcpu_comparison.csv"
     df.to_csv(out_path, index=False)
     print(f"\n  Saved: {out_path}")
     return df
@@ -284,18 +300,12 @@ def plot_farmcpu_scatter():
     fig.suptitle("FarmCPU Concordance: TRACE vs GAPIT3", fontsize=13, y=1.01)
     fig.tight_layout()
 
-    out_png = ROOT / "benchmarks" / "plots" / "farmcpu_concordance.png"
-    out_pdf = ROOT / "benchmarks" / "plots" / "farmcpu_concordance.pdf"
+    # one save under the supplement's name (Figure S6), with the dpi and bbox of the earlier saves
+    out_png = ROOT / "benchmarks" / "plots" / "figure_s6_farmcpu_concordance.png"
+    out_pdf = ROOT / "benchmarks" / "plots" / "figure_s6_farmcpu_concordance.pdf"
+    out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=300, bbox_inches="tight")
     fig.savefig(out_pdf, bbox_inches="tight")
-
-    # Also save to paper/figures/
-    paper_fig = ROOT / "paper" / "figures"
-    paper_fig.mkdir(parents=True, exist_ok=True)
-    fig.savefig(paper_fig / "figure_s9_farmcpu_concordance.png",
-                dpi=300, bbox_inches="tight")
-    fig.savefig(paper_fig / "figure_s9_farmcpu_concordance.pdf",
-                bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {out_png}")
 
@@ -334,8 +344,8 @@ def main():
     print("  TRACE FarmCPU vs GAPIT3 FarmCPU")
     print("=" * 60)
 
-    # Phase 1: Run GAPIT3 FarmCPU
-    gapit_results = run_all_gapit_farmcpu()
+    # Phase 1 (running GAPIT3 FarmCPU) is not run here: it passes no k and skips existing
+    # outputs. Run run_gapit_farmcpu.R for each run with its k first (README).
 
     # Phase 2: Concordance analysis
     df = run_concordance_analysis()

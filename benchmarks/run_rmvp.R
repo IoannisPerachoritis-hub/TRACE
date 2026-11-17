@@ -1,9 +1,17 @@
 #!/usr/bin/env Rscript
-# ──────────────────────────────────────────────────────────────
-# rMVP MLM benchmark on pre-QC'd data from TRACE
-# Reads the identical QC_genotype_matrix.csv and QC_phenotype.csv
-# produced by --export-qc so the ONLY variable is the association engine.
-# ──────────────────────────────────────────────────────────────
+# rMVP MLM on TRACE's QC data: the rMVP column of Tables S4 and S11.
+# It reads QC_genotype_matrix.csv and QC_phenotype.csv (TRACE's --export-qc), so the
+# association engine is the only difference.
+#
+#   Rscript benchmarks/run_rmvp.R <run_name> [n_pcs] [pcs_twice]
+#
+# Run it from the data root: it reads benchmarks/qc_data/<run_name>/ and writes
+# benchmarks/results/rmvp/<run_name>/ there, with rmvp_results_standardized.csv, sessionInfo.txt
+# and packages.txt. The output folder must be empty. n_pcs defaults to the published count.
+# The PCs are passed once, as CV.MLM. The published runs passed them twice (CV.MLM, and
+# nPC.MLM = n_pcs, so rMVP added its own PCs again); pcs_twice repeats that, into
+# benchmarks/results/rmvp_pcs_twice/<run_name>/, for the values the tables give in brackets.
+# At n_pcs = 0 the two are the same. rMVP 1.4.6 (commit 48b54836) made the published tables.
 
 # Ensure user library is on path (cross-platform: Linux/macOS/Windows)
 user_lib <- Sys.getenv("R_LIBS_USER")
@@ -18,28 +26,40 @@ suppressPackageStartupMessages({
   library(rMVP)
   library(data.table)
 })
+# the rMVP that ran, by version and commit (the published tables: 1.4.6 at 48b54836)
+rmvp_desc <- packageDescription("rMVP")
+cat(sprintf("rMVP %s, commit %s, from %s\n", rmvp_desc$Version,
+            if (is.null(rmvp_desc$RemoteSha)) "unknown" else rmvp_desc$RemoteSha, find.package("rMVP")))
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
   cat("Usage: Rscript run_rmvp.R <run_name> [n_pcs]\n")
   cat("  run_name: pepper_FWe | pepper_BX | tomato_weight_g | tomato_locule_number\n")
-  cat("  n_pcs:    number of PCs (default: from platform auto-PC)\n")
+  cat("  n_pcs:    number of PCs (default: the published count)\n")
+  cat("  pcs_twice: pass the PCs twice, as the published runs did\n")
   quit(status = 1)
 }
 
 run_name <- args[1]
-# PC counts matching platform auto-PC selections
+# the published PC counts (published_pc_counts.PUBLISHED_K)
 default_pcs <- list(pepper_FWe = 2, pepper_BX = 0,
                      tomato_weight_g = 0, tomato_locule_number = 0)
 n_pcs <- if (length(args) >= 2) as.integer(args[2]) else default_pcs[[run_name]]
-if (is.null(n_pcs)) stop(paste("Unknown run_name:", run_name, "-- pass n_pcs explicitly"))
+if (is.null(n_pcs) || is.na(n_pcs)) stop(paste("Unknown run_name:", run_name, "-- pass n_pcs explicitly"))
+cat(sprintf("n_pcs = %d (the default for %s: %s)\n", n_pcs, run_name,
+            if (is.null(default_pcs[[run_name]])) "none" else default_pcs[[run_name]]))
+pcs_twice <- length(args) >= 3 && args[3] == "pcs_twice"
+if (length(args) >= 3 && !pcs_twice) stop("the third argument, when given, is pcs_twice")
 
 cat(sprintf("=== rMVP MLM benchmark: %s (PCs=%d) ===\n", run_name, n_pcs))
 
 # ── Paths ────────────────────────────────────────────────────
 base_dir <- getwd()
 qc_dir <- file.path(base_dir, "benchmarks", "qc_data", run_name)
-out_dir <- file.path(base_dir, "benchmarks", "results", "rmvp", run_name)
+out_dir <- file.path(base_dir, "benchmarks", "results", if (pcs_twice) "rmvp_pcs_twice" else "rmvp", run_name)
+# a fresh output folder: the result file is found by listing it
+if (dir.exists(out_dir) && length(list.files(out_dir, all.files = TRUE, no.. = TRUE)) > 0)
+  stop(paste("The output folder is not empty:", out_dir, "-- remove it to run again"))
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 cat(sprintf("QC data dir: %s\n", qc_dir))
@@ -114,7 +134,9 @@ tryCatch({
     map = map_df,
     K = K,
     CV.MLM = pca,
-    nPC.MLM = n_pcs,
+    # the PCs once, as CV.MLM; with pcs_twice also nPC.MLM = n_pcs, so rMVP adds its own PCs
+    # again, as in the published runs
+    nPC.MLM = if (pcs_twice) n_pcs else 0,
     method = "MLM",
     file.output = FALSE,
     verbose = TRUE
@@ -189,3 +211,11 @@ tryCatch({
 })
 
 cat(sprintf("\n=== rMVP %s complete ===\n", run_name))
+
+# the session and the package versions, written with the outputs
+writeLines(capture.output(sessionInfo()), file.path(out_dir, "sessionInfo.txt"))
+desc_field <- function(v) if (is.null(v)) "" else v
+package_line <- function(p) { d <- packageDescription(p)
+  sprintf("%s %s RemoteSha=%s Packaged=%s Built=%s path=%s", p, desc_field(d$Version),
+          desc_field(d$RemoteSha), desc_field(d$Packaged), desc_field(d$Built), find.package(p)) }
+writeLines(vapply(c("rMVP", "data.table", "bigmemory"), package_line, ""), file.path(out_dir, "packages.txt"))

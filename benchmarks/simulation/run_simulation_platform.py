@@ -1,7 +1,12 @@
-"""Run TRACE MLM (LOCO and Global) on simulated phenotypes.
+"""TRACE's MLM (LOCO and Global) on the simulated phenotypes, and on the null phenotypes.
 
-Calls _impl functions from gwas/kinship.py and gwas/models.py directly,
-bypassing VCF parsing and the CLI.
+Calls the _impl functions of gwas/kinship.py and gwas/models.py directly, without the VCF reader
+and the CLI.
+
+    python benchmarks/simulation/run_simulation_platform.py [--data-root DIR] [options below]
+
+Input: benchmarks/simulation/sim_data/ (the template and the scenarios) or null_data/
+(simulate_phenotypes.py). Output: platform_loco/ and platform_global/ results in each replicate.
 """
 import json
 import logging
@@ -15,6 +20,9 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 from gwas.kinship import (
     _build_grm_from_Z,

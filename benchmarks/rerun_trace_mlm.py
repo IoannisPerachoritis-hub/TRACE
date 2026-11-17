@@ -1,8 +1,13 @@
-"""Re-run TRACE MLM GWAS on all 4 benchmark QC datasets.
+"""TRACE's MLM GWAS (LOCO) on the benchmark QC data: the TRACE column of Tables S4 and S11.
 
-Generates platform_GWAS_<trait>.csv files in benchmarks/qc_data/<run>/
-using the current paper repo code, with the same auto-PC band strategy
-used in production.
+Makes benchmarks/qc_data/<run>/platform_GWAS_<trait>.csv for each run whose QC folder is in the
+data root, at the published PC counts (published_pc_counts.PUBLISHED_K; --k-set band for the
+strict band rule's counts on the corrected data).
+
+    python benchmarks/rerun_trace_mlm.py [--data-root DIR] [--k-set band]
+
+Input: benchmarks/qc_data/<run>/QC_genotype_matrix.csv, QC_snp_map.csv, QC_phenotype.csv
+(make_qc_data.sh). Output: the MLM table beside them.
 """
 import sys
 from pathlib import Path
@@ -13,6 +18,9 @@ from scipy.linalg import eigh
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from benchmarks._options import options, runs_in_root  # noqa: E402
+OPT = options()
+ROOT = OPT.root   # the data root: this repository unless --data-root is given
 
 from annotation import canon_chr
 from gwas.kinship import (
@@ -33,6 +41,7 @@ RUNS = {
     "tomato_weight_g": "weight_g",
     "tomato_locule_number": "locule_number",
 }
+RUNS = runs_in_root(RUNS)   # the runs whose QC folder is in the data root
 
 
 def load_qc_dataset(run_name):
@@ -109,7 +118,7 @@ def run_trace_mlm(run_name, trait_name):
     # The auto-PC selector was removed. This script writes the SHIPPED platform_GWAS_*.csv
     # artefacts, so use the published (manuscript) PC count -- published_pc_counts = 0/0/0/2.
     # pcs_full (top-10 eigvecs) is unchanged; _run_gwas_impl slices [:, :n_pcs].
-    n_pcs = resolve_k(run_name)
+    n_pcs = resolve_k(run_name, OPT.k_set)
     print(f"  Fixed PC count (published): k = {n_pcs}")
 
     # Build LOCO kernels

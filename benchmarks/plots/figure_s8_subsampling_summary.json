@@ -1,0 +1,43 @@
+{
+ "n_snps_table": 43749,
+ "n_snps_subsampling": 43749,
+ "n_reps": 100,
+ "n_reps_ok": 100,
+ "resample_sizes": [
+  131
+ ],
+ "top_snp": "SL25ch02p47366168",
+ "top_snp_p": 4.4786235940979063e-13,
+ "top_snp_freq": 1.0,
+ "max_freq": 1.0,
+ "snps_at_max_freq": [
+  "SL25ch02p47112073",
+  "SL25ch02p47301921",
+  "SL25ch02p47366168"
+ ],
+ "s8_lead": "SL25ch02p47301921",
+ "s8_lead_freq": 1.0,
+ "bonferroni_threshold": 1.1428832659032207e-06,
+ "n_bonferroni": 11,
+ "bonferroni_freqs": {
+  "SL25ch02p47366168": 1.0,
+  "SL25ch02p47301921": 1.0,
+  "SL25ch02p47112073": 1.0,
+  "SL25ch02p47129438": 0.99,
+  "SL25ch02p47070144": 0.99,
+  "SL25ch02p46799142": 0.95,
+  "SL25ch02p47017547": 0.98,
+  "SL25ch02p46543740": 0.92,
+  "SL25ch02p46734891": 0.94,
+  "SL25ch02p46914856": 0.89,
+  "SL25ch02p46485862": 0.87
+ },
+ "bonferroni_min_freq": 0.87,
+ "n_zero": 43491,
+ "pct_zero": 99.41027223479394,
+ "n_nonzero": 258,
+ "n_nonzero_bonferroni": 11,
+ "n_nonzero_nonsig": 247,
+ "n_nonzero_nonsig_below_020": 224,
+ "share_nonzero_nonsig_below_020": 0.9068825910931174
+}
