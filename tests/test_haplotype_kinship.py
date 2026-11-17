@@ -419,17 +419,56 @@ def _gls_f_lstsq(y, X0, H, V):
 
 
 @pytest.mark.parametrize("h2", [None, 0.0, 0.3, 0.8])
-def test_groups_the_covariates_span_are_not_tested(h2):
+@pytest.mark.parametrize("offset", [0.0, 50.0, 2019.0, 1e6])
+def test_groups_the_covariates_span_are_not_tested(h2, offset):
     """A covariate that defines the block's tested groups (here the group indicator itself, as
     the lead SNP's 0/2 dosage does in a two-group block of a conditional analysis) leaves no
     haplotype direction to test: the block is refused with the reason, at the REML h2 and at
-    any forced h2, instead of testing what rounding leaves of the indicator."""
+    any forced h2, instead of testing what rounding leaves of the indicator. So it is when the
+    covariate is coded with an offset (2019 + the indicator, a year): nearly collinear with the
+    intercept, it made the span's basis inaccurate enough for that rounding to pass."""
     d = _data(n_groups=2)
     H, _, _ = _one_hot_drop_first(d["groups"])
-    Cc = np.column_stack([d["C"], 2.0 * H[:, 0]])
+    Cc = np.column_stack([d["C"], offset + 2.0 * H[:, 0]])
     with pytest.raises(KinshipTestError,
                        match="lie in the span of the intercept, PCs and covariates"):
         kinship_block_test(d["y"], d["groups"], Cc, d["Kr"], n_perm=99, seed=3, h2=h2)
+
+
+def test_the_review_case_of_a_year_coded_covariate_is_refused():
+    """The engine review's case: n = 200, two groups, three random covariates and a fourth
+    that is 2019 + the group indicator (tested before, with REML h2 0.618, F 1.751)."""
+    rng = np.random.default_rng(5)
+    n, m = 200, 400
+    p = rng.uniform(0.1, 0.5, m)
+    G = rng.binomial(2, p, size=(n, m)).astype(float)
+    Z = (G - 2 * p) / np.sqrt(2 * p * (1 - p))
+    K = Z @ Z.T / m
+    K /= np.mean(np.diag(K))
+    ids = np.array([f"S{i:04d}" for i in range(n)])
+    Kr, _ = kernel_for_samples(_Kernel(ids, K.astype(np.float32)), ids)
+    g = Z @ rng.normal(0.0, np.sqrt(0.6 / m), m)
+    C = rng.normal(size=(n, 3))
+    y = 1 + C @ rng.normal(0, 0.3, 3) + g + rng.normal(0, 0.6, n)
+    grp = np.where(G[:, 1] > 0, "A", "B")
+    ind = (grp == list(dict.fromkeys(grp))[1]).astype(float)
+    with pytest.raises(KinshipTestError, match="lie in the span"):
+        kinship_block_test(y, grp, np.column_stack([C, 2019 + ind]), Kr, n_perm=99, seed=3)
+
+
+@pytest.mark.parametrize("h2", [0.3, 0.8])
+def test_a_year_coded_group_leaves_the_others_tested_by_their_gls_f(h2):
+    """One of three groups' indicators among the covariates, coded 2019 + the indicator: the F
+    is the GLS F of the two directions left, as computed on centred covariates (the same
+    span), not inflated by a direction made of rounding."""
+    d = _data()
+    n = len(d["y"])
+    H, _, _ = _one_hot_drop_first(d["groups"])
+    Cc = np.column_stack([d["C"], 2019.0 + H[:, 0]])
+    res = kinship_block_test(d["y"], d["groups"], Cc, d["Kr"], n_perm=9, seed=1, h2=h2)
+    F = _gls_f_lstsq(d["y"], np.column_stack([np.ones(n), Cc - Cc.mean(axis=0)]), H,
+                     h2 * d["Kr"] + (1 - h2) * np.eye(n))
+    assert res["F_param"] == pytest.approx(F, rel=1e-8)
 
 
 @pytest.mark.parametrize("h2", [None, 0.0, 0.5])

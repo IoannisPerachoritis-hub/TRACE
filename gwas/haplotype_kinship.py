@@ -109,17 +109,37 @@ def _orth(A, scale=None):
     return u[:, : int((s > tol).sum())]
 
 
-def _outside(H, Q):
+def _outside(H, Q, n_dir=None):
     """An orthonormal basis of the part of ``H``'s column space outside ``Q``'s (``Q``
-    orthonormal): the residual H - QQ'H, with the rank tolerance taken on H's own scale. A
-    column of H inside Q's span leaves only rounding in the residual, which on the residual's
-    own scale would pass for a direction; on H's scale it does not."""
+    orthonormal): the left singular vectors of the residual H - QQ'H above the rank tolerance
+    taken on H's own scale or, with ``n_dir``, its ``n_dir`` leading ones. A column of H
+    inside Q's span leaves only rounding in the residual, which on the residual's own scale
+    would pass for a direction; on H's scale it does not, provided Q is accurate (a basis
+    of a well-conditioned design: _equilibrated)."""
     H = np.asarray(H, dtype=float)
     if H.ndim == 1:
         H = H.reshape(-1, 1)
-    if H.shape[1] == 0:
+    if H.shape[1] == 0 or n_dir == 0:
         return np.zeros((H.shape[0], 0))
-    return _orth(H - Q.dot(Q.T.dot(H)), scale=np.linalg.norm(H, 2))
+    R = H - Q.dot(Q.T.dot(H))
+    if n_dir is None:
+        return _orth(R, scale=np.linalg.norm(H, 2))
+    return np.linalg.svd(R, full_matrices=False)[0][:, : int(n_dir)]
+
+
+def _equilibrated(X0):
+    """``X0`` (the intercept first) with every other column centred and scaled to unit norm:
+    the same column space, as the intercept is in it, but well conditioned whatever the
+    covariates' offsets and units. A covariate coded as 2019 + an indicator is nearly
+    collinear with the intercept, and a basis of X0 itself is then accurate only to about
+    eps times X0's condition number: the rounding H - QQ'H leaves of a column inside the span
+    then passes for a direction."""
+    Xe = np.array(X0, dtype=float, copy=True)
+    if Xe.shape[1] > 1:
+        C = Xe[:, 1:] - Xe[:, 1:].mean(axis=0)
+        norms = np.linalg.norm(C, axis=0)
+        Xe[:, 1:] = C / np.where(norms > 0, norms, 1.0)
+    return Xe
 
 
 # -------------------------------------------------------------------------------- the REML
@@ -334,9 +354,11 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
         raise KinshipTestError(f"{n} tested samples cannot fit the null model's "
                                f"{Q.shape[1]} fixed effects")
     # haplotype groups that the intercept, PCs and covariates already span on these samples
-    # (a covariate that defines them, as the lead SNP's dosage in a conditional analysis):
-    # nothing is left to test, and the whitening (invertible) cannot change that
-    n_out = _outside(H, Q).shape[1]
+    # (a covariate that defines them, as the lead SNP's dosage in a conditional analysis,
+    # however it is coded): nothing is left to test, and the whitening (invertible) cannot
+    # change that. The directions are counted on a well-conditioned basis of the same span
+    Qe = _orth(_equilibrated(X0))
+    n_out = _outside(H, Qe).shape[1]
     if n_out == 0:
         raise KinshipTestError("the haplotype groups lie in the span of the intercept, PCs and "
                                "covariates on the tested samples: no haplotype effect is left "
@@ -351,7 +373,7 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
     df_num = int(df0 - df_den)
     if df_num < 1:
         raise KinshipTestError(f"the F test has no degrees of freedom (df1 = 0): {shape}")
-    if Q.shape[1] + n_out >= n:
+    if Qe.shape[1] + n_out >= n:
         raise KinshipTestError(f"the full model fits the tested samples exactly, leaving no "
                                f"residual variance: {shape}")
     if eig is None:
@@ -390,7 +412,10 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
         W = _whitener(S, U, h2)
         ys, Xs, Hs = W(y), W(X0), W(H)
         Q0 = _orth(Xs)
-        QH = _outside(Hs, Q0)
+        # the n_out haplotype directions outside the span (counted above; the whitening
+        # keeps the count): the leading singular directions of the whitened residual, so
+        # what rounding leaves of a group inside the span is never taken for one
+        QH = _outside(Hs, Q0, n_dir=n_out)
         e = ys - Q0.dot(Q0.T.dot(ys))              # the whitened residuals of the null model
         rr = float(e.dot(e))
         F = float(_f_of_residuals(e[:, None], Q0, QH, rr, df_num, df_den)[0])
