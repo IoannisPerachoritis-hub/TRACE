@@ -922,7 +922,9 @@ def _render_haplotype_gwas(
                                     guipost.table_key(ctx), n_perm, blocks_hash, pheno_hash,
                                     hap_test=hap_test, use_loco=hap_use_loco)
 
-    if hap_key not in st.session_state:
+    # a result is served from the session only with its own per-block tables (the
+    # assignments and the block plots read them); without them it is computed again
+    if hap_key not in st.session_state or f"{hap_key}::tables" not in st.session_state:
 
         with st.spinner("Running haplotype / MLG analysis on LD blocks…"):
 
@@ -949,14 +951,13 @@ def _render_haplotype_gwas(
             st.session_state["hap_gwas_df"] = hap_gwas_df
         st.session_state[hap_key] = hap_gwas_df
         # the per-block sample tables of THIS result, kept with it (the assignments
-        # table, the downloads and the MLG plots read them); an earlier result's tables
-        # and assignments are dropped
-        for _old in [k for k in st.session_state.keys()
-                     if isinstance(k, str) and k.startswith("HAPGWAS::")
-                     and k.endswith(("::tables", "::assign"))]:
-            del st.session_state[_old]
+        # table, the downloads and the MLG plots read them), and its assignments built
+        # anew. Every remembered result keeps its own: a result visited again (the test,
+        # or the Run's LOCO choice, switched back) has its block plots and assignments
         st.session_state[f"{hap_key}::tables"] = hap_tables
-        # the session keeps the most recent results only
+        st.session_state.pop(f"{hap_key}::assign", None)
+        # the session keeps the most recent results only, each with its tables and
+        # assignments (dropped with it)
         guipost.remember_family(st.session_state, "_hapgwas_order", hap_key,
                                 guipost.RESULT_CACHE_MAX, suffixes=("::tables", "::assign"))
 

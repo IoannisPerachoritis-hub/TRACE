@@ -628,6 +628,58 @@ def test_a_block_the_kinship_test_could_not_test_is_not_counted_as_run(monkeypat
     assert said == ["Haplotype / MLG analysis ran on 2 LD blocks."], said
 
 
+def test_a_revisited_haplotype_result_keeps_its_tables_and_assignments(monkeypatch):
+    """The kinship-aware test, then the PCs-only test, then the kinship-aware test again, in
+    one session: the third is served from the session (no new test) with its own per-block
+    tables, so its sample assignments are all there, as on the first visit (only the last
+    computed result kept its tables, and the third visit had no assignments)."""
+    import streamlit as st
+    import pages._ld_tabs.tab_genome_wide as tgw
+    from pages._ld_tabs import LDContext
+    from tests.test_haplotype_kinship import _two_chromosome_panel
+
+    p = _two_chromosome_panel()
+    ran, got = [], []
+
+    def _test(*a, **k):
+        ran.append(k["hap_test"])
+        return gp.run_haplotype_tests(*a, **k)
+
+    monkeypatch.setattr(tgw, "_render_block_visualization", lambda **kw: None)
+    monkeypatch.setattr(tgw, "_render_lead_snp_gallery",
+                        lambda *a, **kw: got.append(kw["hap_assignments"]))
+    keys = ("pheno_used_for_hap", "n_perm_hap", "GWAS_CTX", "geno_row_ids", gp.RUN_KERNELS,
+            "hap_gwas_df_enriched", "_hapgwas_order")
+    saved = {k: st.session_state[k] for k in keys if k in st.session_state}
+    try:
+        for k in keys:
+            st.session_state.pop(k, None)
+        st.session_state["pheno_used_for_hap"] = p["pheno"]
+        st.session_state["n_perm_hap"] = 99
+        st.session_state[gp.RUN_KERNELS] = {"identity": "TK", "trait": "t", "use_loco": True,
+                                            "K0": p["K0"], "K_by_chr": p["K_by_chr"]}
+        ctx = LDContext(
+            geno_ld=p["G"], geno_hard=p["G"], chroms=p["chroms"], positions=p["pos"],
+            sid=p["sid"], geno_df=pd.DataFrame(index=p["ids"]), pheno_df=p["pheno"],
+            trait_col="t", ph_aligned=p["pheno"], y_aligned=p["pheno"]["t"].to_numpy(),
+            keep_mask=np.ones(len(p["ids"]), dtype=bool), geno_ld_aligned=p["G"],
+            gwas_df=pd.DataFrame({"SNP": p["sid"], "PValue": 0.5}), haplo_df_auto=p["blocks"],
+            ld_decay_kb=None, adj_r2_min_global=0.2, ld_trait="t", table_identity="TK")
+        for test in ("kinship", "pcs", "kinship"):
+            tgw._render_haplotype_gwas(
+                ctx=ctx, haplo_df_auto=p["blocks"], cached_extract_block_geno=None,
+                compute_block_qc_effects=lambda hap_gwas_df=None, **k: hap_gwas_df,
+                run_haplotype_block_gwas_cached_fn=_test, settings={"hap_test": test})
+        assert ran == ["kinship", "pcs"]                # the third visit: from the session
+        assert len(got) == 3 and len(got[0]) == 2 * len(p["ids"]) > 0
+        pd.testing.assert_frame_equal(got[2], got[0])
+    finally:
+        for k in list(st.session_state.keys()):
+            if k in keys or (isinstance(k, str) and k.startswith("HAPGWAS::")):
+                del st.session_state[k]
+        st.session_state.update(saved)
+
+
 def test_haplotype_and_detection_keys_name_the_identity_not_the_shape():
     pcs = np.zeros((N, 2))
     a = gp.haplotype_key("t", 5, 3, pcs, "identityA", 1000, "B", "P", hap_test="kinship",
