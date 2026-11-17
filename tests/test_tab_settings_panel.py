@@ -65,6 +65,34 @@ def test_every_former_setting_is_in_the_panel_once_with_its_key_and_default():
     assert "#### Haplotype analysis parameters" not in _SRC     # its inputs moved
 
 
+def _call_with(src, label):
+    """The one st.<widget>(label, ...) call of ``src`` (a module's source)."""
+    found = [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call) and n.args
+             and isinstance(n.args[0], ast.Constant) and n.args[0].value == label]
+    assert len(found) == 1, (label, len(found))
+    return found[0]
+
+
+def test_the_default_haplotype_test_is_the_kinship_aware_one():
+    """The GUI's two haplotype test widgets (the tab's "Test model" radio and One-Click's
+    "Haplotype test" selectbox) list gwas.guipost.HAP_TEST_CHOICES and select its first entry,
+    the kinship-aware test (the CLI's --hap-test default)."""
+    from gwas import guipost
+
+    assert list(guipost.HAP_TEST_CHOICES.values())[0] == "kinship"
+    one_click = (Path(__file__).resolve().parent.parent / "pages"
+                 / "GWAS_analysis.py").read_text(encoding="utf-8")
+    for src, label, key, options in [
+            (_SRC, "Test model", "hap_test_choice", "list(guipost.HAP_TEST_CHOICES)"),
+            (one_click, "Haplotype test", "pipe_hap_test", "list(_HAP_TESTS)")]:
+        call = _call_with(src, label)
+        kw = {k.arg: k.value for k in call.keywords}
+        assert ast.unparse(call.args[1]) == options, label
+        assert isinstance(kw.get("index"), ast.Constant) and kw["index"].value == 0, label
+        assert kw["key"].value == key, label
+    assert "HAP_TEST_CHOICES as _HAP_TESTS" in one_click
+
+
 def test_the_panel_is_one_collapsed_expander_named_settings():
     fn = next(n for n in ast.walk(ast.parse(_SRC))
               if isinstance(n, ast.FunctionDef) and n.name == "_render_settings")

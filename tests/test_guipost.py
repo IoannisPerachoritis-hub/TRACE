@@ -603,7 +603,9 @@ def test_the_gui_kinship_test_needs_the_runs_kernels(monkeypatch):
         assert shown == [gp.NO_RUN_KERNELS_MESSAGE.format(trait="t")], shown
     df, shown, _p = _kinship_tab_run(monkeypatch, None, {"hap_test": "pcs"})
     assert shown == [] and (df["kinship_model"] == "none").all()
-    # the default is the kinship-aware test
+    # without settings the function falls back to the kinship-aware test (the page always
+    # passes the radio's choice; its default is pinned by
+    # tests/test_tab_settings_panel.py::test_the_default_haplotype_test_is_the_kinship_aware_one)
     df, shown, _p = _kinship_tab_run(monkeypatch, None, None)
     assert df is None and shown == [gp.NO_RUN_KERNELS_MESSAGE.format(trait="t")]
 
