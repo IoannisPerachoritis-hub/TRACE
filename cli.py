@@ -166,6 +166,13 @@ def _build_parser():
                               "(default: 0.5).")
     ld_grp.add_argument("--hap-perms", type=int, default=1000,
                          help="Haplotype permutations (default: 1000)")
+    ld_grp.add_argument("--hap-test", default="kinship", choices=["kinship", "pcs"],
+                         help="Haplotype block test. 'kinship' (default): a mixed model with the "
+                              "scan's own kinship kernel for the block's chromosome (LOCO, or "
+                              "the global kernel with --no-loco), its null model fitted by REML; "
+                              "the F test and the Freedman-Lane permutations are made on the "
+                              "whitened data. 'pcs': the test with the PCs and covariates alone "
+                              "(no kinship), as before.")
     ld_grp.add_argument("--no-annotation", action="store_true",
                          help="Skip gene annotation")
     ld_grp.add_argument("--genome-build", default="SL3", choices=["SL3", "SL4"],

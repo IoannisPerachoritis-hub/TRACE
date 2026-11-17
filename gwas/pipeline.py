@@ -752,8 +752,19 @@ def _run_trait(parsed, pheno, args):
             log.warning("Cross-model consensus failed: %s", e)
 
     # ── Per-model post-GWAS: LD blocks → haplotype → annotation ──
-    from gwas.haplotype import run_haplotype_block_gwas
+    from gwas.haplotype import HAP_TESTS, run_haplotype_block_gwas
     from annotation import canon_chr
+
+    # The haplotype test (--hap-test). A wrong value stops the run here: the haplotype step
+    # below only warns when it fails. The kinship-aware test takes each block's kernel from
+    # the scan's own (LOCO, or K0 for every chromosome under --no-loco), for every model.
+    _hap_test = getattr(args, "hap_test", "kinship")
+    if _hap_test not in HAP_TESTS:
+        raise TraitPipelineError(
+            f"--hap-test must be one of {', '.join(HAP_TESTS)} (got {_hap_test!r}).")
+    _hap_kernels = (K0, K_by_chr) if _hap_test == "kinship" else None
+    log.info("Haplotype test: %s", "kinship-aware (the scan's kernels)" if _hap_test == "kinship"
+             else "PCs and covariates only")
 
     _stagelog.mark("S23_post_setup")
     post_gwas_models = [("MLM", gwas_df)]
@@ -997,11 +1008,15 @@ def _run_trait(parsed, pheno, args):
                 geno_df=geno_df, pheno_df=pheno_clean, trait_col=args.trait,
                 pcs=_hap_pcs, n_perm=args.hap_perms, n_pcs_used=n_pcs_mlm,
                 min_hap_count=args.hap_min_count, min_group_size=args.hap_min_group_size,
-                user_covar=user_covar_mat, hap_test="pcs",
+                user_covar=user_covar_mat, hap_test=_hap_test, kernels=_hap_kernels,
             )
             if m_hap_gwas is not None and not m_hap_gwas.empty:
                 n_sig_hap = int((m_hap_gwas.get("FDR_BH", pd.Series(dtype=float)) < 0.05).sum())
                 log.info("  Haplotype: %d/%d blocks significant", n_sig_hap, len(m_hap_gwas))
+                _failed = m_hap_gwas["kinship_model"].astype(str).str.startswith("failed")
+                if _failed.any():
+                    log.warning("  Haplotype: the kinship-aware test could not test %d block(s); "
+                                "their kinship_model gives the reason", int(_failed.sum()))
         except Exception as e:
             log.warning("  Haplotype testing failed for %s: %s", model_name, e)
 
@@ -1455,6 +1470,7 @@ def _run_trait(parsed, pheno, args):
         "LD_min_snps": 2,
         "Hap_min_group_size (--hap-min-group-size)": args.hap_min_group_size,
         "Hap_n_perm": args.hap_perms,
+        "Hap_test (--hap-test)": _hap_test,
         "LD blocks (MLM)": len(ld_blocks_mlm) if ld_blocks_mlm is not None else "N/A",
         "Subsampling reps": args.boot_reps if args.subsampling else "N/A",
         "PCs (fixed)": int(n_pcs),

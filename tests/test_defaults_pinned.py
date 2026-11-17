@@ -210,6 +210,10 @@ SIGNATURE_DEFAULTS = [
     ("haplotype.run_haplotype_block_gwas", haplotype.run_haplotype_block_gwas, "min_hap_count", 5, "gwas/haplotype.py:24"),
     ("haplotype.run_haplotype_block_gwas", haplotype.run_haplotype_block_gwas, "min_group_size", 3, "gwas/haplotype.py:25"),
     ("haplotype.run_haplotype_block_gwas", haplotype.run_haplotype_block_gwas, "n_perm", 1000, "gwas/haplotype.py:26"),
+    # the kinship-aware test is the default; a caller without kernels must fail, never get
+    # the PCs-only test silently
+    ("haplotype.run_haplotype_block_gwas", haplotype.run_haplotype_block_gwas, "hap_test", "kinship",
+     "gwas/haplotype.py (--hap-test)"),
     ("plotting.compute_r2_to_lead", plotting.compute_r2_to_lead, "min_pair_n", 15, "plotting.py:409"),
     # D-102: the shipped FarmCPU final scan is the classical OLS fixed-effect test.
     ("models.run_farmcpu", models.run_farmcpu, "final_scan", "ols", "gwas/models.py:1183"),
@@ -236,8 +240,9 @@ def test_signature_default(label, fn, param, expected, loc):
 def test_signature_default_count_is_stable():
     """The pinned set is the signature defaults enumerated by T-72, plus D-102's
     FarmCPU final_scan, less the four flanking-gene defaults removed with flanking-gene
-    reporting. A new load-bearing default is added here deliberately."""
-    assert len(SIGNATURE_DEFAULTS) == 29
+    reporting, plus the haplotype test (kinship). A new load-bearing default is added here
+    deliberately."""
+    assert len(SIGNATURE_DEFAULTS) == 30
 
 
 # ===========================================================================
@@ -303,6 +308,8 @@ CLI_DEFAULTS = [
     # guard against an accidental default flip of imputation to LD-kNNi, which would
     # move published numbers.
     ("impute", "mean", "cli.py --impute"),
+    # the haplotype test: the kinship-aware test by default
+    ("hap_test", "kinship", "cli.py --hap-test"),
 ]
 
 

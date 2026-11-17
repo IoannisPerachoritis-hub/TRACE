@@ -155,6 +155,7 @@ class TestCLIArgParsing:
         assert args.ld_seed_p == 1e-5
         assert args.ld_top_n == 10
         assert args.hap_perms == 1000
+        assert args.hap_test == "kinship"
         assert args.no_annotation is False
 
     def test_ld_overrides(self):
@@ -162,14 +163,22 @@ class TestCLIArgParsing:
         args = parser.parse_args([
             "--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/",
             "--ld-r2", "0.4", "--ld-flank-kb", "200", "--ld-seed-p", "1e-3",
-            "--ld-top-n", "5", "--hap-perms", "1000", "--no-annotation",
+            "--ld-top-n", "5", "--hap-perms", "1000", "--hap-test", "pcs", "--no-annotation",
         ])
         assert args.ld_r2 == 0.4
         assert args.ld_flank_kb == 200
         assert args.ld_seed_p == 1e-3
         assert args.ld_top_n == 5
         assert args.hap_perms == 1000
+        assert args.hap_test == "pcs"
         assert args.no_annotation is True
+
+    def test_hap_test_choices(self):
+        parser = _build_parser()
+        base = ["--vcf", "x.vcf", "--pheno", "p.csv", "--trait", "Y", "--output", "o/"]
+        assert parser.parse_args(base + ["--hap-test", "kinship"]).hap_test == "kinship"
+        with pytest.raises(SystemExit):
+            parser.parse_args(base + ["--hap-test", "lmm"])
 
     def test_per_model_pcs(self):
         parser = _build_parser()

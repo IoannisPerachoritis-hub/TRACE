@@ -76,14 +76,28 @@ def _synthetic():
 
 
 def _record_f_test(monkeypatch):
-    calls = []
+    """Record each tested block's test inputs: the PCs-only test's F test
+    (block_test_lm_with_pcs) or the kinship-aware test (gwas.haplotype_kinship's
+    kinship_block_test, which at h2 = 0 calls the former itself: that call is not counted)."""
+    calls, inside = [], [0]
     real = gh.block_test_lm_with_pcs
+    real_kin = gh._hk.kinship_block_test
 
     def _rec(y, groups, pcs=None):
-        calls.append({"y": np.asarray(y, float).copy(), "groups": np.asarray(groups).astype(str)})
+        if not inside[0]:
+            calls.append({"y": np.asarray(y, float).copy(), "groups": np.asarray(groups).astype(str)})
         return real(y=y, groups=groups, pcs=pcs)
 
+    def _rec_kin(y, groups, *a, **k):
+        calls.append({"y": np.asarray(y, float).copy(), "groups": np.asarray(groups).astype(str)})
+        inside[0] += 1
+        try:
+            return real_kin(y, groups, *a, **k)
+        finally:
+            inside[0] -= 1
+
     monkeypatch.setattr(gh, "block_test_lm_with_pcs", _rec)
+    monkeypatch.setattr(gh._hk, "kinship_block_test", _rec_kin)
     return calls
 
 

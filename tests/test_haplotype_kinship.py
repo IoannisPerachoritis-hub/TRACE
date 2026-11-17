@@ -18,7 +18,17 @@ And in run_haplotype_block_gwas:
 - a block without a kernel, or with a tested sample the kernel lacks, is kept with
   kinship_model "failed: <reason>" and NaN statistics, and FDR_BH is over the other blocks;
 - the PCs-only test adds kinship_model "none", an empty h2_null and eta2_pcs_only = eta2.
+
+And in the pipeline (the CLI and One-Click), on the bundled example: --hap-test kinship (the
+default) gives the test the scan's kernels, "Hap_test (--hap-test)" is in run_metadata.json in
+both modes, --no-loco gives the global kernel, a wrong value stops the run, and neither
+LD_blocks_annotated_* nor LD_triage_* gains a column.
 """
+import io
+import json
+import zipfile
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -426,3 +436,75 @@ def test_the_kinship_test_never_writes_the_kernels():
     _run(p, kernels=(p["K0"], p["K_by_chr"]))
     for k, b in zip(kernels, before):
         assert np.array_equal(np.asarray(k.val), b)
+
+
+# ------------------------------------------------------------------- the pipeline (CLI)
+_EX = Path(__file__).resolve().parent / "data" / "example_v1"
+
+
+def _example_run(monkeypatch, **opts):
+    """The pipeline on the first example (Trait2, the b4 cases' LD settings, no plots); the
+    haplotype test's keyword arguments and result frames of every model, and the ZIP."""
+    import gwas.haplotype as gh
+    import gwas.pipeline as pl
+    from gwas.io import load_vcf_cached
+
+    seen = []
+    real = gh.run_haplotype_block_gwas
+
+    def _rec(*a, **k):
+        out = real(*a, **k)
+        seen.append((k, out[0]))
+        return out
+
+    monkeypatch.setattr(gh, "run_haplotype_block_gwas", _rec)
+    vcf, pheno_csv = _EX / "example.vcf.gz", _EX / "example_pheno.csv"
+    parsed = pl.ParsedGenotypes.from_callset(load_vcf_cached(vcf.read_bytes()))
+    pheno = pd.read_csv(pheno_csv, index_col=0, encoding="utf-8-sig")
+    res = pl.run_trait_pipeline(parsed, pheno, "Trait2", pl.cli_default_options(
+        vcf=str(vcf), pheno=str(pheno_csv), ld_r2=0.1, ld_flank_kb=200, hap_perms=100,
+        no_plots=True, **opts))
+    with zipfile.ZipFile(io.BytesIO(res.zip_bytes)) as zf:
+        members = {n: zf.read(n) for n in zf.namelist()}
+    return res, seen, members
+
+
+def test_the_pipeline_gives_the_kinship_test_the_scans_kernels(monkeypatch):
+    res, seen, members = _example_run(monkeypatch)
+    pcs_res, pcs_seen, pcs_members = _example_run(monkeypatch, hap_test="pcs")
+    meta = json.loads(members["run_metadata.json"])
+    pcs_meta = json.loads(pcs_members["run_metadata.json"])
+    assert meta["Hap_test (--hap-test)"] == "kinship"
+    assert pcs_meta["Hap_test (--hap-test)"] == "pcs"
+    # the two runs' metadata differ only by that key (and its line in the report)
+    assert {k: v for k, v in meta.items() if k != "Hap_test (--hap-test)"} == \
+        {k: v for k, v in pcs_meta.items() if k != "Hap_test (--hap-test)"}
+    k, frame = seen[0]
+    assert k["hap_test"] == "kinship"
+    K0, K_by_chr = k["kernels"]
+    assert set(map(str, K_by_chr)) and all(hasattr(v, "val") for v in K_by_chr.values())
+    assert not frame.empty
+    assert set(frame["kinship_model"]) <= {"LOCO kernel", "global kernel"}
+    assert frame["h2_null"].notna().all()
+    assert pcs_seen[0][0]["hap_test"] == "pcs" and pcs_seen[0][0]["kernels"] is None
+    assert (pcs_seen[0][1]["kinship_model"] == "none").all()
+    # no new column reaches the LD block or triage tables (named column lists)
+    for name in ("LD_blocks_annotated_MLM.csv", "LD_triage_MLM.csv"):
+        assert list(res.tables[name].columns) == list(pcs_res.tables[name].columns), name
+        assert not {"kinship_model", "h2_null", "eta2_pcs_only"} & set(res.tables[name].columns)
+    # the report's haplotype table shows the columns
+    assert b"<th>kinship_model</th>" in members["report.html"]
+    assert b"<th>kinship_model</th>" in pcs_members["report.html"]
+
+
+def test_without_loco_every_block_has_the_global_kernel(monkeypatch):
+    _res, seen, _m = _example_run(monkeypatch, no_loco=True)
+    frame = seen[0][1]
+    assert not frame.empty and (frame["kinship_model"] == "global kernel").all()
+
+
+def test_a_wrong_haplotype_test_stops_the_run(monkeypatch):
+    from gwas.pipeline import TraitPipelineError
+
+    with pytest.raises(TraitPipelineError, match="--hap-test must be one of"):
+        _example_run(monkeypatch, hap_test="lmm")

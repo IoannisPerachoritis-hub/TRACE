@@ -57,7 +57,8 @@ def test_cli_threads_hap_flags_into_haplotype_call():
             fn = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
             if fn == "run_haplotype_block_gwas":
                 kw = {k.arg for k in node.keywords}
-                assert {"min_hap_count", "min_group_size"} <= kw, f"hap flags not threaded: {kw}"
+                assert {"min_hap_count", "min_group_size", "hap_test", "kernels"} <= kw, \
+                    f"hap flags not threaded: {kw}"
                 found = True
     assert found, "run_haplotype_block_gwas call not found"
 
