@@ -377,6 +377,96 @@ def test_r2_keys_name_the_table_its_rows_and_the_window():
     assert gp.window_r2_key(G[:, :3]) != gp.window_r2_key(G2[:, :3])
 
 
+def test_the_haplotype_test_gets_the_runs_covariates():
+    """The GUI's haplotype test adjusts for the GWAS page run's user covariates, as the CLI's
+    does: run_covariates takes them from GWAS_CTX (written with the table), and
+    run_haplotype_tests gives them to run_haplotype_block_gwas."""
+    from gwas.haplotype import run_haplotype_block_gwas
+    from tests.test_haplotype import _cov_panel
+
+    p = _cov_panel()
+    state = {"GWAS_CTX": {"user_covar": p["cov"], "user_covar_names": ["c1"],
+                          "geno_index": p["ids"]}}
+    cov, names = gp.run_covariates(state)
+    assert cov is p["cov"] and names == ["c1"]
+    assert gp.run_covariates({}) == (None, None)
+    assert gp.run_covariates({"GWAS_CTX": {"pcs": None}}) == (None, None)
+    args = (p["blocks"], p["chroms"], p["pos"], p["G"], p["sid"], p["geno_df"], p["pheno"],
+            "t", p["pcs"], 5, 3, 99, "dosage012", 2)
+    got, _ = gp.run_haplotype_tests(*args, user_covar=cov)
+    want, _ = run_haplotype_block_gwas(
+        haplo_df=p["blocks"], chroms=p["chroms"], positions=p["pos"], geno_imputed=p["G"],
+        sid=p["sid"], geno_df=p["geno_df"], pheno_df=p["pheno"], trait_col="t", pcs=p["pcs"],
+        min_hap_count=5, min_group_size=3, n_perm=99, geno_encoding="dosage012",
+        n_pcs_used=2, user_covar=cov)
+    pd.testing.assert_frame_equal(got, want)
+    without, _ = gp.run_haplotype_tests(*args)
+    assert not np.allclose(got["F_param"], without["F_param"])
+
+
+def test_the_tab_gives_the_haplotype_test_the_contexts_covariates(monkeypatch):
+    """The LD Blocks tab passes its context's user covariates (the page puts the run's there,
+    from run_covariates) to the haplotype test, and stops plainly when their rows are not the
+    table's samples, as for the PCs."""
+    import streamlit as st
+    from streamlit.runtime.scriptrunner import StopException
+    import pages._ld_tabs.tab_genome_wide as tgw
+    from pages._ld_tabs import LDContext
+    from tests.test_haplotype import _cov_panel
+
+    p = _cov_panel()
+    seen, shown = [], []
+
+    def _hap(*a, **kw):
+        seen.append(kw)
+        return pd.DataFrame(), {}
+
+    def _stop():
+        raise StopException()
+
+    monkeypatch.setattr(tgw, "_render_block_visualization", lambda **kw: None)
+    monkeypatch.setattr(tgw, "_render_lead_snp_gallery", lambda *a, **kw: None)
+    monkeypatch.setattr(st, "stop", _stop)
+    monkeypatch.setattr(st, "error", lambda m, *a, **k: shown.append(m))
+    keys = ("pheno_used_for_hap", "n_perm_hap", "GWAS_CTX", "geno_row_ids")
+    saved = {k: st.session_state[k] for k in keys if k in st.session_state}
+    try:
+        for k in keys:
+            st.session_state.pop(k, None)
+        st.session_state["pheno_used_for_hap"] = p["pheno"]
+        st.session_state["n_perm_hap"] = 99
+
+        def run(user_covar):
+            ctx = LDContext(
+                geno_ld=p["G"], geno_hard=p["G"], chroms=p["chroms"], positions=p["pos"],
+                sid=p["sid"], geno_df=pd.DataFrame(index=p["ids"]), pheno_df=p["pheno"],
+                trait_col="t", ph_aligned=p["pheno"], y_aligned=p["pheno"]["t"].to_numpy(),
+                keep_mask=np.ones(len(p["ids"]), dtype=bool), geno_ld_aligned=p["G"],
+                gwas_df=pd.DataFrame({"SNP": p["sid"], "PValue": 0.5}),
+                haplo_df_auto=p["blocks"], ld_decay_kb=None, adj_r2_min_global=0.2,
+                ld_trait="t", user_covar=user_covar,
+                table_identity=f"T-{0 if user_covar is None else len(user_covar)}")
+            tgw._render_haplotype_gwas(ctx=ctx, haplo_df_auto=p["blocks"],
+                                       cached_extract_block_geno=None,
+                                       compute_block_qc_effects=None,
+                                       run_haplotype_block_gwas_cached_fn=_hap, settings=None)
+
+        run(p["cov"])
+        assert len(seen) == 1 and seen[0]["user_covar"] is p["cov"]
+        run(None)
+        assert len(seen) == 2 and seen[1]["user_covar"] is None
+        with pytest.raises(StopException):
+            run(p["cov"][:-5])                      # rows that are not the table's samples
+        assert len(seen) == 2 and len(shown) == 1
+        assert shown[0].startswith("The covariates on this page are not those of the "
+                                   "genotype table's"), shown
+    finally:
+        for k in list(st.session_state.keys()):
+            if k in keys or (isinstance(k, str) and k.startswith("HAPGWAS::")):
+                del st.session_state[k]
+        st.session_state.update(saved)
+
+
 def test_haplotype_and_detection_keys_name_the_identity_not_the_shape():
     pcs = np.zeros((N, 2))
     a = gp.haplotype_key("t", 5, 3, pcs, "identityA", 1000, "B", "P")

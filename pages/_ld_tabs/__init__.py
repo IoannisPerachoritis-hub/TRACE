@@ -50,6 +50,8 @@ class LDContext:
     # --- principal components (optional): the GWAS page's, written with its table ---
     pcs: np.ndarray | None = None
     pcs_full: np.ndarray | None = None     # the run's 20 PCs (the haplotype PCA panel)
+    # --- the user covariates (optional): the GWAS page's, written with its table ---
+    user_covar: np.ndarray | None = None   # one row per table sample (the haplotype test)
 
     # --- misc ---
     geno_encoding: str | None = None

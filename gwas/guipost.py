@@ -352,6 +352,18 @@ def run_pcs(state):
     return gwas_ctx.get("pcs"), gwas_ctx.get("pcs_full")
 
 
+def run_covariates(state):
+    """(matrix, names): the user covariates of the GWAS page's run that left the session's
+    table, one row per table sample in its row order, and their names, from GWAS_CTX (written
+    with the table, like the PCs: run_pcs); (None, None) without covariates or without
+    GWAS_CTX. The haplotype test adjusts for them, as the CLI's does; the table's identity
+    names the covariate table, so the haplotype key needs nothing more for them."""
+    gwas_ctx = state.get("GWAS_CTX")
+    if not isinstance(gwas_ctx, dict) or gwas_ctx.get("user_covar") is None:
+        return None, None
+    return gwas_ctx.get("user_covar"), gwas_ctx.get("user_covar_names")
+
+
 def pcs_of_samples(state, samples, *matrices):
     """True when every PC matrix of ``matrices`` (None is skipped) is of these ``samples``, the
     table's sample IDs in its row order: one row per sample, and GWAS_CTX's geno_index, which
@@ -827,18 +839,18 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
 
 def run_haplotype_tests(haplo_df, chroms, positions, geno_imputed, sid, geno_df, pheno_df,
                         trait_col, pcs, min_hap_count, min_group_size, n_perm, geno_encoding,
-                        n_pcs_used):
+                        n_pcs_used, *, user_covar=None):
     """gwas.haplotype.run_haplotype_block_gwas with the LD Blocks tab's positional arguments
-    (the call it makes to run_haplotype_block_gwas_cached_fn). Not wrapped in st.cache_data:
-    that would hash the whole table, and the tab keeps each result in the session under its
-    haplotype_key (a bounded family)."""
+    (the call it makes to run_haplotype_block_gwas_cached_fn) and the run's user covariates
+    (run_covariates). Not wrapped in st.cache_data: that would hash the whole table, and the
+    tab keeps each result in the session under its haplotype_key (a bounded family)."""
     from gwas.haplotype import run_haplotype_block_gwas
 
     return run_haplotype_block_gwas(
         haplo_df=haplo_df, chroms=chroms, positions=positions, geno_imputed=geno_imputed,
         sid=sid, geno_df=geno_df, pheno_df=pheno_df, trait_col=trait_col, pcs=pcs,
         min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=n_perm,
-        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used)
+        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, user_covar=user_covar)
 
 
 # ----------------------------------------------------------- the session keys (for Clear)

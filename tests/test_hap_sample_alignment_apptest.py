@@ -128,12 +128,12 @@ ctx = LDContext(
 # per-sample tables), with fewer permutations; the call is the tab's positional one.
 from gwas.haplotype import run_haplotype_block_gwas
 def _hap_real(blocks_, chroms_, positions_, geno_, sid_, geno_df_, pheno_, trait_, pcs_,
-              min_hap_count, min_group_size, n_perm, geno_encoding, n_pcs_used):
+              min_hap_count, min_group_size, n_perm, geno_encoding, n_pcs_used, **kw):
     return run_haplotype_block_gwas(
         haplo_df=blocks_, chroms=chroms_, positions=positions_, geno_imputed=geno_,
         sid=sid_, geno_df=geno_df_, pheno_df=pheno_, trait_col=trait_, pcs=pcs_,
         min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=99,
-        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used)
+        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, **kw)
 def _qc_stub(hap_gwas_df=None, **k):
     return hap_gwas_df
 def _r2_stub(*a, **k):

@@ -271,6 +271,8 @@ def ld_analysis_page():
     # haplotype test, eta^2 and the PCA panel: not the session's "pcs" and "pcs_full", which
     # that page writes earlier, so a run of it that stopped before the table left them there.
     pcs, pcs_full = _gp.run_pcs(st.session_state)
+    # and the user covariates of that run (the haplotype test adjusts for them, as the CLI's)
+    user_covar, _ = _gp.run_covariates(st.session_state)
     geno_encoding = st.session_state.get("geno_encoding", None)
 
     # ============================================================
@@ -508,6 +510,7 @@ def ld_analysis_page():
         ld_trait=ld_trait,
         pcs=pcs,
         pcs_full=pcs_full,
+        user_covar=user_covar,
         geno_encoding=geno_encoding,
         has_annotation=_HAS_ANNOTATION,
         geno_dosage_raw=post.raw,

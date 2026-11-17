@@ -808,6 +808,18 @@ def _render_haplotype_gwas(
             "Analysis."
         )
         st.stop()
+    # The user covariates the haplotype test adjusts for (as the CLI's does) are the same
+    # run's, written with the PCs (gwas.guipost.run_covariates), and checked the same way.
+    _user_covar = getattr(ctx, "user_covar", None)
+    if not guipost.pcs_of_samples(st.session_state, _ids_now, _user_covar):
+        _run_trait = (st.session_state.get("gwas_run_summary") or {}).get("trait") or ctx.ld_trait
+        st.error(
+            "The covariates on this page are not those of the genotype table's "
+            f"{_ids_now.size} samples, so haplotype statistics computed now would not match "
+            f"the analysis.\n\nRe-run the GWAS on `{_run_trait}`, then reopen Post-GWAS "
+            "Analysis."
+        )
+        st.stop()
 
     trait_col = ctx.trait_col
     ld_trait = ctx.ld_trait
@@ -904,6 +916,7 @@ def _render_haplotype_gwas(
                 int(n_perm),
                 st.session_state.get("geno_encoding", "dosage012"),
                 st.session_state.get("n_pcs_used", None),
+                user_covar=_user_covar,
             )
             st.session_state["hap_tables"] = hap_tables
             st.session_state["hap_gwas_df"] = hap_gwas_df

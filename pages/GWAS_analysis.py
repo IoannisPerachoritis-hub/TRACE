@@ -1483,6 +1483,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
         # its own in the session's "pcs" and "pcs_full", beside the earlier table
         "pcs_full": st.session_state["pcs_full"],
         "covar_reader": st.session_state["covar_reader"],
+        # the user covariates (one row per table sample, in iid order) and their names, or
+        # None: the Post-GWAS haplotype test adjusts for them, as the CLI's does
+        # (gwas.guipost.run_covariates); the table's identity names the covariate table
+        "user_covar": user_covar_mat,
+        "user_covar_names": list(user_covar_names) if user_covar_names else None,
         # {SNP: (REF, ALT)}: the lead-SNP box plot names the genotypes (A/A, A/G, G/G)
         "allele_map": (results.get("allele_map") if isinstance(results, dict) else None),
     }
