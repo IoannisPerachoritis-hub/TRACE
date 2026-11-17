@@ -12,6 +12,8 @@
 - The kernel is never written to; it is restricted to the tested samples by ID.
 - Haplotype groups that the intercept, PCs and covariates span on the tested samples are
   refused with the reason; with part of them spanned, the F is the GLS F of the rest.
+- A block whose F is not defined (df1 = 0, or a full model that fits the samples exactly) is
+  refused with the reason.
 
 And in run_haplotype_block_gwas:
 - the kinship-aware test is the default and needs the scan's kernels;
@@ -357,6 +359,31 @@ def test_groups_the_covariates_span_are_not_tested(h2):
         kinship_block_test(d["y"], d["groups"], Cc, d["Kr"], n_perm=99, seed=3, h2=h2)
 
 
+@pytest.mark.parametrize("h2", [None, 0.0, 0.5])
+def test_a_block_whose_f_is_not_defined_is_refused(h2):
+    """Seven tested samples (groups of 4 and 3) with five PCs: the null model keeps one
+    residual degree of freedom, so the F has none (df1 = 0, by the PCs-only test's rule); and
+    eight samples in three groups with five PCs: the full model fits them exactly. Each block
+    is refused with the reason (before any REML fit), not reported with NaN statistics beside
+    a REML h2 as if tested. The PCs-only test (unchanged) gives NaN statistics at df1 = 0."""
+    d = _data(n=40, m=100)
+    rng = np.random.default_rng(1)
+    for k, groups, why in [
+            (7, np.array(["H1"] * 4 + ["H2"] * 3),
+             r"the F test has no degrees of freedom \(df1 = 0\): 7 tested samples, 6 fixed "
+             r"effects, 2 haplotype groups"),
+            (8, np.array(["H1"] * 3 + ["H2"] * 3 + ["H3"] * 2),
+             r"the full model fits the tested samples exactly, leaving no residual variance: "
+             r"8 tested samples, 6 fixed effects, 3 haplotype groups")]:
+        C = rng.normal(size=(k, 5))
+        Kr, _ = kernel_for_samples(_Kernel(d["ids"], d["K"]), d["ids"][:k])
+        with pytest.raises(KinshipTestError, match=why):
+            kinship_block_test(d["y"][:k], groups, C, Kr, n_perm=9, seed=1, h2=h2)
+    F, _p, df1, df2 = block_test_lm_with_pcs(d["y"][:7], np.array(["H1"] * 4 + ["H2"] * 3),
+                                             pcs=rng.normal(size=(7, 5)))
+    assert np.isnan(F) and (df1, df2) == (0, 1)
+
+
 @pytest.mark.parametrize("h2", [0.3, 0.8])
 def test_a_group_the_covariates_span_leaves_the_others_tested(h2):
     """With one of three groups' indicators among the covariates, the F is the GLS F of the
@@ -494,6 +521,34 @@ def test_a_block_whose_groups_the_covariates_span_is_kept_with_the_reason():
     assert res["eta2_pcs_only"].iloc[0] == pcs["eta2"].iloc[0]
     assert res["kinship_model"].iloc[1] == "LOCO kernel"
     assert np.isfinite(res["F_param"].iloc[1]) and np.isfinite(res["P_perm"].iloc[1])
+
+
+def test_a_block_whose_f_has_no_degrees_of_freedom_is_kept_with_the_reason():
+    """Block 1 tested on seven samples (groups of 4 and 3) with five PCs: df1 = 0. Its row says
+    why, with no h2; the design's degrees of freedom and the PCs-only eta2 are kept. The
+    PCs-only test's row is today's: NaN F and p-values, a finite eta2."""
+    p = _two_chromosome_panel()
+    G = p["G"]
+    grp = np.select([(G[:, 0] == 0) & (G[:, 1] == 0), G[:, 0] == 2], [0, 1], 2)
+    keep = np.r_[np.flatnonzero(grp == 0)[:4], np.flatnonzero(grp == 1)[:3]]
+    pheno = p["pheno"].copy()
+    pheno.loc[~pheno.index.isin(p["ids"][keep]), "t"] = np.nan
+    kw = dict(haplo_df=p["blocks"], chroms=p["chroms"], positions=p["pos"], geno_imputed=G,
+              sid=p["sid"], geno_df=p["geno_df"], pheno_df=pheno, trait_col="t",
+              pcs=np.random.default_rng(4).normal(size=(len(p["ids"]), 5)),
+              min_hap_count=3, min_group_size=3, n_perm=99)
+    res, _ = run_haplotype_block_gwas(**kw, kernels=(p["K0"], p["K_by_chr"]))
+    pcs, _ = run_haplotype_block_gwas(**kw, hap_test="pcs")
+    r = res[res["Chr"].astype(str) == "1"].iloc[0]
+    q = pcs[pcs["Chr"].astype(str) == "1"].iloc[0]
+    assert r["n_samples_tested"] == 7
+    assert r["kinship_model"] == ("failed: the F test has no degrees of freedom (df1 = 0): "
+                                  "7 tested samples, 6 fixed effects, 2 haplotype groups")
+    for c in ("h2_null", "F_param", "PValue_param", "P_perm", "eta2"):
+        assert np.isnan(r[c]), c
+    assert (r["df1"], r["df2"]) == (q["df1"], q["df2"]) == (0, 1)
+    assert np.isnan(q["F_param"]) and np.isnan(q["P_perm"]) and np.isfinite(q["eta2"])
+    assert r["eta2_pcs_only"] == q["eta2"]
 
 
 def test_the_pcs_test_adds_only_the_three_columns():

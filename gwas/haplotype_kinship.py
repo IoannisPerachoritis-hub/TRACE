@@ -43,7 +43,10 @@ A block the test cannot test raises KinshipTestError with the reason; the caller
 never falling back to another test. Besides a kernel that does not fit the samples or a failed
 fit, that is a block whose haplotype groups lie in the span of the intercept, PCs and
 covariates on its tested samples: no haplotype direction is left to test (the directions
-outside the span are found with the rank tolerance on the scale of H, _outside).
+outside the span are found with the rank tolerance on the scale of H, _outside). It is also a
+block whose F is not defined: no degrees of freedom (df1 = 0 by the PCs-only test's rule, when
+the null model has one residual degree of freedom), or no residual variance (a full model that
+fits the samples exactly, or a phenotype in its span).
 """
 import numpy as np
 import pandas as pd
@@ -240,6 +243,20 @@ def _f_of_residuals(R, Q0, QH, rr, df_num, df_den):
     return np.where(ok, F, np.nan)
 
 
+def _no_f_reason(y, X0, H):
+    """Why the PCs-only test's nested F of [X0] against [X0, H] on ``y`` is not defined, once
+    its degrees of freedom are there and the full model does not fit the samples exactly."""
+    from gwas.models import _ols_fit
+
+    sse0 = _ols_fit(y, X0)[2]
+    sse1 = _ols_fit(y, np.column_stack([X0, H]))[2]
+    if not sse1 > 0:
+        return "the phenotype lies in the span of the full model, leaving no residual variance"
+    if sse0 < sse1:
+        return "the phenotype has no variance along the haplotype groups beyond the fixed effects"
+    return "its F is not finite"
+
+
 def _design(covariates, n):
     """[1, covariates]: the intercept and the covariate columns (none when ``covariates`` is
     None), as the PCs-only test builds its reduced model."""
@@ -319,10 +336,24 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
     # haplotype groups that the intercept, PCs and covariates already span on these samples
     # (a covariate that defines them, as the lead SNP's dosage in a conditional analysis):
     # nothing is left to test, and the whitening (invertible) cannot change that
-    if _outside(H, Q).shape[1] == 0:
+    n_out = _outside(H, Q).shape[1]
+    if n_out == 0:
         raise KinshipTestError("the haplotype groups lie in the span of the intercept, PCs and "
                                "covariates on the tested samples: no haplotype effect is left "
                                "to test")
+    # the F test's degrees of freedom, by the PCs-only test's rule (max(1, n - columns) for
+    # each model), and a full model that fits the samples exactly: no F is defined
+    p0, nh = X0.shape[1], H.shape[1]
+    shape = (f"{n} tested samples, {p0} fixed effect{'s' if p0 != 1 else ''}, "
+             f"{nh + 1} haplotype groups")
+    df0 = int(max(1, n - p0))
+    df_den = int(max(1, n - p0 - nh))
+    df_num = int(df0 - df_den)
+    if df_num < 1:
+        raise KinshipTestError(f"the F test has no degrees of freedom (df1 = 0): {shape}")
+    if Q.shape[1] + n_out >= n:
+        raise KinshipTestError(f"the full model fits the tested samples exactly, leaving no "
+                               f"residual variance: {shape}")
     if eig is None:
         Kv = np.asarray(K, dtype=float)
         if Kv.shape != (n, n):
@@ -344,6 +375,9 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
     if h2 == 0.0:
         # the whitening is the identity: the PCs-only test's own functions
         F, p_param, df_num, df_den = block_test_lm_with_pcs(y, groups, pcs=covariates)
+        if not np.isfinite(F):
+            raise KinshipTestError(f"the F test is not defined: {_no_f_reason(y, X0, H)}: "
+                                   f"{shape}")
         F_perm, p_perm = freedman_lane_perm_pvalue(y, groups, pcs=covariates,
                                                    n_perm=int(n_perm), seed=seed)
 
@@ -355,22 +389,20 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
     else:
         W = _whitener(S, U, h2)
         ys, Xs, Hs = W(y), W(X0), W(H)
-        df0 = int(max(1, n - X0.shape[1]))
-        df_den = int(max(1, n - X0.shape[1] - H.shape[1]))
-        df_num = int(df0 - df_den)
         Q0 = _orth(Xs)
         QH = _outside(Hs, Q0)
         e = ys - Q0.dot(Q0.T.dot(ys))              # the whitened residuals of the null model
         rr = float(e.dot(e))
         F = float(_f_of_residuals(e[:, None], Q0, QH, rr, df_num, df_den)[0])
-        p_param = float(fdist.sf(F, df_num, df_den)) if np.isfinite(F) else float("nan")
-        if np.isfinite(F):
-            idx = permutation_indices(n, n_perm, seed)
-            Fb = _f_of_residuals(e[idx.T], Q0, QH, rr, df_num, df_den)
-            Fb = np.where(np.isfinite(Fb), Fb, 0.0)
-            p_perm = (1.0 + float(np.sum(Fb >= F))) / (1.0 + float(int(n_perm)))
-        else:
-            p_perm = float("nan")
+        if not np.isfinite(F):
+            # with its degrees of freedom there, the F is NaN only without residual variance
+            raise KinshipTestError("the F test is not defined: the phenotype lies in the span "
+                                   f"of the full model, leaving no residual variance: {shape}")
+        p_param = float(fdist.sf(F, df_num, df_den))
+        idx = permutation_indices(n, n_perm, seed)
+        Fb = _f_of_residuals(e[idx.T], Q0, QH, rr, df_num, df_den)
+        Fb = np.where(np.isfinite(Fb), Fb, 0.0)
+        p_perm = (1.0 + float(np.sum(Fb >= F))) / (1.0 + float(int(n_perm)))
         F_perm = F
 
     F = float(F) if np.isfinite(F) else float("nan")
