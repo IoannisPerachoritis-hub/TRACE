@@ -1,0 +1,5 @@
+run,trait,species,status,n_snps_TRACE,n_snps_GAPIT3,lambda_TRACE,lambda_GAPIT3,lambda_TRACE_unrounded,lambda_GAPIT3_unrounded,sig_bonf_TRACE,sig_bonf_GAPIT3,jaccard_sig,n_shared_snps,spearman_rho,spearman_rho_unrounded,top10_overlap,top20_overlap
+pepper_FWe,FWe,Pepper,ok,4183,4183,1.2355,1.1024,1.2355211805100723,1.1024198994272476,10,0,0.0,4183,0.2829,0.2829181465704783,2,3
+pepper_BX,BX,Pepper,ok,4183,4183,1.2335,1.0455,1.2335136781858607,1.0455393982455092,8,4,0.2,4183,0.3359,0.3359280181193922,3,5
+tomato_weight_g,weight_g,Tomato,ok,43734,43734,1.0047,0.6662,1.0046561244270789,0.6662492022139914,9,7,0.0,43734,-0.0011,-0.001108519186502773,0,0
+tomato_locule_number,locule_number,Tomato,ok,43749,43749,0.9664,0.8019,0.9663977398742669,0.8018835526067091,5,4,0.2857,43749,-0.019,-0.01904548082615591,5,6
