@@ -244,6 +244,38 @@ def test_the_reml_h2_is_fastlmms():
     assert kinship_block_test(d["y"], d["groups"], d["C"], d["Kr"], n_perm=9, seed=1)["h2"] == ours
 
 
+def test_the_reml_h2_on_a_reordered_subset_is_single_snps():
+    """single_snp, given the full kernel as built (mean diagonal 1 over all its samples) and
+    the phenotype and covariates of a reordered subset, intersects the IDs and rescales the
+    kernel itself (DiagKtoN); its Nullh2 equals null_h2 on kernel_for_samples(full kernel,
+    subset), so the ID restriction and the rescale are FaST-LMM's. Also with a mean of 1,000
+    added to the trait (single_snp's null model does not move with the mean)."""
+    from fastlmm.association import single_snp
+    from pysnptools.kernelreader import KernelData
+    from pysnptools.snpreader import SnpData
+
+    from gwas.utils import CovarData, PhenoData
+
+    d = _data(seed=3, n=150, h2=0.6)
+    iid = np.c_[d["ids"], d["ids"]]
+    pick = np.random.default_rng(6).permutation(len(d["ids"]))[:110]
+    sub = d["ids"][pick]
+    K32 = d["K"].astype(np.float32)                 # as TRACE keeps it
+    Kr, _ = kernel_for_samples(_Kernel(d["ids"], K32), sub)
+    assert abs(np.trace(K32[np.ix_(pick, pick)].astype(float)) / 110 - 1) > 1e-3   # a rescale
+    snps = SnpData(iid=iid, sid=np.array(["a", "b"]), val=d["G"][:, :2].copy(),
+                   pos=np.array([[1, 0, 1], [1, 0, 2]], dtype=float))
+    for shift in (0.0, 1e3):
+        y = d["y"][pick] + shift
+        res = single_snp(test_snps=snps, pheno=PhenoData(sub, y),
+                         K0=KernelData(iid=iid, val=K32.astype(np.float64)),
+                         covar=CovarData(sub, d["C"][pick]), leave_out_one_chrom=False)
+        h_ss = float(res["Nullh2"].iloc[0])
+        ours = null_h2(y, d["C"][pick], Kr)
+        assert 0.05 < ours < H2_MAX - 0.05, ours
+        assert abs(ours - h_ss) < 1e-6, (shift, ours, h_ss)
+
+
 def test_the_reml_h2_and_the_test_do_not_move_with_the_traits_mean():
     """The REML likelihood depends on y only through its residual on X, which reml_h2
     rotates (as single_snp's null model does), so a constant added to the trait (a mean of
