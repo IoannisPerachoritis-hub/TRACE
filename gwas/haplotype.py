@@ -124,8 +124,11 @@ def run_haplotype_block_gwas(
     """
     Genome-wide haplotype/MLG association per LD block.
 
-    Effect sizes are reported on the **PC-residualised phenotype** (the phenotype after
-    the population-structure PCs are regressed out), consistent with the nested F-test:
+    The parametric test, the Freedman-Lane permutation and the effect sizes all use one
+    design: an intercept, the population-structure PCs and the user covariates
+    (``user_covar``, aligned to ``geno_df``'s rows; a tested sample without a value raises).
+    Effect sizes are reported on the **residualised phenotype** (the phenotype after that
+    design is regressed out), consistent with the nested F-test:
     ``eta2`` (variance explained by the haplotype grouping), its noncentral-F 95% CI
     (``eta2_ci_low``/``eta2_ci_high``, from the parametric F), ``omega2`` (a less
     upward-biased variance-explained estimate), and ``lead_snp_r2`` (the 1-df additive
@@ -488,22 +491,29 @@ def run_haplotype_block_gwas(
 
         # Append user covariates AFTER the PC truncation above (n_pcs_used slices only the
         # PC columns, so covariates stacked before it would be sliced off). Aligned to the
-        # block's final samples, PCs first then covariates (the _make_covar convention);
-        # inert when user_covar is None, and NaN-safe (any missing cell -> PCs only).
+        # block's final samples, PCs first then covariates (the _make_covar convention).
+        # The parametric test, the permutation, eta2 and lead_snp_r2 all use this one
+        # design, [1, PCs, covariates]; with user_covar None it is the PCs alone, as before.
+        # The callers drop the samples without a covariate value before the test, so a
+        # missing value here is an error, never a silent fall back to the PCs alone.
         _cov_use = pcs_use
         if user_covar is not None:
             _uc = pd.DataFrame(np.asarray(user_covar, float),
                                index=geno_df.index.astype(str))
             _uc_mat = _uc.reindex(df_test["Sample"].astype(str)).to_numpy(dtype=float)
-            if np.isfinite(_uc_mat).all():
-                _cov_use = (np.column_stack([pcs_use, _uc_mat])
-                            if pcs_use is not None else _uc_mat)
+            if not np.isfinite(_uc_mat).all():
+                raise ValueError(
+                    f"Block {_bkey}: {int((~np.isfinite(_uc_mat)).any(axis=1).sum())} tested "
+                    "sample(s) have no value for a user covariate. Samples without a covariate "
+                    "value must be dropped before the haplotype test.")
+            _cov_use = (np.column_stack([pcs_use, _uc_mat])
+                        if pcs_use is not None else _uc_mat)
 
         try:
             F_param, pval_param, df1, df2 = block_test_lm_with_pcs(
                 y=y_test,
                 groups=g_test,
-                pcs=pcs_use,
+                pcs=_cov_use,
             )
 
             # Seed the Freedman-Lane permutation from the block's coordinates only.
@@ -524,9 +534,10 @@ def run_haplotype_block_gwas(
             untested[_bkey] = "the haplotype test failed"
             continue
 
-        # η² must be on PC-adjusted residuals to be consistent with the F-test
-        if pcs_use is not None and pcs_use.shape[0] == len(y_test):
-            _X_pcs = np.column_stack([np.ones(len(y_test)), pcs_use])
+        # η² must be on the residuals of the test's own design ([1, PCs, covariates]) to be
+        # consistent with the F-test
+        if _cov_use is not None and _cov_use.shape[0] == len(y_test):
+            _X_pcs = np.column_stack([np.ones(len(y_test)), _cov_use])
             _beta  = np.linalg.lstsq(_X_pcs, y_test, rcond=None)[0]
             _y_for_effects = y_test - _X_pcs @ _beta
         else:
@@ -534,9 +545,9 @@ def run_haplotype_block_gwas(
             _y_for_effects = y_test
         hap_effects = compute_haplotype_effects(_y_for_effects, g_test)
 
-        # Effect-size statistics (additive; parametric; on the SAME PC-residualised
-        # phenotype + retained samples as eta2). eta2 == df1*F_param/(df1*F_param+df2),
-        # so these reuse F_param/df1/df2 and add no new estimation of eta2 itself.
+        # Effect-size statistics (additive; parametric; on the SAME residualised phenotype
+        # + retained samples as eta2). With the intercept alone as the design (no PCs, no
+        # covariates) eta2 == df1*F_param/(df1*F_param+df2); these reuse F_param/df1/df2.
         _eta2_lo, _eta2_hi = _eta2_confint(F_param, df1, df2)
         _om2 = _omega2_from_f(F_param, df1, df2)
         _lead_r2 = _lead_snp_partial_r2(
