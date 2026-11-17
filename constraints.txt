@@ -50,7 +50,6 @@ pysnptools==0.5.14
 # benchmark runs; it pins an import shim, not a numerical component.
 six==1.17.0
 scikit-allel==1.3.13
-bed-reader==1.0.6
 
 # Plotting
 matplotlib==3.10.7
