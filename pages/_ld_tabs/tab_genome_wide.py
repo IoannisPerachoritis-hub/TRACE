@@ -802,8 +802,8 @@ def _render_haplotype_gwas(
         # render()'s `except StopException`, so the tab ends cleanly instead of showing
         # a traceback.
         st.stop()
-    # The PCs (the haplotype test, eta^2, the PCA panel) are the GWAS page's of this table:
-    # the page takes them from GWAS_CTX, written with the table (gwas.guipost.run_pcs), not
+    # The PCs (the haplotype test, the window R2, the PCA panel) are the GWAS page's of this
+    # table: the page takes them from GWAS_CTX, written with the table (gwas.guipost.run_pcs), not
     # from the session's "pcs" / "pcs_full", which a GWAS page run stopped before the table
     # leaves beside it. PCs of other samples would pair rows wrongly, or fail the test with
     # a traceback: the tab stops plainly instead, as above.
@@ -986,7 +986,7 @@ def _render_haplotype_gwas(
 
     def _show_block_table(tested_df):
         """One row per detected block: the block, its haplotype test, its coherence."""
-        from .block_table import merge_block_table, screen_view
+        from .block_table import WINDOW_R2_HELP, merge_block_table, screen_view
         _tbl = merge_block_table(haplo_df_auto, tested_df, _ldq_full, untested=_untested,
                                  seed_p=_seed_p, intervals=_block_intervals(ctx, haplo_df_auto))
         st.subheader("LD blocks and haplotype tests", help=ASSOCIATION_RESULTS_HELP)
@@ -995,7 +995,7 @@ def _render_haplotype_gwas(
         st.download_button(
             "Download block table (CSV)", _tbl.to_csv(index=False).encode("utf-8"),
             file_name=f"LD_blocks_and_haplotype_tests_{ld_trait}.csv", mime="text/csv",
-            key="dl_block_table",
+            key="dl_block_table", help=WINDOW_R2_HELP,
         )
 
     # ------------------------------------------------------------
@@ -1038,9 +1038,9 @@ def _render_haplotype_gwas(
         qvals = bh_qvalues(pvals)
     hap_gwas_df["FDR_qvalue"] = qvals
 
-    # T-34 (§2.8 fix): enrich BEFORE display so η²/Frac_other/Block_length_kb/MAF
-    # reach the on-screen table, not only the downloaded CSV/ZIP.
-    with st.spinner("Computing block effect sizes (η²) and MAF…"):
+    # T-34 (§2.8 fix): enrich BEFORE display so Frac_other/Block_length_kb/MAF reach the
+    # on-screen table and the window R² the CSV, not only the downloaded CSV/ZIP.
+    with st.spinner("Computing block lengths, MAF and the window R²…"):
         hap_gwas_df = compute_block_qc_effects(
             hap_gwas_df=hap_gwas_df,
             chroms=chroms,
@@ -1627,6 +1627,7 @@ def _render_block_visualization(
                                block_row.get("eta2")),
         y_label=_hap_ylab(ctx.ld_trait, _n_pcs),
         details_table=_details_table,
+        eta2_test=block_row.get("eta2"),
     )
 
     _render_haplotype_pca(
@@ -1693,7 +1694,7 @@ def _render_tukey_tables(tukey_df, cld_df):
 def _render_tukey_and_boxplot(
     mlg_df, trait_col, trait_label, mlg_order, hap_counts,
     selected_block, block_chr, block_start, block_end,
-    plot_values=None, title_lines=None, y_label=None, details_table=None,
+    plot_values=None, title_lines=None, y_label=None, details_table=None, eta2_test=None,
 ):
     """Tukey HSD, the block's haplotype box plot, one details expander, the forest plot.
 
@@ -1704,6 +1705,9 @@ def _render_tukey_and_boxplot(
     letters above its box, and "Download plotted data (CSV)" under it gives
     ``hap_plot_data``. The collapsed "Haplotype details" expander holds ``details_table``
     (the MLG sequence table: frame, CSV bytes, file name, key), Tukey HSD and the CLD.
+    ``eta2_test`` is the haplotype test's eta2 for the block (the block table's "η²
+    (haplotype test)"): the η² the forest plot shows, as the box plot's title does. The
+    forest plot draws the groups' means of the plotted values; it computes no η² of its own.
     """
     # one colour per haplotype label, the same as the PCA panel and the lead-SNP box plot
     _hap_colors = haplotype_color_map(mlg_order)
@@ -1832,16 +1836,18 @@ def _render_tukey_and_boxplot(
 
             _y_all_f = mlg_df[trait_col].astype(float).dropna().values
             _gm_f = float(np.mean(_y_all_f))
-            _ss_tot_f = float(np.sum((_y_all_f - _gm_f) ** 2))
-            _ss_bet_f = float(sum(
-                r["n"] * (r["Mean"] - _gm_f) ** 2
-                for _, r in _forest_df.iterrows()
-            ))
-            _eta2_vis = _ss_bet_f / _ss_tot_f if _ss_tot_f > 0 else float("nan")
+            # the haplotype test's eta2 for this block (its samples, groups and model), not
+            # one computed here from the plotted values: one η² for the block on the tab
+            try:
+                _eta2_vis = float(eta2_test)
+            except (TypeError, ValueError):
+                _eta2_vis = float("nan")
 
             if np.isfinite(_eta2_vis):
                 st.metric("Effect size (η²)", f"{_eta2_vis:.3f}",
-                          help="Proportion of phenotypic variance explained by haplotype group")
+                          help="The haplotype test's η² for this block, as in the block "
+                               "table: the share of the trait's variance its haplotype "
+                               "groups explain in the test's model.")
 
             _x_range = (
                 _forest_df["CI95_hi"].max() - _forest_df["CI95_lo"].min()

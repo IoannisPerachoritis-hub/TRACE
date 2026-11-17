@@ -20,8 +20,9 @@ test run on ctx's genotype table (the panel shows the groups the test tested, fr
 per-sample assignments, reviewer point 2-INT.10), so a stale session mirror cannot size
 them. The panel no longer calls the block extractor, so the extractor passed in (which
 forwards to the real ``gwas.ld.extract_block_geno_for_paper``) is not reached. Only LD
-detection and eta2 enrichment are stubbed -- no real GWAS runs and no core statistical
-module is re-implemented.
+detection and the block effects enrichment (window R2, MAF) are stubbed -- no real GWAS
+runs and no core statistical module is re-implemented. The forest plot's η² must be the
+haplotype test's for the block.
 
 The cases are parameterised by the four counts that can disagree:
 (ctx rows / ctx ids / ``ld_geno_hard`` rows / ``geno_row_ids`` length).
@@ -218,6 +219,10 @@ def test_happy_path_renders():
     assert any(_MLG_PANEL in m.value for m in at.markdown), \
         "MLG panel missing on the happy path"
     assert len(at.session_state["sample_vis"]) == _expected_tested(130)
+    # the forest plot's η² is the haplotype test's for the block (the block table's)
+    eta2 = float(at.session_state["hap_gwas_df_enriched"]["eta2"].iloc[0])
+    shown = [m.value for m in at.metric if m.label == "Effect size (η²)"]
+    assert shown == [f"{eta2:.3f}"], shown
 
 
 # --- (a): the tab takes its sample axis and its matrix from ONE source (ctx), so a

@@ -10,8 +10,8 @@ import pandas as pd
 import pytest
 
 from gwas.haplotype import run_haplotype_block_gwas
-from pages._ld_tabs.block_table import (COMPACT_COLUMNS, CSV_ONLY_COLUMNS, compact_view,
-                                        merge_block_table, screen_view)
+from pages._ld_tabs.block_table import (COMPACT_COLUMNS, CSV_ONLY_COLUMNS, WINDOW_R2_HELP,
+                                        compact_view, merge_block_table, screen_view)
 
 BLOCKS = pd.DataFrame({
     "Chr": ["2", "2", "chr03"], "Start (bp)": [1000, 5000, 200], "End (bp)": [3000, 9000, 800],
@@ -23,7 +23,7 @@ HAP = pd.DataFrame({   # blocks 1 and 3 tested (Chr written differently on purpo
     "n_snps": [3, 2], "n_samples_tested": [48, 40], "n_tested_haplotypes": [3, 2],
     "P_perm": [0.004, 0.2], "PValue": [0.004, 0.2], "FDR_BH": [0.008, 0.2],
     "FDR_qvalue": [0.008, 0.2], "eta2": [0.31, 0.05], "eta2_ci_low": [0.1, 0.0],
-    "eta2_ci_high": [0.5, 0.2], "EtaSq": [0.29, 0.06], "MidPos": [2000.0, 500.0],
+    "eta2_ci_high": [0.5, 0.2], "Window_R2": [0.29, 0.06], "MidPos": [2000.0, 500.0],
     "kinship_model": ["LOCO kernel", "failed: no kernel for chromosome 3"],
     "h2_null": [0.42, float("nan")], "eta2_pcs_only": [0.33, 0.06],
 })
@@ -49,7 +49,7 @@ def test_one_row_per_detected_block_with_every_value_from_its_source():
                      "n_tested_haplotypes"), ("P (permutation)", "P_perm"),
                      ("FDR q", "FDR_qvalue"), ("η² (haplotype test)", "eta2"),
                      ("η² 95% CI low", "eta2_ci_low"), ("η² 95% CI high", "eta2_ci_high"),
-                     ("η² (all SNPs in the block window)", "EtaSq"),
+                     ("Window R² (all SNPs in the block window)", "Window_R2"),
                      ("SNPs in the test (after thinning)", "n_snps"),
                      ("Kinship model", "kinship_model"), ("η² (PCs-only test)", "eta2_pcs_only")]:
         assert t.loc[[0, 2], col].tolist() == HAP[src].tolist(), col
@@ -61,7 +61,7 @@ def test_one_row_per_detected_block_with_every_value_from_its_source():
 
 def test_values_under_two_names_are_shown_once():
     t = merge_block_table(BLOCKS, HAP, COH, untested=WHY)
-    for gone in ("PValue", "FDR_BH", "FDR_qvalue", "P_perm", "eta2", "EtaSq", "ldq_r2_mean",
+    for gone in ("PValue", "FDR_BH", "FDR_qvalue", "P_perm", "eta2", "Window_R2", "ldq_r2_mean",
                  "lead_snp", "MidPos"):
         assert gone not in t.columns, gone
     assert list(t.columns).count("Chr") == 1
@@ -69,8 +69,28 @@ def test_values_under_two_names_are_shown_once():
     odd = HAP.assign(PValue=[0.01, 0.3])
     t2 = merge_block_table(BLOCKS, odd, COH)
     assert "P (permutation)" in t2.columns and "PValue (differs from P_perm)" in t2.columns
-    same_eta = HAP.assign(EtaSq=HAP["eta2"])
-    assert "η² (all SNPs in the block window)" not in merge_block_table(BLOCKS, same_eta).columns
+    # the window R² is another quantity, not the test's η² under a second name: it keeps its
+    # own column even where the two agree
+    same = merge_block_table(BLOCKS, HAP.assign(Window_R2=HAP["eta2"]))
+    assert "Window R² (all SNPs in the block window)" in same.columns
+    assert "η² (haplotype test)" in same.columns
+
+
+def test_the_only_eta2_on_the_table_is_the_tests():
+    """Every column the table labels η² is the haplotype test's (its value, its interval,
+    and the PCs-only test's value for comparison); the window value is an R²."""
+    t = merge_block_table(BLOCKS, HAP, COH, untested=WHY)
+    eta = [c for c in t.columns if "η²" in c]
+    src = {"η² (haplotype test)": "eta2", "η² 95% CI low": "eta2_ci_low",
+           "η² 95% CI high": "eta2_ci_high", "η² (PCs-only test)": "eta2_pcs_only"}
+    assert sorted(eta) == sorted(src)
+    for col in eta:
+        assert t.loc[[0, 2], col].tolist() == HAP[src[col]].tolist(), col
+    assert t.loc[[0, 2], "Window R² (all SNPs in the block window)"].tolist() == \
+        HAP["Window_R2"].tolist()
+    # the download button's tooltip names the CSV's window column in one line
+    assert "\n" not in WINDOW_R2_HELP and CSV_ONLY_COLUMNS[0] in WINDOW_R2_HELP
+    assert "not the test's η²" in WINDOW_R2_HELP
 
 
 def test_the_compact_view_and_untested_tables():
@@ -93,9 +113,9 @@ def test_the_candidate_interval_sits_after_end():
     assert list(compact_view(t).columns) == COMPACT_COLUMNS         # the default view as before
 
 
-def test_the_window_eta2_is_in_the_csv_only():
-    t = merge_block_table(BLOCKS, HAP, COH, untested=WHY)     # EtaSq differs from eta2
-    window = "η² (all SNPs in the block window)"
+def test_the_window_r2_is_in_the_csv_only():
+    t = merge_block_table(BLOCKS, HAP, COH, untested=WHY)
+    window = "Window R² (all SNPs in the block window)"
     assert CSV_ONLY_COLUMNS == [window] and window in t.columns       # the CSV keeps it
     for all_columns in (False, True):
         shown = screen_view(t, all_columns)

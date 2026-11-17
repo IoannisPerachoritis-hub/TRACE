@@ -11,7 +11,7 @@ and asserts the block-table sections render:
 
 The heavy per-block visualization (`_render_block_visualization`, MLG boxplots) is
 monkeypatched to a no-op so the render reaches the labels without needing real
-genotype extraction. The haplotype compute + η² enrichment are passed as stub
+genotype extraction. The haplotype compute + block effects enrichment are passed as stub
 callables — no real GWAS runs, no core statistical module is exercised. The
 results table is behind an unkeyed checkbox, so a second ``run()`` checks it.
 """

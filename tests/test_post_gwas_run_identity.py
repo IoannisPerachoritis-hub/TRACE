@@ -470,8 +470,8 @@ def test_the_pcs_are_those_written_with_the_table(run_page):
 
 
 def test_the_block_effects_take_the_pcs_written_with_the_table(run_page, monkeypatch):
-    """eta^2 of the LD Blocks tab (the page's compute_block_qc_effects) is adjusted for
-    GWAS_CTX's PCs, as the haplotype test is, not for the session's "pcs"."""
+    """The window R2 of the LD Blocks tab (the page's compute_block_qc_effects) is adjusted
+    for GWAS_CTX's PCs, as the haplotype test is, not for the session's "pcs"."""
     run, _ = run_page
     rng = np.random.default_rng(12)
     pcs, pcs_full = _pcs(rng, N)
@@ -480,7 +480,7 @@ def test_the_block_effects_take_the_pcs_written_with_the_table(run_page, monkeyp
     seen = {}
     monkeypatch.setattr(gp, "block_qc_effects", lambda **kw: seen.update(kw))
     ctx["_page"]["compute_block_qc_effects"](hap_gwas_df=None)
-    assert seen["pcs"] is pcs, "eta^2 was adjusted for the session's PCs of another sample set"
+    assert seen["pcs"] is pcs, "the window R2 was adjusted for the session's PCs of another sample set"
 
 
 def test_the_pca_panel_draws_the_pcs_it_is_given(monkeypatch):

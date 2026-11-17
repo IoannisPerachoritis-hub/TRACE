@@ -7,10 +7,13 @@ tested. Columns that repeat a value under two names are shown once:
 - the test's ``PValue`` is its ``P_perm``: "P (permutation)";
 - the function's ``FDR_BH`` and the tab's ``FDR_qvalue`` are one Benjamini-Hochberg: "FDR q";
 - the block's ``Mean r2`` is the coherence table's ``ldq_r2_mean``: "Mean r²".
-When a pair differs (it should not), both are kept, labelled. ``eta2`` (the haplotype
-test's, on its samples and markers) and ``EtaSq`` (every SNP in the block's coordinate
-window) are labelled apart unless they are equal. ``screen_view`` is what the tab shows: the
-window's η², built from the older window-based groups, is in the CSV only.
+When a pair differs (it should not), both are kept, labelled. The only η² is the haplotype
+test's ``eta2`` (on its samples and markers, by its model), with its interval and the
+PCs-only test's value for comparison. ``Window_R2`` (gwas.guipost.block_qc_effects: the
+share of the PC-residualised trait's variance that the haplotype groups of every SNP in the
+block's coordinate window explain, built from the older window-based groups) is another
+quantity: it is labelled "Window R² (all SNPs in the block window)" and ``screen_view``, what
+the tab shows, leaves it to the CSV.
 """
 import numpy as np
 import pandas as pd
@@ -38,7 +41,14 @@ _HAP_NAMES = {
     # not test the block), its null model's h2, and the PCs-only test's eta2 for comparison
     "kinship_model": "Kinship model", "h2_null": "h² (null model)",
     "eta2_pcs_only": "η² (PCs-only test)",
+    # gwas.guipost.block_qc_effects' window value: not the test's η²
+    "Window_R2": "Window R² (all SNPs in the block window)",
 }
+# the "Download block table (CSV)" button's tooltip: the CSV's one column the screen leaves out
+WINDOW_R2_HELP = (
+    "The CSV also has Window R² (all SNPs in the block window): the share of the trait's "
+    "variance, after the PCs, that the haplotype groups of every SNP in the block's window "
+    "explain over all phenotyped samples. It is not the test's η².")
 _COH_NAMES = {"ldq_r2_min": "Min r²", "ldq_frac_members_r2_lead_ge": "Frac r² ≥ 0.6 to lead"}
 
 
@@ -112,13 +122,6 @@ def merge_block_table(blocks, hap_result=None, coherence=None, untested=None, se
         hcols = merged.drop(columns=["_c", "_s", "_e", "_merge"])
         hcols = _keep_one(hcols, "P_perm", "PValue", "P_perm", "PValue (differs from P_perm)")
         hcols = _keep_one(hcols, "FDR_qvalue", "FDR_BH", "FDR q", "FDR_BH (differs)")
-        # eta2 is the test's (its samples and markers); EtaSq is over every SNP in the
-        # block's coordinate window: one column when equal, else both, labelled
-        if "EtaSq" in hcols.columns:
-            if "eta2" in hcols.columns and _same(hcols["eta2"], hcols["EtaSq"]):
-                hcols = hcols.drop(columns=["EtaSq"])
-            else:
-                hcols = hcols.rename(columns={"EtaSq": "η² (all SNPs in the block window)"})
         out = pd.concat([out, hcols.rename(columns=_HAP_NAMES)], axis=1)
 
     # why a block was not tested
@@ -159,9 +162,9 @@ def compact_view(table):
     return table[[c for c in COMPACT_COLUMNS if c in table.columns]]
 
 
-# in the CSV, not on screen: the window-based η² comes from the older coordinate-window
+# in the CSV, not on screen: the window R² comes from the older coordinate-window
 # haplotype groups, which often differ from the test's, so on screen it only confuses
-CSV_ONLY_COLUMNS = ["η² (all SNPs in the block window)"]
+CSV_ONLY_COLUMNS = ["Window R² (all SNPs in the block window)"]
 
 
 def screen_view(table, all_columns=False):

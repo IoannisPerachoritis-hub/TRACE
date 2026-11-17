@@ -732,13 +732,18 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
                      trait_col, min_hap_count, min_group_size, compute_maf=True,
                      geno_encoding=None, pcs=None, strict_selfing=False):
     """Add publication-oriented QC/effect metrics to hap_gwas_df (the Post-GWAS page's
-    compute_block_qc_effects, unchanged apart from where its inputs come from):
+    compute_block_qc_effects, moved here from the page):
       - Block_length_kb
       - n_snps_total (in physical window)
       - n_snps_poly
       - maf_median, maf_mean (optional)
-      - EtaSq (eta^2) for MLG ANOVA groups actually tested
-      - n_groups_tested, n_samples_used
+      - Window_R2: the share of the PC-residualised phenotype's variance that the haplotype
+        groups of every SNP in the block's coordinate window explain, over every phenotyped
+        sample (the older window-based grouping). It is not the haplotype test's eta2 (the
+        test's own markers, samples, covariates and, by default, kinship), which is the η²
+        the tab shows; this column was named EtaSq before it was renamed for that reason
+      - n_groups_tested_effect, n_samples_used_effect: the window's groups and samples
+        behind Window_R2
       - Frac_other (based on tested vs total haplotypes, if available)
 
     ``geno_imputed`` is the imputed table as the LD code reads it (an array or a reader of
@@ -781,7 +786,7 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
     n_snps_poly = []
     maf_median = []
     maf_mean = []
-    eta_sq_list = []
+    window_r2 = []
     n_groups_list = []
     n_used_list = []
 
@@ -799,7 +804,7 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
             n_snps_poly.append(0)
             maf_median.append(np.nan)
             maf_mean.append(np.nan)
-            eta_sq_list.append(np.nan)
+            window_r2.append(np.nan)
             n_groups_list.append(0)
             n_used_list.append(int(np.isfinite(y_vec).sum()))
             continue
@@ -818,11 +823,11 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
             maf_median.append(np.nan)
             maf_mean.append(np.nan)
 
-        # Effect size eta^2 using the same MLG grouping logic as permutation test
-        # (collapse rare haplotypes and drop too-small groups + "Other")
+        # The window's R2: the MLG groups of every SNP in the window (rare haplotypes
+        # collapsed, too-small groups and "Other" dropped), on every phenotyped sample
         keep_y = np.isfinite(y_vec)
         if keep_y.sum() < 5:
-            eta_sq_list.append(np.nan)
+            window_r2.append(np.nan)
             n_groups_list.append(0)
             n_used_list.append(int(keep_y.sum()))
             continue
@@ -830,7 +835,7 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
         G2 = G[keep_y, :]
         y2 = y_vec[keep_y]
 
-        # ---- PC-residualize phenotype for eta^2 (match haplotype analysis test) ----
+        # ---- PC-residualise the phenotype (the PCs the haplotype test gets) ----
         pcs_for_eta = pcs
         if pcs_for_eta is not None:
             try:
@@ -841,10 +846,10 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
                 beta, *_ = np.linalg.lstsq(X, y2, rcond=None)
                 y2 = y2 - X @ beta
             except Exception:
-                pass  # fall back to unadjusted eta^2 if alignment fails
+                pass  # fall back to the unadjusted phenotype if alignment fails
 
         if G2.shape[1] < 2:
-            eta_sq_list.append(np.nan)
+            window_r2.append(np.nan)
             n_groups_list.append(0)
             n_used_list.append(int(len(y2)))
             continue
@@ -868,15 +873,16 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
         valid = [g for g in counts.index if (counts[g] >= int(min_group_size) and g != "Other")]
 
         if len(valid) < 2:
-            eta_sq_list.append(np.nan)
+            window_r2.append(np.nan)
             n_groups_list.append(int(len(valid)))
             n_used_list.append(int(len(y2)))
             continue
 
         df = df[df["MLG"].isin(valid)].copy()
-        eta_sq, n_groups, n_used = _anova_eta_sq_from_labels(df["y"].values, df["MLG"].values)
+        # one-way ANOVA's SS_between / SS_total: the R2 of the window's groups
+        r2, n_groups, n_used = _anova_eta_sq_from_labels(df["y"].values, df["MLG"].values)
 
-        eta_sq_list.append(eta_sq)
+        window_r2.append(r2)
         n_groups_list.append(n_groups)
         n_used_list.append(n_used)
 
@@ -884,7 +890,7 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
     out["n_snps_poly"] = n_snps_poly
     out["maf_median"] = maf_median
     out["maf_mean"] = maf_mean
-    out["EtaSq"] = eta_sq_list
+    out["Window_R2"] = window_r2
     out["n_groups_tested_effect"] = n_groups_list
     out["n_samples_used_effect"] = n_used_list
 
