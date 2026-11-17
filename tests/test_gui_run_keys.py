@@ -142,3 +142,12 @@ def test_the_page_imports_no_cached_wrapper_that_hashes_a_table():
     hashing = {"build_mlmm_snpdata", "standardize_genotypes_for_mlmm_cached", "subset_snps_for_mlmm",
                "run_haplotype_block_gwas_cached", "compute_meff_li_ji", "load_vcf_cached"}
     assert not imported & hashing
+
+
+def test_the_page_imports_no_haplotype_test():
+    """The GWAS page runs no haplotype test of its own: the Post-GWAS page tests the blocks
+    (gwas.guipost.run_haplotype_tests) and One-Click runs the pipeline's test. The PCs-only
+    test's functions, imported here unused until batch 14, are not imported."""
+    imported = {a.asname or a.name for n in ast.walk(_page()) if isinstance(n, ast.ImportFrom) for a in n.names}
+    assert not imported & {"block_test_lm_with_pcs", "freedman_lane_perm_pvalue",
+                           "run_haplotype_block_gwas", "kinship_block_test"}

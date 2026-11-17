@@ -61,6 +61,8 @@ def _rebuild(tmp_path):
         QC, QC / "platform_GWAS_locule_number.csv", tmp_path,
         flank_kb=manifest["flank_kb"], ld_decay_kb=manifest.get("ld_decay_kb"),
         n_perm=manifest.get("n_perm", 1000),
+        # the test the golden froze; a manifest without it was made with the PCs-only test
+        hap_test=manifest.get("hap_test", "pcs"),
         genes_csv=Path(genes) if genes else None,
         descriptions_csv=Path(descr) if descr else None,
         trait_col=manifest.get("trait_col"),
@@ -77,6 +79,15 @@ def test_capture_golden_flank_kb_is_required():
     mod = _load_capture_module()
     p = inspect.signature(mod.capture_golden).parameters["flank_kb"]
     assert p.default is inspect.Parameter.empty, "flank_kb must have no default (T-94)"
+    assert p.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_capture_golden_hap_test_is_required():
+    """`hap_test` is keyword-only with no default, like flank_kb: a golden always names the
+    haplotype test it froze, and the manifest records it."""
+    mod = _load_capture_module()
+    p = inspect.signature(mod.capture_golden).parameters["hap_test"]
+    assert p.default is inspect.Parameter.empty
     assert p.kind is inspect.Parameter.KEYWORD_ONLY
 
 

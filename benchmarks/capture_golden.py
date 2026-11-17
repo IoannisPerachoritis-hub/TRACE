@@ -108,6 +108,7 @@ def capture_golden(
     out_dir: Path,
     *,
     flank_kb: float,               # REQUIRED — no default (see module docstring / T-61)
+    hap_test: str,                 # REQUIRED — the haplotype test, "kinship" or "pcs"
     ld_decay_kb: float | None = None,
     ld_threshold: float = 0.6,
     adj_r2_min: float = 0.2,
@@ -124,7 +125,15 @@ def capture_golden(
     descriptions_csv: Path | None = None,
     trait_col: str | None = None,
 ) -> dict:
-    """Freeze the downstream golden tables. Returns a dict of written paths."""
+    """Freeze the downstream golden tables. Returns a dict of written paths.
+
+    ``hap_test`` is the haplotype test (run_haplotype_block_gwas's): required, with no
+    default, like ``flank_kb``, so a golden always names the test it froze. The manifest
+    records it; a manifest without it was made with the PCs-only test ("pcs"). The
+    kinship-aware test gets the scan's kernels built the pipeline's way
+    (gwas.kinship.scan_kernels), from the QC matrix this function loads: the imputed one, as
+    float32 like the pipeline's (the QC folder holds no raw dosage file, so the allele
+    frequencies are the imputed matrix's)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,12 +162,19 @@ def capture_golden(
         if tcol is None or tcol not in pheno_aligned.columns:
             tcol = next(c for c in pheno_aligned.columns
                         if c.lower() not in ("fid", "iid", "sampleid"))
+        kernels = None
+        if hap_test == "kinship":
+            from gwas.kinship import scan_kernels
+            ids = np.asarray(geno_df_aligned.index, dtype=str)
+            kernels = scan_kernels(geno_df_aligned, geno.astype(np.float32), chroms_str,
+                                   positions, np.c_[ids, ids])
         hap_results, _ = run_haplotype_block_gwas(
             haplo_df=haplo_df, chroms=chroms_str, positions=positions,
             geno_imputed=geno.astype(float), sid=sid,
             geno_df=geno_df_aligned, pheno_df=pheno_aligned, trait_col=tcol,
             pcs=None, n_perm=n_perm, n_pcs_used=0,
-            min_hap_count=min_hap_count, min_group_size=min_group_size, hap_test="pcs",
+            min_hap_count=min_hap_count, min_group_size=min_group_size,
+            hap_test=hap_test, kernels=kernels,
         )
         hap_frozen, hap_missing = _freeze(hap_results, HAP_COLS)
         hap_frozen.to_csv(out_dir / "haplotype_blocks.csv", index=False)
@@ -201,7 +217,7 @@ def capture_golden(
         "flank_kb": flank_kb, "ld_decay_kb": ld_decay_kb, "ld_threshold": ld_threshold,
         "adj_r2_min": adj_r2_min, "min_snps": min_snps, "top_n": top_n,
         "sig_thresh": sig_thresh, "gap_factor": gap_factor, "merge_iou": merge_iou,
-        "min_contained": min_contained, "n_perm": n_perm,
+        "min_contained": min_contained, "n_perm": n_perm, "hap_test": hap_test,
         "min_hap_count": min_hap_count, "min_group_size": min_group_size,
         "n_significant_meff": n_sig_meff, "n_significant_bonf": n_sig_bonf,
         "meff_value": meff_value,
@@ -227,14 +243,17 @@ if __name__ == "__main__":
     ap.add_argument("--out-dir", required=True, type=Path)
     ap.add_argument("--flank-kb", required=True, type=float,
                     help="REQUIRED — the flank that reproduces Table S8 (from T-61)")
+    ap.add_argument("--hap-test", required=True, choices=["kinship", "pcs"],
+                    help="REQUIRED — the haplotype test (the CLI's --hap-test)")
     ap.add_argument("--ld-decay-kb", type=float, default=None)
     ap.add_argument("--genes-csv", type=Path, default=None)
     ap.add_argument("--descriptions-csv", type=Path, default=None)
     ap.add_argument("--trait-col", default=None)
     a = ap.parse_args()
     paths = capture_golden(
-        a.qc_dir, a.gwas_csv, a.out_dir, flank_kb=a.flank_kb, ld_decay_kb=a.ld_decay_kb,
-        genes_csv=a.genes_csv, descriptions_csv=a.descriptions_csv, trait_col=a.trait_col,
+        a.qc_dir, a.gwas_csv, a.out_dir, flank_kb=a.flank_kb, hap_test=a.hap_test,
+        ld_decay_kb=a.ld_decay_kb, genes_csv=a.genes_csv, descriptions_csv=a.descriptions_csv,
+        trait_col=a.trait_col,
     )
     for k, v in paths.items():
         print(f"  wrote {k}: {v}")

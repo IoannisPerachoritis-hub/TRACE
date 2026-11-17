@@ -41,10 +41,6 @@ from gwas.models import (
     _ols_fit, _nested_f_test, _one_hot_drop_first,
 )
 from gwas.subsampling import subsample_gwas_resampling, aggregate_subsampling_to_ld_blocks
-from gwas.haplotype import (
-    normalize_ld_blocks_schema, block_test_lm_with_pcs,
-    freedman_lane_perm_pvalue,
-)
 from gwas.stability import _make_run_manifest
 from gwas.significance import add_significance_columns
 from gwas.plotting import (

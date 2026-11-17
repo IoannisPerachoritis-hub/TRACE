@@ -508,3 +508,32 @@ def test_a_wrong_haplotype_test_stops_the_run(monkeypatch):
 
     with pytest.raises(TraitPipelineError, match="--hap-test must be one of"):
         _example_run(monkeypatch, hap_test="lmm")
+
+
+def test_the_shared_kernel_helper_builds_the_pipelines_kernels(monkeypatch):
+    """gwas.kinship.scan_kernels, from the inputs the pipeline's kinship step gets, gives the
+    kernels the pipeline hands the haplotype test, value for value (LOCO, and --no-loco):
+    the routes outside the pipeline (capture_golden, the null calibration) use it."""
+    import gwas.qc as qc
+    from gwas.kinship import scan_kernels
+
+    for no_loco in (False, True):
+        got = {}
+        real = qc._pipeline_build_kinship
+
+        def _rec(geno_df, geno_imputed, chroms, positions, _real=real, _got=got):
+            _got["args"] = (geno_df.copy(), np.array(geno_imputed, copy=True),
+                            np.array(chroms, copy=True), np.array(positions, copy=True))
+            return _real(geno_df, geno_imputed, chroms, positions)
+
+        monkeypatch.setattr(qc, "_pipeline_build_kinship", _rec)
+        _res, seen, _m = _example_run(monkeypatch, no_loco=no_loco)
+        monkeypatch.setattr(qc, "_pipeline_build_kinship", real)
+        K0, K_by_chr = seen[0][0]["kernels"]
+        H0, H_by_chr = scan_kernels(*got["args"], np.asarray(K0.iid), no_loco=no_loco)
+        assert np.array_equal(np.asarray(H0.val), np.asarray(K0.val))
+        assert np.array_equal(np.asarray(H0.iid), np.asarray(K0.iid))
+        assert sorted(map(str, H_by_chr)) == sorted(map(str, K_by_chr))
+        for c, K in K_by_chr.items():
+            assert np.array_equal(np.asarray(H_by_chr[c].val), np.asarray(K.val)), c
+            assert (H_by_chr[c] is H0) == (K is K0), c

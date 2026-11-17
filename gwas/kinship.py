@@ -173,6 +173,25 @@ def _build_loco_kernels_impl(iid, Z_grm, chroms_grm, K_base=None):
     return K0, K_by_chr, diagnostics_by_chr
 
 
+def scan_kernels(geno_called, geno_imputed, chroms, positions, iid, *, no_loco=False):
+    """(K0, K_by_chr): the scan's kernels, built as the CLI's pipeline builds them with the
+    genotype table in memory (gwas.pipeline): the kinship matrix of
+    gwas.qc._pipeline_build_kinship (allele frequencies from the called dosages
+    ``geno_called``, a frame; the LD-pruned standardised ``geno_imputed``), the LOCO kernels of
+    _build_loco_kernels_impl on its pruned SNPs, and K0 for every chromosome with ``no_loco``
+    (--no-loco). ``iid`` names the rows (n x 2, as the pipeline's). The routes outside the
+    pipeline that need the scan's kernels (benchmarks/capture_golden.py, the null calibration)
+    take them from here; the haplotype test then takes each block's chromosome's kernel."""
+    from gwas.qc import _pipeline_build_kinship
+
+    K, Z_grm, chroms_grm, _positions_grm, _model = _pipeline_build_kinship(
+        geno_called, geno_imputed, chroms, positions)
+    K0, K_by_chr, _ = _build_loco_kernels_impl(iid, Z_grm, chroms_grm, K)
+    if no_loco:
+        K_by_chr = {ch: K0 for ch in K_by_chr}
+    return K0, K_by_chr
+
+
 def _read_only_arrays(*arrays):
     """Mark arrays read-only: what st.cache_resource returns is shared by every session of the
     server, so an in-place change must fail loudly instead of altering another run's data."""
