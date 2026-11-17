@@ -10,6 +10,8 @@
   the test do not move when a constant is added to the trait.
 - Flipping the signs of the kernel's eigenvectors changes nothing.
 - The kernel is never written to; it is restricted to the tested samples by ID.
+- Haplotype groups that the intercept, PCs and covariates span on the tested samples are
+  refused with the reason; with part of them spanned, the F is the GLS F of the rest.
 
 And in run_haplotype_block_gwas:
 - the kinship-aware test is the default and needs the scan's kernels;
@@ -322,6 +324,53 @@ def test_a_block_it_cannot_test_is_refused():
                            d["Kr"][:3, :3], n_perm=9)
 
 
+def _gls_f_lstsq(y, X0, H, V):
+    """The nested GLS F of X0 against [X0, H] with covariance V, by least squares on the data
+    whitened by V^-1/2 (so a full design that loses rank is allowed), with the PCs-only
+    test's degrees of freedom (columns)."""
+    S, U = np.linalg.eigh(V)
+    W = U @ np.diag(S ** -0.5) @ U.T
+    ys = W @ y
+
+    def sse(X):
+        Xs = W @ X
+        r = ys - Xs @ np.linalg.lstsq(Xs, ys, rcond=None)[0]
+        return float(r @ r)
+
+    n = len(y)
+    df0, df1 = n - X0.shape[1], n - X0.shape[1] - H.shape[1]
+    s0, s1 = sse(X0), sse(np.column_stack([X0, H]))
+    return ((s0 - s1) / (df0 - df1)) / (s1 / df1)
+
+
+@pytest.mark.parametrize("h2", [None, 0.0, 0.3, 0.8])
+def test_groups_the_covariates_span_are_not_tested(h2):
+    """A covariate that defines the block's tested groups (here the group indicator itself, as
+    the lead SNP's 0/2 dosage does in a two-group block of a conditional analysis) leaves no
+    haplotype direction to test: the block is refused with the reason, at the REML h2 and at
+    any forced h2, instead of testing what rounding leaves of the indicator."""
+    d = _data(n_groups=2)
+    H, _, _ = _one_hot_drop_first(d["groups"])
+    Cc = np.column_stack([d["C"], 2.0 * H[:, 0]])
+    with pytest.raises(KinshipTestError,
+                       match="lie in the span of the intercept, PCs and covariates"):
+        kinship_block_test(d["y"], d["groups"], Cc, d["Kr"], n_perm=99, seed=3, h2=h2)
+
+
+@pytest.mark.parametrize("h2", [0.3, 0.8])
+def test_a_group_the_covariates_span_leaves_the_others_tested(h2):
+    """With one of three groups' indicators among the covariates, the F is the GLS F of the
+    direction left (least squares on the whitened data)."""
+    d = _data()
+    n = len(d["y"])
+    H, _, _ = _one_hot_drop_first(d["groups"])
+    Cc = np.column_stack([d["C"], H[:, 0]])
+    res = kinship_block_test(d["y"], d["groups"], Cc, d["Kr"], n_perm=9, seed=1, h2=h2)
+    F = _gls_f_lstsq(d["y"], np.column_stack([np.ones(n), Cc]), H,
+                     h2 * d["Kr"] + (1 - h2) * np.eye(n))
+    assert res["F_param"] == pytest.approx(F, rel=1e-8)
+
+
 # ------------------------------------------------- run_haplotype_block_gwas, kinship mode
 def _two_chromosome_panel(seed=21, n=150, m_bg=300):
     """Families of related samples; one block of three SNPs (three haplotype groups) at the
@@ -428,6 +477,23 @@ def test_a_block_the_kinship_test_cannot_test_is_kept_with_the_reason():
     res2, _ = _run(p, kernels=(p["K0"], {"1": short, "2": p["K_by_chr"]["2"]}))
     assert res2["kinship_model"].iloc[0] == "failed: 1 tested sample(s) are not in the kernel"
     assert res2["kinship_model"].iloc[1] == "LOCO kernel"
+
+
+def test_a_block_whose_groups_the_covariates_span_is_kept_with_the_reason():
+    """User covariates that together define block 1's three groups (its first two SNPs):
+    block 1 is reported as failed with the reason, block 2 is tested."""
+    p = _two_chromosome_panel()
+    cov = p["G"][:, [0, 1]]
+    res, _ = _run(p, kernels=(p["K0"], p["K_by_chr"]), user_covar=cov)
+    pcs, _ = _run(p, hap_test="pcs", user_covar=cov)
+    assert res["kinship_model"].iloc[0] == (
+        "failed: the haplotype groups lie in the span of the intercept, PCs and covariates on "
+        "the tested samples: no haplotype effect is left to test")
+    for c in ("F_param", "PValue_param", "P_perm", "eta2", "h2_null"):
+        assert np.isnan(res[c].iloc[0]), c
+    assert res["eta2_pcs_only"].iloc[0] == pcs["eta2"].iloc[0]
+    assert res["kinship_model"].iloc[1] == "LOCO kernel"
+    assert np.isfinite(res["F_param"].iloc[1]) and np.isfinite(res["P_perm"].iloc[1])
 
 
 def test_the_pcs_test_adds_only_the_three_columns():

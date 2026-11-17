@@ -40,7 +40,10 @@ functions (gwas.haplotype.block_test_lm_with_pcs and freedman_lane_perm_pvalue):
 p-values are then those of the PCs-only test bit for bit.
 
 A block the test cannot test raises KinshipTestError with the reason; the caller reports it,
-never falling back to another test.
+never falling back to another test. Besides a kernel that does not fit the samples or a failed
+fit, that is a block whose haplotype groups lie in the span of the intercept, PCs and
+covariates on its tested samples: no haplotype direction is left to test (the directions
+outside the span are found with the rank tolerance on the scale of H, _outside).
 """
 import numpy as np
 import pandas as pd
@@ -88,17 +91,32 @@ def kernel_for_samples(kernel, samples):
     return K, pos
 
 
-def _orth(A):
+def _orth(A, scale=None):
     """An orthonormal basis of the column space of ``A``: its left singular vectors above
-    numpy's rank tolerance (numpy.linalg.matrix_rank's)."""
+    numpy's rank tolerance (numpy.linalg.matrix_rank's), taken on ``A``'s own largest
+    singular value or, when given, on ``scale``."""
     A = np.asarray(A, dtype=float)
     if A.ndim == 1:
         A = A.reshape(-1, 1)
     if A.shape[1] == 0:
         return np.zeros((A.shape[0], 0))
     u, s, _ = np.linalg.svd(A, full_matrices=False)
-    tol = (s.max() if s.size else 0.0) * max(A.shape) * np.finfo(float).eps
+    top = (s.max() if s.size else 0.0) if scale is None else float(scale)
+    tol = top * max(A.shape) * np.finfo(float).eps
     return u[:, : int((s > tol).sum())]
+
+
+def _outside(H, Q):
+    """An orthonormal basis of the part of ``H``'s column space outside ``Q``'s (``Q``
+    orthonormal): the residual H - QQ'H, with the rank tolerance taken on H's own scale. A
+    column of H inside Q's span leaves only rounding in the residual, which on the residual's
+    own scale would pass for a direction; on H's scale it does not."""
+    H = np.asarray(H, dtype=float)
+    if H.ndim == 1:
+        H = H.reshape(-1, 1)
+    if H.shape[1] == 0:
+        return np.zeros((H.shape[0], 0))
+    return _orth(H - Q.dot(Q.T.dot(H)), scale=np.linalg.norm(H, 2))
 
 
 # -------------------------------------------------------------------------------- the REML
@@ -298,6 +316,13 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
     if n - Q.shape[1] < 1:
         raise KinshipTestError(f"{n} tested samples cannot fit the null model's "
                                f"{Q.shape[1]} fixed effects")
+    # haplotype groups that the intercept, PCs and covariates already span on these samples
+    # (a covariate that defines them, as the lead SNP's dosage in a conditional analysis):
+    # nothing is left to test, and the whitening (invertible) cannot change that
+    if _outside(H, Q).shape[1] == 0:
+        raise KinshipTestError("the haplotype groups lie in the span of the intercept, PCs and "
+                               "covariates on the tested samples: no haplotype effect is left "
+                               "to test")
     if eig is None:
         Kv = np.asarray(K, dtype=float)
         if Kv.shape != (n, n):
@@ -334,7 +359,7 @@ def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, le
         df_den = int(max(1, n - X0.shape[1] - H.shape[1]))
         df_num = int(df0 - df_den)
         Q0 = _orth(Xs)
-        QH = _orth(Hs - Q0.dot(Q0.T.dot(Hs)))
+        QH = _outside(Hs, Q0)
         e = ys - Q0.dot(Q0.T.dot(ys))              # the whitened residuals of the null model
         rr = float(e.dot(e))
         F = float(_f_of_residuals(e[:, None], Q0, QH, rr, df_num, df_den)[0])
