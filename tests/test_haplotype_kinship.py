@@ -6,7 +6,8 @@
   functions: F and both p-values bit for bit.
 - The permutations are the PCs-only test's (its generator and index sequence), so P is
   reproducible from the block's seed.
-- The REML h2 is FaST-LMM's: LMM.findH2(REML=True) and single_snp's Nullh2, to 1e-6.
+- The REML h2 is FaST-LMM's: LMM.findH2(REML=True) and single_snp's Nullh2, to 1e-6; it and
+  the test do not move when a constant is added to the trait.
 - Flipping the signs of the kernel's eigenvectors changes nothing.
 - The kernel is never written to; it is restricted to the tested samples by ID.
 
@@ -237,6 +238,25 @@ def test_the_reml_h2_is_fastlmms():
     assert abs(ours - h_ss) < 1e-6, (ours, h_ss)
     # and the test's own h2 is it
     assert kinship_block_test(d["y"], d["groups"], d["C"], d["Kr"], n_perm=9, seed=1)["h2"] == ours
+
+
+def test_the_reml_h2_and_the_test_do_not_move_with_the_traits_mean():
+    """The REML likelihood depends on y only through its residual on X, which reml_h2
+    rotates (as single_snp's null model does), so a constant added to the trait (a mean of
+    10,000 against a spread of about 1) moves neither h2 nor the test. Rotating the raw y
+    moved h2 by about 3e-4 on these data, and F by about 1.5e-4 relative."""
+    d = _data(seed=3, n=150, h2=0.6)
+    a = kinship_block_test(d["y"], d["groups"], d["C"], d["Kr"], n_perm=199, seed=7,
+                           lead_dose=d["dose"])
+    b = kinship_block_test(d["y"] + 1e4, d["groups"], d["C"], d["Kr"], n_perm=199, seed=7,
+                           lead_dose=d["dose"])
+    assert 0.05 < a["h2"] < H2_MAX - 0.05, a["h2"]     # an interior optimum
+    assert abs(b["h2"] - a["h2"]) < 1e-6, (a["h2"], b["h2"])
+    for k in ("F_param", "PValue_param", "eta2", "eta2_ci_low", "eta2_ci_high", "omega2",
+              "lead_snp_r2"):
+        assert b[k] == pytest.approx(a[k], rel=1e-6, abs=0), k
+    assert b["P_perm"] == a["P_perm"]
+    assert abs(null_h2(d["y"] + 1e4, d["C"], d["Kr"]) - a["h2"]) < 1e-6
 
 
 # ----------------------------------------------------------------------------- invariance

@@ -14,7 +14,9 @@ K: the scan's own kernel for the block's chromosome (the LOCO kernel, or the glo
    negative log-likelihood (reml_nll, fastlmm.inference.lmm.LMM.nLLeval for a full-rank kernel)
    by FaST-LMM's own search, fastlmm.util.mingrid.minimize1D over [0, 0.99999] (an 11-point
    grid, then bounded and Brent refinements), keeping the best point evaluated, as
-   LMM.findH2 does (reml_h2).
+   LMM.findH2 does (reml_h2). The likelihood is evaluated on y's residual on X, which it
+   depends on alone, as single_snp's null model (fastlmm.inference.lmm_cov) does: h2 then does
+   not move with the trait's mean, as it does when the raw y is rotated.
 2. V = h2 K + (1 - h2) I = U diag(d) U' is whitened by the symmetric W = U diag(d^-1/2) U'. It
    depends only on K and h2: the test does not change with the signs LAPACK gives the
    eigenvectors, or with the basis it picks inside a repeated eigenvalue. W is applied as
@@ -105,7 +107,8 @@ def reml_nll(h2, S, UX, Uy, n, d):
     up to its scale: fastlmm.inference.lmm.LMM.nLLeval (REML, a full-rank kernel; no
     Student-t, penalty or excluded SNPs), for K = U diag(S) U'. ``UX`` is U'Q for an
     orthonormal basis Q of X's column space (so log|X'X| = 0; the REML likelihood depends on
-    X only through that space), ``Uy`` is U'y, ``n`` the samples and ``d`` the rank of X.
+    X only through that space), ``Uy`` is U'r for y's residual r on X (it depends on y only
+    through r; reml_h2), ``n`` the samples and ``d`` the rank of X.
     Out of [0, 1] it is 3e20, as in FaST-LMM; where the covariance is not positive definite
     it is NaN (FaST-LMM's logarithm gives NaN there), which the search never keeps."""
     if (h2 < 0.0) or (h2 > 1.0):
@@ -135,12 +138,19 @@ def reml_h2(S, U, y, Q):
     orthonormal basis of X's column space), found as FaST-LMM's LMM.findH2 finds it: the
     best point evaluated by fastlmm.util.mingrid.minimize1D over [0, H2_MAX] with N_GRID
     grid steps (a point replaces the best only when strictly lower, so a tie keeps the first
-    evaluated, and 0, the first grid point, is reached exactly)."""
+    evaluated, and 0, the first grid point, is reached exactly).
+
+    The likelihood is evaluated on y's residual on X, r = y - QQ'y: the REML likelihood
+    depends on y only through its contrasts orthogonal to X, so this is exact, and it is what
+    single_snp's null model does (fastlmm.inference.lmm_cov regresses X out before it
+    rotates). Rotating the raw y, as LMM.nLLeval does, makes yKy - XKy.beta cancel more as
+    the trait's mean grows against its spread, and h2 then moves with the mean."""
     from fastlmm.util.mingrid import minimize1D
 
     y = np.asarray(y, dtype=float).reshape(-1)
     n, d = y.size, Q.shape[1]
-    UX, Uy = U.T.dot(Q), U.T.dot(y)
+    r = y - Q.dot(Q.T.dot(y))
+    UX, Uy = U.T.dot(Q), U.T.dot(r)
     best = {"h2": None, "nll": None}
 
     def f(x):
