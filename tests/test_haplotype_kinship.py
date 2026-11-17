@@ -681,14 +681,21 @@ def test_the_pcs_test_adds_only_the_three_columns():
 
 
 def test_the_kinship_test_never_writes_the_kernels():
+    """The scan's kernels are read only: a write made anywhere in the test would raise. A
+    write inside a block's test would only fail that block ("failed: ..."), so every block
+    must also have been tested, with its kernel and a finite F."""
     p = _two_chromosome_panel()
     kernels = [p["K0"], *p["K_by_chr"].values()]
     before = [np.asarray(k.val).copy() for k in kernels]
     for k in kernels:
         np.asarray(k.val).setflags(write=False)
-    _run(p, kernels=(p["K0"], p["K_by_chr"]))
+    res, _ = _run(p, kernels=(p["K0"], p["K_by_chr"]))
     for k, b in zip(kernels, before):
         assert np.array_equal(np.asarray(k.val), b)
+    assert len(res) == 2
+    assert res["kinship_model"].isin(["LOCO kernel", "global kernel"]).all(), \
+        res["kinship_model"].tolist()
+    assert np.isfinite(res["F_param"]).all() and np.isfinite(res["P_perm"]).all()
 
 
 # ------------------------------------------------------------------- the pipeline (CLI)
