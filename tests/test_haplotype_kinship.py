@@ -209,6 +209,47 @@ def test_the_permutations_are_the_pcs_tests_and_follow_the_seed():
     _same(a, b)
     c = kinship_block_test(d["y"], d["groups"], d["C"], d["Kr"], n_perm=199, seed=78)
     assert c["F_param"] == a["F_param"] and c["h2"] == a["h2"]
+    assert c["P_perm"] != a["P_perm"]               # the seed draws the permutations
+
+
+def _freedman_lane_written_out(y, groups, C, K, h2, n_perm, seed):
+    """Freedman-Lane on the whitened scale, written out: W = V^-1/2 from V's own
+    eigendecomposition; each permuted phenotype is the null model's whitened fit plus its
+    whitened residuals in permutation_indices' order, and each F comes from least squares
+    on the whitened full and reduced designs."""
+    n = len(y)
+    S, U = np.linalg.eigh(h2 * K + (1 - h2) * np.eye(n))
+    W = U @ np.diag(S ** -0.5) @ U.T
+    H, _, _ = _one_hot_drop_first(groups)
+    Xs = W @ np.column_stack([np.ones(n), C])
+    X1 = np.column_stack([Xs, W @ H])
+    df1, df2 = H.shape[1], n - Xs.shape[1] - H.shape[1]
+
+    def F(v):
+        r0 = v - Xs @ np.linalg.lstsq(Xs, v, rcond=None)[0]
+        r1 = v - X1 @ np.linalg.lstsq(X1, v, rcond=None)[0]
+        return ((r0 @ r0 - r1 @ r1) / df1) / ((r1 @ r1) / df2)
+
+    ys = W @ y
+    fit = Xs @ np.linalg.lstsq(Xs, ys, rcond=None)[0]
+    e = ys - fit
+    F_obs = F(ys)
+    F_b = np.array([F(fit + e[idx]) for idx in permutation_indices(n, n_perm, seed)])
+    return F_obs, (1.0 + float(np.sum(F_b >= F_obs))) / (1.0 + n_perm)
+
+
+@pytest.mark.parametrize("seed", [77, 78])
+def test_the_whitened_permutation_p_is_freedman_lane_written_out(seed):
+    """At an interior h2, with covariates, P_perm is the count of the written out
+    Freedman-Lane loop (the engine permutes the whitened residuals and computes every F at
+    once; the null model's fit drops out of the F), exactly."""
+    d = _data()
+    h2 = 0.6
+    res = kinship_block_test(d["y"], d["groups"], d["C"], d["Kr"], n_perm=199, seed=seed,
+                             h2=h2)
+    F_obs, p = _freedman_lane_written_out(d["y"], d["groups"], d["C"], d["Kr"], h2, 199, seed)
+    assert res["F_param"] == pytest.approx(F_obs, rel=1e-9)
+    assert res["P_perm"] == p
 
 
 # ---------------------------------------------------------------------------- the REML h2
