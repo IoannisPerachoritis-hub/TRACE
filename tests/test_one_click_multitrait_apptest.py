@@ -201,6 +201,7 @@ def test_gui_widgets_reach_the_pipeline_options(monkeypatch):
         "pipe_ld_r2": 0.5, "pipe_ld_seed": "Significant only (chosen threshold)",
         "pipe_ld_flank_mode": "Manual (fixed kb)", "pipe_ld_flank": 200,
         "pipe_hap_perms": 500, "pipe_generate_ld_heatmaps": False,
+        "pipe_hap_test": "PCs and covariates only (the earlier test)",
         "pipe_mlmm_p": 1e-3, "pipe_mlmm_max_cof": 5, "pipe_fc_max_iter": 20,
         "pipe_subsampling": True, "pipe_boot_reps": 20, "pipe_boot_frac": 0.7,
         "pipe_boot_thresh": 1e-3, "pipe_boot_loco": True,
@@ -217,7 +218,7 @@ def test_gui_widgets_reach_the_pipeline_options(monkeypatch):
         "n_pcs_farmcpu": 3, "no_loco": True, "sig_thresh": "meff",
         "secondary_threshold": True, "ld_r2": 0.5, "ld_seed_mode": "significant",
         "ld_seed_p": 1e-5, "ld_top_n": 10,          # the CLI's own values in this mode
-        "ld_flank_kb": 200, "hap_perms": 500, "no_ld_heatmaps": True,
+        "ld_flank_kb": 200, "hap_perms": 500, "no_ld_heatmaps": True, "hap_test": "pcs",
         "mlmm_p_enter": 1e-3, "mlmm_max_cof": 5, "farmcpu_max_iter": 20,
         "subsampling": True, "boot_reps": 20, "boot_frac": 0.7, "boot_thresh": 1e-3,
         "boot_use_loco": True, "norm": "none",

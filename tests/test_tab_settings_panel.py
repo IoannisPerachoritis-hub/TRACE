@@ -22,6 +22,7 @@ _WIDGETS = {
     "LD window around each lead SNP (kb)": ("number_input", None, None),   # 2x LD decay
     "r² threshold for cluster definition": ("number_input", None, 0.6),
     "Haplotype permutations": ("number_input", "n_perm_hap", 1000),
+    "Test model": ("radio", "hap_test_choice", None),      # index 0: the kinship-aware test
     "Minimum total samples per haplotype (collapse rarer → Other)": ("number_input", None, 5),
     "Minimum samples per haplotype group (for testing)": ("number_input", None, 3),
     "Significance rule:": ("selectbox", "lead_gallery_rule", None),
@@ -80,10 +81,11 @@ def test_the_panel_is_one_collapsed_expander_named_settings():
 
 def test_summary_line():
     assert settings_summary(1e-5, 10, 200.0, 0.6, 1000, 5, 3, "Bonferroni (α = 0.05)") == (
-        "Seeds P < 1e-05 plus top 10 · window 200 kb · r² ≥ 0.6 · 1,000 permutations · "
-        "haplotypes ≥ 5 samples · groups ≥ 3 · gallery: Bonferroni")
-    s = settings_summary(5e-8, 0, 144.5, 0.1, 100, 3, 6, "Custom p-value", 1e-6)
-    assert s.startswith("Seeds P < 5e-08 · window 144.5 kb · r² ≥ 0.1 · 100 permutations")
+        "Seeds P < 1e-05 plus top 10 · window 200 kb · r² ≥ 0.6 · kinship-aware test · "
+        "1,000 permutations · haplotypes ≥ 5 samples · groups ≥ 3 · gallery: Bonferroni")
+    s = settings_summary(5e-8, 0, 144.5, 0.1, 100, 3, 6, "Custom p-value", 1e-6, hap_test="pcs")
+    assert s.startswith("Seeds P < 5e-08 · window 144.5 kb · r² ≥ 0.1 · PCs-only test · "
+                        "100 permutations")
     assert s.endswith("gallery: custom P < 1.0e-06")
     assert _rule_short_name("M_eff: Li & Ji (LD-aware Bonferroni)") == "M_eff"
     assert _rule_short_name("FDR (q < 0.05)") == "FDR"

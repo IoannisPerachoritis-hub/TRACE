@@ -19,6 +19,7 @@ COMPACT_COLUMNS = [
     "Chr", "Start", "End", "Lead SNP", "SNPs", "Length (kb)", "Tested",
     "Samples tested", "Haplotypes tested", "P (permutation)", "FDR q",
     "η² (haplotype test)", "η² 95% CI low", "η² 95% CI high", "Mean r²",
+    "Kinship model",
 ]
 
 _BLOCK_NAMES = {"lead_snp": "Lead SNP", "lead_snp_pvalue": "Lead SNP p-value",
@@ -33,6 +34,10 @@ _HAP_NAMES = {
     "lead_snp_r2": "Lead SNP R²", "n_permutations": "Permutations",
     "Block_length_kb": "Block length (kb)", "Frac_other": "Fraction of haplotypes in Other",
     "maf_median": "Median MAF",
+    # the test's kernel ("none" for the PCs-only test, or why the kinship-aware test could
+    # not test the block), its null model's h2, and the PCs-only test's eta2 for comparison
+    "kinship_model": "Kinship model", "h2_null": "h² (null model)",
+    "eta2_pcs_only": "η² (PCs-only test)",
 }
 _COH_NAMES = {"ldq_r2_min": "Min r²", "ldq_frac_members_r2_lead_ge": "Frac r² ≥ 0.6 to lead"}
 

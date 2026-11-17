@@ -562,7 +562,8 @@ def test_pcs_of_other_samples_stop_the_ld_blocks_tab_plainly(monkeypatch):
                         **given)
         tgw._render_haplotype_gwas(ctx=ctx, haplo_df_auto=blocks, cached_extract_block_geno=None,
                                    compute_block_qc_effects=None,
-                                   run_haplotype_block_gwas_cached_fn=tests, settings=None)
+                                   run_haplotype_block_gwas_cached_fn=tests,
+                                   settings={"hap_test": "pcs"})
 
     pcs, pcs_full = _pcs(rng, N)
     try:

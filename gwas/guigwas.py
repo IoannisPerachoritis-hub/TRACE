@@ -614,6 +614,7 @@ SESSION_PREFIXES = ("ARRKEY::", "KERNELKEY::", "OBJKEY::", "gwas_zip_", "BOOT_GW
 SESSION_KEYS = (
     "_persist_vcf_path", "_persist_pheno", "_persist_covar", "_vcf_upload_token", "_vcf_source",
     "_vcf_live", "_vcf_save_failed", FREQ_KEY, PC_DIAG_KEY, "meff_identity", "gwas_run_identity",
+    "gwas_run_kernels",                     # the Run's kernels (the Post-GWAS haplotype test's)
     "_persist_vcf_name", "gwas_df", "gwas_results", "gwas_results_by_model", "gwas_figures",
     "gwas_run_summary", "gwas_triggered", "geno_imputed", "geno_dosage_raw",
     "geno_df", "K", "K0", "K_by_chr", "Z_grm", "chroms_grm", "pcs", "pcs_full",

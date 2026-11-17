@@ -418,10 +418,10 @@ def _render_ld_decay_curve():
 
 
 def settings_summary(seed_p, top_n, flank_kb, ld_r2, n_perm, min_hap_count, min_group_size,
-                     gallery_rule, gallery_custom=None):
+                     gallery_rule, gallery_custom=None, hap_test="kinship"):
     """The Settings panel's one line: the values in use, e.g. "Seeds P < 1e-05 plus top 10
-    · window 200 kb · r² ≥ 0.6 · 1,000 permutations · haplotypes ≥ 5 samples · groups ≥ 3
-    · gallery: Bonferroni"."""
+    · window 200 kb · r² ≥ 0.6 · kinship-aware test · 1,000 permutations · haplotypes ≥ 5
+    samples · groups ≥ 3 · gallery: Bonferroni"."""
     seeds = f"Seeds P < {float(seed_p):.0e}"
     if int(top_n) > 0:
         seeds += f" plus top {int(top_n)}"
@@ -429,6 +429,7 @@ def settings_summary(seed_p, top_n, flank_kb, ld_r2, n_perm, min_hap_count, min_
         seeds,
         f"window {float(flank_kb):g} kb",
         f"r² ≥ {float(ld_r2):g}",
+        "kinship-aware test" if hap_test == "kinship" else "PCs-only test",
         f"{int(n_perm):,} permutations",
         f"haplotypes ≥ {int(min_hap_count)} samples",
         f"groups ≥ {int(min_group_size)}",
@@ -503,6 +504,11 @@ def _render_settings(ctx):
         )
 
         st.markdown("**Haplotype test**")
+        # the test (the CLI's --hap-test): the kinship-aware one by default
+        hap_test = guipost.HAP_TEST_CHOICES[st.radio(
+            "Test model", list(guipost.HAP_TEST_CHOICES), index=0, key="hap_test_choice",
+            help=guipost.HAP_TEST_HELP,
+        )]
         # tab-local: only this tab consumes n_perm_hap
         n_perm = st.number_input(
             "Haplotype permutations",
@@ -551,9 +557,9 @@ def _render_settings(ctx):
     summary_slot.caption(settings_summary(sig_thresh, top_n, flank_kb_auto,
                                           ld_threshold_auto, n_perm,
                                           min_hap_count, min_group_size, gallery_rule,
-                                          gallery_custom))
+                                          gallery_custom, hap_test=hap_test))
     return {"seed_p": sig_thresh, "top_n": top_n, "flank_kb": flank_kb_auto,
-            "ld_r2": ld_threshold_auto,
+            "ld_r2": ld_threshold_auto, "hap_test": hap_test,
             "n_perm": int(n_perm), "min_hap_count": int(min_hap_count),
             "min_group_size": int(min_group_size), "gallery_rule": gallery_rule,
             "gallery_custom": gallery_custom}
@@ -727,7 +733,10 @@ ASSOCIATION_RESULTS_HELP = (
     "  - **> 10%** major QTL, strong marker-assisted-selection candidate\n"
     "  - **5-10%** moderate QTL, useful combined with other loci\n"
     "  - **< 5%** minor QTL, polygenic background\n"
-    "- η² is not adjusted for kinship; in structured panels it can be inflated.\n\n"
+    "- η² is the haplotype test's: with the kinship-aware test (the default) it comes from "
+    "the test's F on the kinship-whitened model, and **h² (null model)** is that model's "
+    "heritability; with the PCs-only test it is not adjusted for kinship and can be inflated "
+    "in structured panels. **η² (PCs-only test)** gives that test's value for comparison.\n\n"
     "**LD-block coherence (r²)**\n\n"
     "- **Mean r² / Min r²**: mean / weakest member-pair r² in the block "
     "(how internally correlated it is).\n"
@@ -891,11 +900,27 @@ def _render_haplotype_gwas(
     pheno_hash = _hash_df(pheno_for_hap[[trait_col_resolved]].copy())
     n_perm = int(st.session_state.get("n_perm_hap", 1000))
 
+    # The test (Settings; the kinship-aware one by default, as in the CLI). It takes the
+    # kernels of the GWAS page's Run GWAS on this table, recorded with its results
+    # (gwas.guipost.run_kernels), never the session's current ones or another run's; without
+    # them the tab stops plainly (a new Run, or the PCs-only test).
+    hap_test = str(settings.get("hap_test", "kinship"))
+    hap_kernels, hap_use_loco = None, None
+    if hap_test == "kinship":
+        _rk = guipost.run_kernels(st.session_state, guipost.table_key(ctx), _ids_now)
+        if _rk is None:
+            _run_trait = (st.session_state.get("gwas_run_summary") or {}).get("trait") or ld_trait
+            st.error(guipost.NO_RUN_KERNELS_MESSAGE.format(trait=_run_trait))
+            st.stop()
+            return
+        hap_kernels, hap_use_loco = (_rk[0], _rk[1]), _rk[2]
+
     # The result's session key names the genotype table by its identity (two tables of the
-    # same shape are two keys), with the trait, the settings, the PCs, the blocks and the
-    # phenotype.
+    # same shape are two keys), with the trait, the settings, the PCs, the blocks, the
+    # phenotype, and the test with its kernel (LOCO or global).
     hap_key = guipost.haplotype_key(trait_col, min_hap_count, min_group_size, pcs,
-                                    guipost.table_key(ctx), n_perm, blocks_hash, pheno_hash)
+                                    guipost.table_key(ctx), n_perm, blocks_hash, pheno_hash,
+                                    hap_test=hap_test, use_loco=hap_use_loco)
 
     if hap_key not in st.session_state:
 
@@ -917,6 +942,8 @@ def _render_haplotype_gwas(
                 st.session_state.get("geno_encoding", "dosage012"),
                 st.session_state.get("n_pcs_used", None),
                 user_covar=_user_covar,
+                hap_test=hap_test,
+                kernels=hap_kernels,
             )
             st.session_state["hap_tables"] = hap_tables
             st.session_state["hap_gwas_df"] = hap_gwas_df
@@ -1002,7 +1029,13 @@ def _render_haplotype_gwas(
         st.caption(f"Sample-to-haplotype assignments unavailable: {hap_assign_error}")
 
     pvals = hap_gwas_df["PValue"].astype(float).values
-    _, qvals, _, _ = multipletests(pvals, method="fdr_bh")
+    if hap_test == "pcs":
+        _, qvals, _, _ = multipletests(pvals, method="fdr_bh")
+    else:
+        # over the blocks with a p-value: a block the kinship-aware test could not test has
+        # none (its kinship_model gives the reason), as the test's own FDR_BH
+        from gwas.haplotype_kinship import bh_qvalues
+        qvals = bh_qvalues(pvals)
     hap_gwas_df["FDR_qvalue"] = qvals
 
     # T-34 (§2.8 fix): enrich BEFORE display so η²/Frac_other/Block_length_kb/MAF

@@ -1686,6 +1686,11 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 "Haplotype permutations", min_value=100, max_value=5000,
                 value=1000, step=100, key="pipe_hap_perms",
             )
+            from gwas.guipost import HAP_TEST_CHOICES as _HAP_TESTS, HAP_TEST_HELP as _HAP_HELP
+            _pipe_hap_test = _HAP_TESTS[st.selectbox(
+                "Haplotype test", list(_HAP_TESTS), index=0, key="pipe_hap_test",
+                help=_HAP_HELP,
+            )]
             _pipe_generate_ld_heatmaps = st.checkbox(
                 "Generate LD block heatmap PNGs",
                 value=True,
@@ -1843,6 +1848,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
                 **_ld_seed_opts,
                 ld_flank_kb=int(_pipe_ld_flank) if _pipe_ld_flank else None,
                 hap_perms=int(_pipe_hap_perms),
+                hap_test=_pipe_hap_test,
                 no_ld_heatmaps=not _pipe_generate_ld_heatmaps,
                 mlmm_p_enter=float(_pipe_mlmm_p),
                 mlmm_max_cof=int(_pipe_mlmm_max_cof),
@@ -3378,6 +3384,13 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     st.session_state["gwas_results"][trait_col] = selected_df.copy()
     # this Run's table: the Post-GWAS page reads gwas_results only while the session's table is it
     st.session_state["gwas_run_identity"] = _table_id
+    # ... and the kernels its scan used (references to the kernel objects, not copies), with
+    # the table's identity, the trait and the LOCO choice: the Post-GWAS kinship-aware
+    # haplotype test takes its blocks' kernels from them (gwas.guipost.run_kernels)
+    st.session_state["gwas_run_kernels"] = {
+        "identity": _table_id, "trait": trait_col, "use_loco": bool(use_loco),
+        "K0": K0, "K_by_chr": K_by_chr,
+    }
     st.session_state["gwas_df"] = selected_df.copy()
     st.session_state["downstream_model"] = downstream_model
 

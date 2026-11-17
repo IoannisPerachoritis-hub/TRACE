@@ -94,7 +94,7 @@ def test_two_tables_of_one_shape_get_their_own_haplotype_tests(session, monkeypa
         tgw._render_haplotype_gwas(
             ctx=ctx, haplo_df_auto=blocks, cached_extract_block_geno=None,
             compute_block_qc_effects=lambda hap_gwas_df=None, **k: hap_gwas_df,
-            run_haplotype_block_gwas_cached_fn=_hap, settings=None)
+            run_haplotype_block_gwas_cached_fn=_hap, settings={"hap_test": "pcs"})
         shown[name] = session["hap_gwas_df_enriched"].copy()
 
     # what each table's test gives

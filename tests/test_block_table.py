@@ -24,6 +24,8 @@ HAP = pd.DataFrame({   # blocks 1 and 3 tested (Chr written differently on purpo
     "P_perm": [0.004, 0.2], "PValue": [0.004, 0.2], "FDR_BH": [0.008, 0.2],
     "FDR_qvalue": [0.008, 0.2], "eta2": [0.31, 0.05], "eta2_ci_low": [0.1, 0.0],
     "eta2_ci_high": [0.5, 0.2], "EtaSq": [0.29, 0.06], "MidPos": [2000.0, 500.0],
+    "kinship_model": ["LOCO kernel", "failed: no kernel for chromosome 3"],
+    "h2_null": [0.42, float("nan")], "eta2_pcs_only": [0.33, 0.06],
 })
 COH = pd.DataFrame({
     "Chr": ["2", "2", "3"], "Start (bp)": [1000, 5000, 200], "End (bp)": [3000, 9000, 800],
@@ -48,7 +50,8 @@ def test_one_row_per_detected_block_with_every_value_from_its_source():
                      ("FDR q", "FDR_qvalue"), ("η² (haplotype test)", "eta2"),
                      ("η² 95% CI low", "eta2_ci_low"), ("η² 95% CI high", "eta2_ci_high"),
                      ("η² (all SNPs in the block window)", "EtaSq"),
-                     ("SNPs in the test (after thinning)", "n_snps")]:
+                     ("SNPs in the test (after thinning)", "n_snps"),
+                     ("Kinship model", "kinship_model"), ("η² (PCs-only test)", "eta2_pcs_only")]:
         assert t.loc[[0, 2], col].tolist() == HAP[src].tolist(), col
         assert pd.isna(t.loc[1, col]), col                          # the untested block
     assert t["Mean r²"].tolist() == BLOCKS["Mean r2"].tolist()

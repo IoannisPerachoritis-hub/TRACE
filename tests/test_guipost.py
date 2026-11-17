@@ -274,9 +274,23 @@ def _computations(post, gwas_df, chroms, positions, sid, pheno, trait="Trait1"):
     # the haplotype test (the tab's positional call), its assignments, the block effects
     hap, tables = gp.run_haplotype_tests(blocks, chroms, positions, post["ld"], sid,
                                          post["samples"], pheno, trait, None, 5, 3, 99,
-                                         "dosage012", None)
+                                         "dosage012", None, hap_test="pcs")
     assert len(hap) > 0, "no haplotype test ran"
     out["haplotype_tests.csv"] = hap.to_csv(index=False)
+    # ... and the kinship-aware test, with one kernel for every chromosome built from the
+    # table's first SNPs (the same values whatever the table's mode): the same block
+    # genotypes in memory and on disk give the same results
+    from pysnptools.kernelreader import KernelData
+    from gwas.kinship import _build_grm_from_Z, _standardize_geno_for_grm
+    G = np.asarray(as_columns(post["ld"], float)[:, np.arange(min(400, len(sid)))])
+    ids = np.asarray(post["samples"].index, dtype=str)
+    K0 = KernelData(iid=np.c_[ids, ids], val=_build_grm_from_Z(_standardize_geno_for_grm(G)))
+    hapk, _ = gp.run_haplotype_tests(blocks, chroms, positions, post["ld"], sid,
+                                     post["samples"], pheno, trait, None, 5, 3, 99,
+                                     "dosage012", None, hap_test="kinship",
+                                     kernels=(K0, {str(c): K0 for c in np.unique(np.asarray(chroms).astype(str))}))
+    assert (hapk["kinship_model"] == "global kernel").all()
+    out["haplotype_tests_kinship.csv"] = hapk.to_csv(index=False)
     out["assignments.csv"] = haplotype_assignments(hap, tables, post["samples"], pheno, trait).to_csv(index=False)
     eff = gp.block_qc_effects(hap_gwas_df=hap, chroms=chroms, positions=positions,
                               geno_imputed=post["ld"], geno_df=post["samples"], pheno_for_hap=pheno,
@@ -393,14 +407,14 @@ def test_the_haplotype_test_gets_the_runs_covariates():
     assert gp.run_covariates({"GWAS_CTX": {"pcs": None}}) == (None, None)
     args = (p["blocks"], p["chroms"], p["pos"], p["G"], p["sid"], p["geno_df"], p["pheno"],
             "t", p["pcs"], 5, 3, 99, "dosage012", 2)
-    got, _ = gp.run_haplotype_tests(*args, user_covar=cov)
+    got, _ = gp.run_haplotype_tests(*args, user_covar=cov, hap_test="pcs")
     want, _ = run_haplotype_block_gwas(
         haplo_df=p["blocks"], chroms=p["chroms"], positions=p["pos"], geno_imputed=p["G"],
         sid=p["sid"], geno_df=p["geno_df"], pheno_df=p["pheno"], trait_col="t", pcs=p["pcs"],
         min_hap_count=5, min_group_size=3, n_perm=99, geno_encoding="dosage012",
         n_pcs_used=2, user_covar=cov, hap_test="pcs")
     pd.testing.assert_frame_equal(got, want)
-    without, _ = gp.run_haplotype_tests(*args)
+    without, _ = gp.run_haplotype_tests(*args, hap_test="pcs")
     assert not np.allclose(got["F_param"], without["F_param"])
 
 
@@ -449,7 +463,8 @@ def test_the_tab_gives_the_haplotype_test_the_contexts_covariates(monkeypatch):
             tgw._render_haplotype_gwas(ctx=ctx, haplo_df_auto=p["blocks"],
                                        cached_extract_block_geno=None,
                                        compute_block_qc_effects=None,
-                                       run_haplotype_block_gwas_cached_fn=_hap, settings=None)
+                                       run_haplotype_block_gwas_cached_fn=_hap,
+                                       settings={"hap_test": "pcs"})
 
         run(p["cov"])
         assert len(seen) == 1 and seen[0]["user_covar"] is p["cov"]
@@ -467,10 +482,138 @@ def test_the_tab_gives_the_haplotype_test_the_contexts_covariates(monkeypatch):
         st.session_state.update(saved)
 
 
+def test_run_kernels_takes_the_runs_kernels_for_its_table_only():
+    """The kinship-aware test's kernels are the Run's record's (the GWAS page writes it with
+    the Run's results): only for the table it was built on, and only when its kernels are of
+    the table's samples in order; never another identity's."""
+    from tests.test_haplotype_kinship import _two_chromosome_panel
+
+    p = _two_chromosome_panel()
+    rec = {"identity": "T1", "trait": "t", "use_loco": True, "K0": p["K0"],
+           "K_by_chr": p["K_by_chr"]}
+    state = {gp.RUN_KERNELS: rec}
+    K0, K_by_chr, use_loco = gp.run_kernels(state, "T1", p["ids"])
+    assert K0 is p["K0"] and K_by_chr is p["K_by_chr"] and use_loco is True
+    assert gp.run_kernels(state, "T2", p["ids"]) is None              # another table
+    assert gp.run_kernels(state, "T1", p["ids"][::-1]) is None        # other samples
+    assert gp.run_kernels(state, "T1", p["ids"][:-1]) is None
+    assert gp.run_kernels({}, "T1", p["ids"]) is None                 # no Run recorded
+    glob = dict(rec, use_loco=False, K_by_chr={c: p["K0"] for c in p["K_by_chr"]})
+    assert gp.run_kernels({gp.RUN_KERNELS: glob}, "T1", p["ids"])[2] is False
+    assert gp.RUN_KERNELS in __import__("gwas.guigwas", fromlist=["x"]).SESSION_KEYS
+
+
+def test_the_haplotype_key_names_the_test_and_its_kernel():
+    """The key splits on the test and, for the kinship-aware test, on the Run's LOCO choice
+    (the kernels' one input besides the table, whose identity the key already names); the
+    PCs-only test's key does not depend on the kernels."""
+    args = ("t", 5, 3, None, "identityA", 1000, "B", "P")
+    loco = gp.haplotype_key(*args, hap_test="kinship", use_loco=True)
+    glob = gp.haplotype_key(*args, hap_test="kinship", use_loco=False)
+    pcs = gp.haplotype_key(*args, hap_test="pcs", use_loco=None)
+    assert len({loco, glob, pcs}) == 3
+    assert loco.endswith("::testkinship::Kloco") and glob.endswith("::testkinship::Kglobal")
+    assert pcs.endswith("::testpcs::Knone")
+    assert gp.haplotype_key(*args, hap_test="pcs", use_loco=True) == pcs
+
+
+def _kinship_tab_run(monkeypatch, record, settings):
+    """The LD Blocks tab's haplotype section in bare mode on the two-chromosome panel, with the
+    page's own test function (gwas.guipost.run_haplotype_tests); st.stop raises. Returns the
+    shown result (hap_gwas_df_enriched) and the errors shown."""
+    import streamlit as st
+    from streamlit.runtime.scriptrunner import StopException
+    import pages._ld_tabs.tab_genome_wide as tgw
+    from pages._ld_tabs import LDContext
+    from tests.test_haplotype_kinship import _two_chromosome_panel
+
+    p = _two_chromosome_panel()
+    shown = []
+
+    def _stop():
+        raise StopException()
+
+    monkeypatch.setattr(tgw, "_render_block_visualization", lambda **kw: None)
+    monkeypatch.setattr(tgw, "_render_lead_snp_gallery", lambda *a, **kw: None)
+    monkeypatch.setattr(st, "stop", _stop)
+    monkeypatch.setattr(st, "error", lambda m, *a, **k: shown.append(m))
+    keys = ("pheno_used_for_hap", "n_perm_hap", "GWAS_CTX", "geno_row_ids", gp.RUN_KERNELS,
+            "hap_gwas_df_enriched")
+    saved = {k: st.session_state[k] for k in keys if k in st.session_state}
+    try:
+        for k in keys:
+            st.session_state.pop(k, None)
+        st.session_state["pheno_used_for_hap"] = p["pheno"]
+        st.session_state["n_perm_hap"] = 199
+        if record is not None:
+            st.session_state[gp.RUN_KERNELS] = dict(
+                {"identity": "TK", "trait": "t", "use_loco": True, "K0": p["K0"],
+                 "K_by_chr": p["K_by_chr"]}, **record)
+        ctx = LDContext(
+            geno_ld=p["G"], geno_hard=p["G"], chroms=p["chroms"], positions=p["pos"],
+            sid=p["sid"], geno_df=pd.DataFrame(index=p["ids"]), pheno_df=p["pheno"],
+            trait_col="t", ph_aligned=p["pheno"], y_aligned=p["pheno"]["t"].to_numpy(),
+            keep_mask=np.ones(len(p["ids"]), dtype=bool), geno_ld_aligned=p["G"],
+            gwas_df=pd.DataFrame({"SNP": p["sid"], "PValue": 0.5}), haplo_df_auto=p["blocks"],
+            ld_decay_kb=None, adj_r2_min_global=0.2, ld_trait="t", table_identity="TK")
+        try:
+            tgw._render_haplotype_gwas(
+                ctx=ctx, haplo_df_auto=p["blocks"], cached_extract_block_geno=None,
+                compute_block_qc_effects=lambda hap_gwas_df=None, **k: hap_gwas_df,
+                run_haplotype_block_gwas_cached_fn=gp.run_haplotype_tests, settings=settings)
+        except StopException:
+            return None, shown, p
+        return st.session_state["hap_gwas_df_enriched"].copy(), shown, p
+    finally:
+        for k in list(st.session_state.keys()):
+            if k in keys or (isinstance(k, str) and k.startswith("HAPGWAS::")):
+                del st.session_state[k]
+        st.session_state.update(saved)
+
+
+def test_the_gui_kinship_test_is_the_clis(monkeypatch):
+    """GUI = CLI: the tab's kinship-aware test, with the Run's kernels, gives the library's
+    result for the same blocks, samples and kernels: F, both p-values, eta2 (and the rest)
+    equal; FDR q over the blocks with a p-value."""
+    from gwas.haplotype import run_haplotype_block_gwas
+    from gwas.haplotype_kinship import bh_qvalues
+
+    shown_df, shown, p = _kinship_tab_run(monkeypatch, {}, {"hap_test": "kinship"})
+    assert shown == [], shown
+    cli, _ = run_haplotype_block_gwas(
+        haplo_df=p["blocks"], chroms=p["chroms"], positions=p["pos"], geno_imputed=p["G"],
+        sid=p["sid"], geno_df=pd.DataFrame(index=p["ids"]), pheno_df=p["pheno"], trait_col="t",
+        pcs=None, min_hap_count=5, min_group_size=3, n_perm=199, n_pcs_used=None,
+        hap_test="kinship", kernels=(p["K0"], p["K_by_chr"]))
+    assert len(shown_df) == len(cli) == 2
+    for c in ("F_param", "PValue_param", "F_perm", "P_perm", "eta2", "eta2_ci_low",
+              "eta2_ci_high", "omega2", "lead_snp_r2", "h2_null", "eta2_pcs_only",
+              "kinship_model", "df1", "df2", "FDR_BH"):
+        assert shown_df[c].tolist() == cli[c].tolist(), c
+    assert (shown_df["kinship_model"] == "LOCO kernel").all()
+    assert shown_df["FDR_qvalue"].tolist() == bh_qvalues(cli["PValue"].to_numpy()).tolist()
+
+
+def test_the_gui_kinship_test_needs_the_runs_kernels(monkeypatch):
+    """Without the Run's kernels for this table (none recorded, or another table's) the tab
+    stops with its plain message; the PCs-only test needs none."""
+    for record in (None, {"identity": "another table"}):
+        df, shown, _p = _kinship_tab_run(monkeypatch, record, {"hap_test": "kinship"})
+        assert df is None
+        assert shown == [gp.NO_RUN_KERNELS_MESSAGE.format(trait="t")], shown
+    df, shown, _p = _kinship_tab_run(monkeypatch, None, {"hap_test": "pcs"})
+    assert shown == [] and (df["kinship_model"] == "none").all()
+    # the default is the kinship-aware test
+    df, shown, _p = _kinship_tab_run(monkeypatch, None, None)
+    assert df is None and shown == [gp.NO_RUN_KERNELS_MESSAGE.format(trait="t")]
+
+
 def test_haplotype_and_detection_keys_name_the_identity_not_the_shape():
     pcs = np.zeros((N, 2))
-    a = gp.haplotype_key("t", 5, 3, pcs, "identityA", 1000, "B", "P")
-    b = gp.haplotype_key("t", 5, 3, pcs, "identityB", 1000, "B", "P")
+    a = gp.haplotype_key("t", 5, 3, pcs, "identityA", 1000, "B", "P", hap_test="kinship",
+                         use_loco=True)
+    b = gp.haplotype_key("t", 5, 3, pcs, "identityB", 1000, "B", "P", hap_test="kinship",
+                         use_loco=True)
     assert a != b and "identityA" in a and a.startswith("HAPGWAS::")
     assert f"::{N}x{M}::" not in a                                # no shape term for the table
     d1 = gp.detection_key("t", 0.6, 300.0, 10, 1e-5, None, "G", "identityA")

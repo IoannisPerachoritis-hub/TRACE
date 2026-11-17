@@ -37,8 +37,10 @@ The GWAS results and M_eff in the session are taken only for the table they were
 results only for the trait of the last finished Run GWAS (run_trait); otherwise the page says
 what happened (results_message: the last Run GWAS did not finish, or the settings changed since
 it). The PCs come only from what the GWAS page writes with the table (run_pcs, pcs_of_samples),
-and the page records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for
-the GWAS page's block stability.
+the user covariates likewise (run_covariates), and the kinship-aware haplotype test's kernels
+only from the record the GWAS page's Run writes with its results (run_kernels). The page
+records which trait and table its final LD blocks are of (BLOCKS_FINAL_KEY), for the GWAS
+page's block stability.
 
 SharedDetection: the page's automatic LD blocks and the LD Blocks tab's detection share one
 result when their inputs are provably the same (the tab at its defaults, every sample
@@ -262,6 +264,27 @@ def table_released(session_table):
 RUN_IDENTITY = "gwas_run_identity"        # with gwas_results: the identity of its Run's table
 MEFF_IDENTITY = "meff_identity"           # with meff_val: the identity of the table of M_eff
 BLOCKS_FINAL_KEY = "ld_blocks_final_key"  # with ld_blocks_final: (trait, table identity)
+# with RUN_IDENTITY: the kernels the Run's scan used, {identity, trait, use_loco, K0, K_by_chr}
+# (references to the GWAS page's own kernel objects, not copies): the haplotype test's
+RUN_KERNELS = "gwas_run_kernels"
+
+# The haplotype test's choice in the GUI (the LD Blocks tab's Settings and One-Click): label ->
+# run_haplotype_block_gwas's hap_test (the CLI's --hap-test); the first is the default
+HAP_TEST_CHOICES = {
+    "Kinship-aware (default)": "kinship",
+    "PCs and covariates only (the earlier test)": "pcs",
+}
+HAP_TEST_HELP = (
+    "Kinship-aware (the default; the CLI's --hap-test kinship): a mixed model with the GWAS "
+    "run's own kinship kernel for the block's chromosome (its LOCO kernel, or the whole-genome "
+    "kernel when LOCO is off), whose null model is fitted by REML; the F test and the "
+    "Freedman-Lane permutations are made on the data whitened by it. PCs and covariates only "
+    "(--hap-test pcs): the earlier test, without kinship.")
+
+NO_RUN_KERNELS_MESSAGE = (
+    "The kinship-aware haplotype test needs the kinship kernels of the GWAS page's Run GWAS on "
+    "this genotype table, and this session has none for it. Re-run the GWAS on `{trait}`, or "
+    "choose the PCs-only test under Settings, Haplotype test.")
 
 RUN_CHANGED_MESSAGE = ("The genotype table's settings changed since the last Run GWAS on the "
                        "GWAS page: run GWAS again (or set the settings back) to use this page.")
@@ -350,6 +373,31 @@ def run_pcs(state):
     if not isinstance(gwas_ctx, dict):
         return None, None
     return gwas_ctx.get("pcs"), gwas_ctx.get("pcs_full")
+
+
+def run_kernels(state, identity, samples=None):
+    """(K0, K_by_chr, use_loco): the kernels of the GWAS page's Run GWAS on the session's
+    table, or None. The GWAS page records them when a Run ends (RUN_KERNELS, with
+    RUN_IDENTITY): references to the kernels its scan used, the table's identity, the trait
+    and the LOCO choice. They are taken only for the table they were built on (``identity``,
+    the session table's: another identity gives None, as run_table_changed), and only when
+    every kernel is of ``samples`` (the table's sample IDs, in its row order), as
+    pcs_of_samples checks the PCs. K_by_chr maps each chromosome to its LOCO kernel, or every
+    one to K0 when the Run did not use LOCO."""
+    rec = state.get(RUN_KERNELS)
+    if not isinstance(rec, dict) or str(rec.get("identity")) != str(identity):
+        return None
+    K0, K_by_chr = rec.get("K0"), rec.get("K_by_chr")
+    if K0 is None or not isinstance(K_by_chr, dict) or not K_by_chr:
+        return None
+    if samples is not None:
+        ids = np.asarray(samples).astype(str)
+        for K in (K0, *K_by_chr.values()):
+            kid = np.asarray(getattr(K, "iid", np.empty((0, 2))))
+            if kid.ndim != 2 or kid.shape[0] != ids.size \
+                    or not np.array_equal(kid[:, 1].astype(str), ids):
+                return None
+    return K0, K_by_chr, bool(rec.get("use_loco", True))
 
 
 def run_covariates(state):
@@ -468,19 +516,25 @@ def window_r2_key(G, min_pair_n=20):
 
 
 def haplotype_key(trait_col, min_hap_count, min_group_size, pcs, table, n_perm, blocks_hash,
-                  pheno_hash):
+                  pheno_hash, *, hap_test, use_loco):
     """The session key of one haplotype test: the trait, its settings, the PCs, the table's
-    identity (``table``, from table_key), the permutations, the blocks and the phenotype."""
+    identity (``table``, from table_key), the permutations, the blocks and the phenotype, and
+    the test (``hap_test``) with its kernel. The kernels are built from the table (its
+    identity names the VCF, the QC, the imputation, the samples and the covariates), so the
+    Run's LOCO choice (``use_loco``) is the one other thing they depend on: K{loco|global}
+    for the kinship-aware test, Knone for the PCs-only test, which takes no kernel."""
     pcs_sig = "nopcs"
     if pcs is not None:
         pcs_arr = np.asarray(pcs)
         pcs_sig = f"pcs{pcs_arr.shape[0]}x{pcs_arr.shape[1]}"
+    kern = "none" if hap_test == "pcs" else ("loco" if use_loco else "global")
     return (f"HAPGWAS::{trait_col}"
             f"::mhc{int(min_hap_count)}::mgs{int(min_group_size)}"
             f"::{pcs_sig}"
             f"::T{table}"
             f"::nperm{int(n_perm)}"
-            f"::B{blocks_hash}::P{pheno_hash}")
+            f"::B{blocks_hash}::P{pheno_hash}"
+            f"::test{hap_test}::K{kern}")
 
 
 def detection_key(trait_col, ld_r2, flank_kb, top_n, seed_p, ld_decay_kb, gwas_sig, table):
@@ -839,11 +893,13 @@ def block_qc_effects(hap_gwas_df, chroms, positions, geno_imputed, geno_df, phen
 
 def run_haplotype_tests(haplo_df, chroms, positions, geno_imputed, sid, geno_df, pheno_df,
                         trait_col, pcs, min_hap_count, min_group_size, n_perm, geno_encoding,
-                        n_pcs_used, *, user_covar=None):
+                        n_pcs_used, *, user_covar=None, hap_test="kinship", kernels=None):
     """gwas.haplotype.run_haplotype_block_gwas with the LD Blocks tab's positional arguments
-    (the call it makes to run_haplotype_block_gwas_cached_fn) and the run's user covariates
-    (run_covariates). Not wrapped in st.cache_data: that would hash the whole table, and the
-    tab keeps each result in the session under its haplotype_key (a bounded family)."""
+    (the call it makes to run_haplotype_block_gwas_cached_fn), the run's user covariates
+    (run_covariates), the test chosen in the tab's Settings and, for the kinship-aware test
+    (the default, as in the CLI), the Run's kernels (run_kernels). Not wrapped in
+    st.cache_data: that would hash the whole table, and the tab keeps each result in the
+    session under its haplotype_key (a bounded family)."""
     from gwas.haplotype import run_haplotype_block_gwas
 
     return run_haplotype_block_gwas(
@@ -851,7 +907,7 @@ def run_haplotype_tests(haplo_df, chroms, positions, geno_imputed, sid, geno_df,
         sid=sid, geno_df=geno_df, pheno_df=pheno_df, trait_col=trait_col, pcs=pcs,
         min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=n_perm,
         geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, user_covar=user_covar,
-        hap_test="pcs")
+        hap_test=hap_test, kernels=kernels)
 
 
 # ----------------------------------------------------------- the session keys (for Clear)

@@ -109,6 +109,9 @@ st.session_state["ld_positions"] = positions
 st.session_state["ld_sid"] = sid
 st.session_state["geno_row_ids"] = ids_full[:N_IDS].tolist()
 st.session_state["pheno_used_for_hap"] = pheno_full.copy()
+# the PCs-only haplotype test: this script records no Run kernels (the kinship-aware
+# test, the default, needs them; gwas.guipost.run_kernels)
+st.session_state["hap_test_choice"] = "PCs and covariates only (the earlier test)"
 # the two trait names the drift message must be able to name
 st.session_state["gwas_run_summary"] = {"trait": "fruit_number"}
 st.session_state["selected_traits_multiselect"] = ["fruit_weight"]

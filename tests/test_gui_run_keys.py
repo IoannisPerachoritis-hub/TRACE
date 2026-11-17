@@ -62,6 +62,29 @@ def test_meff_and_the_runs_results_are_written_with_their_tables_identity():
     assert {"meff_identity", "gwas_run_identity"} <= set(guigwas.SESSION_KEYS)        # Clear drops them
 
 
+def test_the_runs_kernels_are_recorded_with_its_tables_identity():
+    """The Post-GWAS kinship-aware haplotype test's kernels (gwas.guipost.run_kernels): the block
+    that writes gwas_run_identity also writes gwas_run_kernels, the Run's own kernel objects (the
+    K0 and K_by_chr its MLM scan was given) with the table's identity, the trait and the LOCO
+    choice; Clear drops it."""
+    found = 0
+    for block in _blocks(_page()):
+        writes = dict(_writes(block))
+        if "gwas_run_identity" not in writes:
+            continue
+        found += 1
+        assert writes["gwas_run_kernels"] == (
+            "{'identity': _table_id, 'trait': trait_col, 'use_loco': bool(use_loco), "
+            "'K0': K0, 'K_by_chr': K_by_chr}")
+    assert found == 1
+    scan = [n for n in ast.walk(_page()) if isinstance(n, ast.Call)
+            and getattr(n.func, "id", "") == "run_gwas_cached"]
+    assert len(scan) == 1
+    kw = {k.arg: ast.unparse(k.value) for k in scan[0].keywords}
+    assert (kw["_K0"], kw["_K_by_chr"], kw["use_loco"]) == ("K0", "K_by_chr", "bool(use_loco)")
+    assert "gwas_run_kernels" in guigwas.SESSION_KEYS
+
+
 def test_the_block_stability_uses_only_this_trait_and_tables_blocks():
     """KEY-3 (the GWAS page's side): ld_blocks_final when its key is (trait, table identity); else
     the automatic blocks of the trait when their signature names this table; else none."""

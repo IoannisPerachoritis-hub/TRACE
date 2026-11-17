@@ -58,6 +58,9 @@ blocks = pd.DataFrame({
 
 pheno = pd.DataFrame({"t": rng.normal(10, 2, n)})
 st.session_state["pheno"] = pheno
+# the PCs-only haplotype test: this script records no Run kernels (the kinship-aware
+# test, the default, needs them; gwas.guipost.run_kernels)
+st.session_state["hap_test_choice"] = "PCs and covariates only (the earlier test)"
 
 ctx = LDContext(
     geno_ld=geno, geno_hard=geno, chroms=chroms, positions=positions, sid=sid,

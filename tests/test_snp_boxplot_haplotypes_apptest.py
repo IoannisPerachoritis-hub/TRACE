@@ -98,6 +98,9 @@ st.session_state["ld_geno_hard"] = geno
 st.session_state["ld_chroms"] = chroms
 st.session_state["ld_positions"] = positions
 st.session_state["ld_sid"] = sid
+# the PCs-only haplotype test: this script records no Run kernels (the kinship-aware
+# test, the default, needs them; gwas.guipost.run_kernels)
+st.session_state["hap_test_choice"] = "PCs and covariates only (the earlier test)"
 st.session_state["geno_row_ids"] = ids.tolist()
 st.session_state["geno_imputed"] = geno          # the PCA panel's PCs
 st.session_state["pheno_used_for_hap"] = pheno.copy()
