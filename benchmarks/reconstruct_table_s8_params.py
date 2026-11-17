@@ -1,16 +1,21 @@
 """T-61 — Reconstruct the block-detection parameters that produced Table S8.
 
-Confirms which flank window reproduces the six published tomato locule-number LD
-blocks (Supp Table S8), and records ``median_decay`` — the quantity ``cli.py``
-computes for the flank derivation but that no committed artifact stores.
+Confirms which flank window reproduces the four tomato locule-number LD blocks of the
+regenerated Table S8 (tests/golden/varitome_locule/expected_blocks.csv, the blocks of
+tests/golden/tomato_locule/ld_blocks.csv; the published table had six, before the
+detector changes logged in tests/golden/REGENERATION_LOG.md), and records
+``median_decay`` — the quantity ``cli.py`` computes for the flank derivation but that
+no committed artifact stores.
 
 This does NOT re-run the GWAS: it consumes the committed MLM result table
 ``platform_GWAS_locule_number.csv`` and mirrors the detection path of
-``benchmarks/rerun_downstream_demo.py`` exactly (same QC loading, same sample
-alignment, same fixed parameters). The reproducing configuration is the one that
-already produced the committed ``platform_Haplotype_GWAS_MLM.csv`` (verified to
-match Table S8 to three decimals); this script re-confirms it, records the flank
-derivation, and shows that the alternative fixed-flank grid cells do NOT reproduce.
+``benchmarks/rerun_downstream_demo.py`` (same QC loading, same sample alignment, same
+fixed parameters, apart from the min_snps floor of 2). The published six intervals came
+from the committed ``platform_Haplotype_GWAS_MLM.csv`` (165 samples, before those
+changes); this script re-confirms the flank derivation for the four blocks and shows
+that the alternative fixed-flank grid cells do NOT reproduce them. It runs no haplotype
+test: Table S8's statistics come from the CLI at its defaults and from
+``benchmarks/capture_golden.py``.
 
 Rule (measure, never predict): no parameter is adjusted to force a match. If the
 grid does not reproduce, that is the finding.
@@ -31,17 +36,14 @@ from gwas import ld  # noqa: E402
 
 QC_DIR = ROOT / "benchmarks" / "qc_data" / "tomato_locule_number"
 
-# Table S8's six blocks, as printed at Mb precision (Supp p8) and — for an exact
-# check — the bp intervals of the committed reproducing run
-# (platform_Haplotype_GWAS_MLM.csv). Detection echoes these coordinates.
-TABLE_S8_MB = {
-    (46.46, 46.58), (46.97, 47.04), (47.02, 47.13),
-    (47.09, 47.17), (47.24, 47.33), (47.30, 47.66),
-}
+# The regenerated Table S8's four blocks: the bp intervals of
+# tests/golden/varitome_locule/expected_blocks.csv (= tests/golden/tomato_locule/ld_blocks.csv)
+# and, as a table prints them, at Mb precision. Detection echoes these coordinates.
 TABLE_S8_BP = [
-    (46461623, 46582239), (46973281, 47038294), (47017547, 47129438),
-    (47092604, 47168061), (47239566, 47332608), (47301921, 47657766),
+    (46461623, 46582239), (46799142, 46914856), (47017547, 47129438),
+    (47301921, 47616243),
 ]
+TABLE_S8_MB = {(round(s / 1e6, 2), round(e / 1e6, 2)) for s, e in TABLE_S8_BP}
 
 # Fixed parameters held constant across the whole grid (T-61 / rerun_downstream_demo
 # defaults): ld_threshold=0.6, adj_r2_min=0.2, min_snps=2, top_n=10, sig_thresh=1e-5,
@@ -165,10 +167,10 @@ def main():
     print("\n  CONCLUSION")
     print(f"    median_decay = {median_decay:.3f} kb; reproducing flank_kb = {flank_2x} "
           f"(2x median_decay, unclipped), with ld_decay_kb = {median_decay:.3f}.")
-    print(f"    Flank cells reproducing all six Table S8 intervals: {reproducing}")
+    print(f"    Flank cells reproducing all four Table S8 blocks: {reproducing}")
     print(f"    Primary config reproduces Table S8: Mb={mb_match}, exact-bp={bp_match}")
-    print("    eta2 producer = library gwas/haplotype.py (n_perm=1000); confirmed "
-          "elsewhere against the committed platform_Haplotype_GWAS_MLM.csv.")
+    print("    No haplotype test runs here: Table S8's statistics come from the CLI at its "
+          "defaults and from benchmarks/capture_golden.py.")
 
 
 if __name__ == "__main__":

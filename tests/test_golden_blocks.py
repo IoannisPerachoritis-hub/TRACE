@@ -101,7 +101,9 @@ def test_min_snps_gate_has_discriminating_power():
 def test_varitome_locule_blocks_match_table_s8():
     """Tier-B pin: re-running detection at the reproducing params (meta.json,
     from T-61: flank_kb=144, ld_decay_kb=72.17) on the Varitome QC inputs emits
-    Table S8's blocks (tests/golden/varitome_locule/expected_blocks.csv). The inputs
+    the four blocks of the regenerated Table S8 (tests/golden/varitome_locule/
+    expected_blocks.csv; the published table had six, before the detector changes in
+    tests/golden/REGENERATION_LOG.md). The inputs
     are read from TRACE_VARITOME_DIR if set, else benchmarks/qc_data/tomato_locule_number
     (gitignored); the test skips, with the reason, when they are absent or are not
     the copy the golden was made from."""
@@ -132,6 +134,6 @@ def test_varitome_locule_blocks_match_table_s8():
                         flank_kb=p["flank_kb"], ld_decay_kb=p["ld_decay_kb"])
     expected = pd.read_csv(case_dir / "expected_blocks.csv", dtype=str, keep_default_na=False)
     assert canon_block_table(got) == canon_block_table(expected), (
-        "Varitome locule detection no longer reproduces Table S8's blocks — "
-        "tests/golden/varitome_locule/expected_blocks.csv"
+        "Varitome locule detection no longer reproduces the four blocks of the "
+        "regenerated Table S8 — tests/golden/varitome_locule/expected_blocks.csv"
     )

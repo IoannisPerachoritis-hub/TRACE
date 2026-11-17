@@ -77,7 +77,10 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   find_ld_clusters_genomewide + find_ld_blocks_graph signature defaults, cli.py detection call + run_manifest
   "LD_min_snps", the three GUI detection call sites -- tab_genome_wide, Post_GWAS_Analysis auto-detect, GWAS_analysis
   one-click -- + their metadata, benchmarks/capture_golden.py); the two DEAD ld.py functions and the Table-S8
-  reproduction benchmarks stay at 3. The GUI and CLI now share the same floor (the UI-cleanup governing rule). The
+  reproduction benchmarks stay at 3. [Correction, 17 Nov 2026: the same commit (7c6bbbd) moved
+  benchmarks/reconstruct_table_s8_params.py to min_snps 2 as well (its _detect, which
+  test_golden_blocks.py::test_varitome_locule_blocks_match_table_s8 uses); only benchmarks/rerun_downstream_demo.py
+  stays at 3.] The GUI and CLI now share the same floor (the UI-cleanup governing rule). The
   haplotype stage (min_hap_count=5, min_group_size=3) remains the real thin-block protection, so a 2-marker floor is
   defensible.
 - before/after (tomato_locule): 3 blocks -> 4. A new significant 2-marker block surfaces (46,799,142-46,914,856,
