@@ -170,7 +170,7 @@ def _run_cov_panel(p, user_covar=None, n_perm=199):
     return run_haplotype_block_gwas(
         haplo_df=p["blocks"], chroms=p["chroms"], positions=p["pos"], geno_imputed=p["G"],
         sid=p["sid"], geno_df=p["geno_df"], pheno_df=p["pheno"], trait_col="t", pcs=p["pcs"],
-        n_pcs_used=2, n_perm=n_perm, user_covar=user_covar)
+        n_pcs_used=2, n_perm=n_perm, user_covar=user_covar, hap_test="pcs")
 
 
 def _expected_from_design(p, res, tables, design, n_perm=199):

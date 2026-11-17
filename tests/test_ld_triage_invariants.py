@@ -53,6 +53,8 @@ HAPLOTYPE_TABLE_COLUMNS = [
     "n_haplotypes", "n_tested_haplotypes", "df1", "df2", "n_permutations",
     "permutation_type", "F_param", "PValue_param", "F_perm", "P_perm", "PValue",
     "eta2", "hap_stats_json", "MidPos", "-log10p", "FDR_BH",
+    # the haplotype test's kernel, its null model's h2 and the PCs-only test's eta2
+    "kinship_model", "h2_null", "eta2_pcs_only",
 ]
 CLI_HAP_COLUMNS = ["Hap_PValue", "Hap_FDR_BH", "Hap_F_perm", "Hap_F_param",
                    "Hap_n_haplotypes", "Hap_n_tested", "Hap_n_samples",

@@ -127,7 +127,7 @@ def test_the_haplotype_test_records_why_a_block_was_left_out():
     res, _tables = run_haplotype_block_gwas(
         haplo_df=blocks, chroms=chroms, positions=pos, geno_imputed=G, sid=sid,
         geno_df=geno_df, pheno_df=pheno, trait_col="t", pcs=None, min_hap_count=5,
-        min_group_size=5, n_perm=20)
+        min_group_size=5, n_perm=20, hap_test="pcs")
     assert res[["Start", "End"]].values.tolist() == [[1000, 3000]]
     why = res.attrs["untested"]
     assert why == {

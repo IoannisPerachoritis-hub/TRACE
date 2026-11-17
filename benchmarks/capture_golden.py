@@ -158,7 +158,7 @@ def capture_golden(
             geno_imputed=geno.astype(float), sid=sid,
             geno_df=geno_df_aligned, pheno_df=pheno_aligned, trait_col=tcol,
             pcs=None, n_perm=n_perm, n_pcs_used=0,
-            min_hap_count=min_hap_count, min_group_size=min_group_size,
+            min_hap_count=min_hap_count, min_group_size=min_group_size, hap_test="pcs",
         )
         hap_frozen, hap_missing = _freeze(hap_results, HAP_COLS)
         hap_frozen.to_csv(out_dir / "haplotype_blocks.csv", index=False)

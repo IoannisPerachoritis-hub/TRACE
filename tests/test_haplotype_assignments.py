@@ -95,7 +95,8 @@ def synth():
         res, tables = run_haplotype_block_gwas(
             haplo_df=d["blocks"], chroms=d["chroms"], positions=d["positions"],
             geno_imputed=d["G"], sid=d["sid"], geno_df=d["geno_df"], pheno_df=d["pheno"],
-            trait_col="t", pcs=None, min_hap_count=4, min_group_size=5, n_perm=50)
+            trait_col="t", pcs=None, min_hap_count=4, min_group_size=5, n_perm=50,
+            hap_test="pcs")
     d.update(res=res, tables=tables, calls=calls,
              table=haplotype_assignments(res, tables, d["geno_df"], d["pheno"], "t"))
     return d

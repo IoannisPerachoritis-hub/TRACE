@@ -54,7 +54,8 @@ def test_layer2_columns_and_invariants():
     df_res, _ = cap.run_haplotype_block_gwas(
         haplo_df=haplo_df, chroms=chroms, positions=positions, geno_imputed=geno.astype(float), sid=sid,
         geno_df=geno_df, pheno_df=pheno, trait_col=manifest.get("trait_col", "locule_number"),
-        pcs=None, n_perm=manifest.get("n_perm", 1000), n_pcs_used=0, min_hap_count=5, min_group_size=3)
+        pcs=None, n_perm=manifest.get("n_perm", 1000), n_pcs_used=0, min_hap_count=5, min_group_size=3,
+        hap_test="pcs")
 
     assert not df_res.empty
     for c in MLG_COLS:

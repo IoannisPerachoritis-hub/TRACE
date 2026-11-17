@@ -9,17 +9,29 @@
 - The REML h2 is FaST-LMM's: LMM.findH2(REML=True) and single_snp's Nullh2, to 1e-6.
 - Flipping the signs of the kernel's eigenvectors changes nothing.
 - The kernel is never written to; it is restricted to the tested samples by ID.
+
+And in run_haplotype_block_gwas:
+- the kinship-aware test is the default and needs the scan's kernels;
+- each block takes its own chromosome's kernel (LOCO, or "global kernel" when it is K0),
+  its row is the engine's result for the block's tested samples and seed, and eta2_pcs_only
+  is the PCs-only test's eta2;
+- a block without a kernel, or with a tested sample the kernel lacks, is kept with
+  kinship_model "failed: <reason>" and NaN statistics, and FDR_BH is over the other blocks;
+- the PCs-only test adds kinship_model "none", an empty h2_null and eta2_pcs_only = eta2.
 """
 import numpy as np
+import pandas as pd
 import pytest
 from scipy.stats import f as fdist
 
 from gwas.haplotype import (_eta2_confint, _lead_snp_partial_r2, _omega2_from_f,
-                            block_test_lm_with_pcs, freedman_lane_perm_pvalue)
-from gwas.haplotype_kinship import (H2_MAX, KinshipTestError, kernel_for_samples,
-                                    kinship_block_test, null_h2, permutation_indices, reml_h2,
-                                    _orth)
+                            block_test_lm_with_pcs, freedman_lane_perm_pvalue,
+                            run_haplotype_block_gwas)
+from gwas.haplotype_kinship import (H2_MAX, PERMUTATION_TYPE, KinshipTestError, bh_qvalues,
+                                    kernel_for_samples, kinship_block_test, null_h2,
+                                    permutation_indices, reml_h2, _orth)
 from gwas.models import _one_hot_drop_first
+from gwas.utils import stable_seed
 
 
 class _Kernel:
@@ -278,3 +290,139 @@ def test_a_block_it_cannot_test_is_refused():
     with pytest.raises(KinshipTestError, match="cannot fit"):
         kinship_block_test(d["y"][:3], np.array(["H1", "H2", "H1"]), d["C"][:3],
                            d["Kr"][:3, :3], n_perm=9)
+
+
+# ------------------------------------------------- run_haplotype_block_gwas, kinship mode
+def _two_chromosome_panel(seed=21, n=150, m_bg=300):
+    """Families of related samples; one block of three SNPs (three haplotype groups) at the
+    start of each of two chromosomes, then background SNPs; the scan's kernels built from the
+    background SNPs by the pipeline's LOCO builder; a phenotype with a family effect."""
+    from gwas.kinship import _build_loco_kernels_impl, _standardize_geno_for_grm
+
+    rng = np.random.default_rng(seed)
+    ids = np.array([f"A{i:03d}" for i in range(n)])
+    fam = rng.integers(0, 15, n)
+    base = rng.binomial(2, 0.3, size=(15, 2 * m_bg))
+    G_bg = np.where(rng.random((n, 2 * m_bg)) < 0.8, base[fam],
+                    rng.binomial(2, 0.3, size=(n, 2 * m_bg))).astype(float)
+    pat = np.array([[0, 0, 2], [2, 2, 0], [0, 2, 2]], float)
+    g1, g2 = rng.integers(0, 3, n), rng.integers(0, 3, n)
+    G = np.column_stack([pat[g1], G_bg[:, :m_bg], pat[g2], G_bg[:, m_bg:]])
+    chroms = np.array(["1"] * (3 + m_bg) + ["2"] * (3 + m_bg))
+    pos = np.tile((np.arange(3 + m_bg) + 1) * 1000.0, 2)
+    sid = np.array([f"c{c}s{j}" for c, j in zip(chroms, np.tile(np.arange(3 + m_bg), 2))])
+    blocks = pd.DataFrame({
+        "Chr": ["1", "2"], "Start (bp)": [1000, 1000], "End (bp)": [3000, 3000],
+        "lead_snp": ["c1s1", "c2s0"], "SNP_IDs": ["c1s0,c1s1,c1s2", "c2s0,c2s1,c2s2"]})
+    fam_eff = rng.normal(0.0, 1.0, 15)
+    y = 0.4 * g1 + 0.3 * g2 + fam_eff[fam] + rng.normal(0.0, 0.8, n)
+    Z = _standardize_geno_for_grm(G_bg)
+    K0, K_by_chr, _ = _build_loco_kernels_impl(np.c_[ids, ids], Z,
+                                               np.array(["1"] * m_bg + ["2"] * m_bg))
+    return dict(blocks=blocks, chroms=chroms, pos=pos, G=G, sid=sid, ids=ids,
+                geno_df=pd.DataFrame(index=ids), pheno=pd.DataFrame({"t": y}, index=ids),
+                K0=K0, K_by_chr=K_by_chr)
+
+
+def _run(p, **kw):
+    return run_haplotype_block_gwas(
+        haplo_df=p["blocks"], chroms=p["chroms"], positions=p["pos"], geno_imputed=p["G"],
+        sid=p["sid"], geno_df=p["geno_df"], pheno_df=p["pheno"], trait_col="t", pcs=None,
+        n_perm=199, **kw)
+
+
+def test_the_kinship_test_is_the_default_and_needs_the_kernels():
+    p = _two_chromosome_panel()
+    for kw in ({}, {"hap_test": "kinship"}):
+        with pytest.raises(ValueError, match="needs the scan's kernels"):
+            _run(p, **kw)
+    with pytest.raises(ValueError, match="hap_test must be one of"):
+        _run(p, hap_test="lmm", kernels=(p["K0"], p["K_by_chr"]))
+
+
+def test_each_block_is_tested_with_its_own_chromosomes_kernel():
+    p = _two_chromosome_panel()
+    res, tables = _run(p, hap_test="kinship", kernels=(p["K0"], p["K_by_chr"]))
+    pcs, _ = _run(p, hap_test="pcs")
+    assert len(res) == 2 and list(res.columns) == list(pcs.columns)
+    for i, r in res.iterrows():
+        tab = tables[f"{r['Chr']}:{int(r['Start'])}-{int(r['End'])}"]
+        tab = tab[tab["in_haplotype_test"]]
+        samples = tab["Sample"].astype(str).to_numpy()
+        K, _ = kernel_for_samples(p["K_by_chr"][str(r["Chr"])], samples)
+        lead = np.flatnonzero(p["sid"] == r["lead_snp"])[0]
+        want = kinship_block_test(
+            p["pheno"]["t"].reindex(samples).to_numpy(float),
+            tab["Haplotype"].astype(str).to_numpy(), None, K, n_perm=199,
+            seed=stable_seed(str(r["Chr"]), int(r["Start"]), int(r["End"]), "t", "FL"),
+            lead_dose=p["G"][:, lead][pd.Index(p["ids"]).get_indexer(samples)])
+        assert want["h2"] > 0, "the family effect should give the null model some h2"
+        for c in ("F_param", "PValue_param", "df1", "df2", "F_perm", "P_perm", "eta2",
+                  "eta2_ci_low", "eta2_ci_high", "omega2", "lead_snp_r2"):
+            assert r[c] == want[c], c
+        assert r["PValue"] == want["P_perm"] and r["h2_null"] == want["h2"]
+        assert r["kinship_model"] == "LOCO kernel"
+        assert r["permutation_type"] == PERMUTATION_TYPE
+        # the PCs-only test's eta2, for the same block and samples
+        assert r["eta2_pcs_only"] == pcs.loc[i, "eta2"]
+    assert res["FDR_BH"].tolist() == bh_qvalues(res["PValue"].to_numpy()).tolist()
+    # with K0 for every chromosome (--no-loco): the global kernel; chromosome labels are
+    # matched as canonical names ("chr1" is chromosome 1)
+    glob, _ = _run(p, kernels=(p["K0"], {"chr1": p["K0"], "chr2": p["K0"]}))
+    assert glob["kinship_model"].tolist() == ["global kernel", "global kernel"]
+    assert not np.allclose(glob["F_param"], res["F_param"])
+
+
+def test_a_block_the_kinship_test_cannot_test_is_kept_with_the_reason():
+    p = _two_chromosome_panel()
+    only1 = {"1": p["K_by_chr"]["1"]}
+    res, tables = _run(p, kernels=(p["K0"], only1))
+    full, _ = _run(p, kernels=(p["K0"], p["K_by_chr"]))
+    pcs, _ = _run(p, hap_test="pcs")
+    assert res["kinship_model"].tolist() == ["LOCO kernel", "failed: no kernel for chromosome 2"]
+    bad = res.iloc[1]
+    for c in ("F_param", "PValue_param", "F_perm", "P_perm", "PValue", "eta2", "eta2_ci_low",
+              "eta2_ci_high", "omega2", "lead_snp_r2", "h2_null", "FDR_BH", "-log10p"):
+        assert np.isnan(bad[c]), c
+    # the design's degrees of freedom and the PCs-only eta2 are still given
+    assert (bad["df1"], bad["df2"]) == (pcs.iloc[1]["df1"], pcs.iloc[1]["df2"])
+    assert bad["eta2_pcs_only"] == pcs.iloc[1]["eta2"]
+    assert res.dtypes["df1"] == full.dtypes["df1"]
+    # the other block is as before, and FDR_BH is over the blocks with a p-value
+    assert res.iloc[0]["P_perm"] == full.iloc[0]["P_perm"]
+    assert res.iloc[0]["FDR_BH"] == res.iloc[0]["PValue"]
+    # a tested sample the kernel lacks fails the block too
+    k1 = p["K_by_chr"]["1"]
+    keep = np.arange(1, len(p["ids"]))
+    short = type(k1)(iid=k1.iid[keep], val=np.asarray(k1.val)[np.ix_(keep, keep)])
+    res2, _ = _run(p, kernels=(p["K0"], {"1": short, "2": p["K_by_chr"]["2"]}))
+    assert res2["kinship_model"].iloc[0] == "failed: 1 tested sample(s) are not in the kernel"
+    assert res2["kinship_model"].iloc[1] == "LOCO kernel"
+
+
+def test_the_pcs_test_adds_only_the_three_columns():
+    p = _two_chromosome_panel()
+    res, _ = _run(p, hap_test="pcs")
+    assert list(res.columns[-6:]) == ["kinship_model", "h2_null", "eta2_pcs_only", "MidPos",
+                                      "-log10p", "FDR_BH"]
+    assert res["kinship_model"].tolist() == ["none", "none"]
+    assert res["h2_null"].isna().all()
+    assert res["eta2_pcs_only"].tolist() == res["eta2"].tolist()
+    assert (res["permutation_type"] == "Freedman-Lane_residual_permutation_with_PCs").all()
+    # an empty result has the same columns
+    empty, _ = run_haplotype_block_gwas(
+        haplo_df=p["blocks"].iloc[:0], chroms=p["chroms"], positions=p["pos"],
+        geno_imputed=p["G"], sid=p["sid"], geno_df=p["geno_df"], pheno_df=p["pheno"],
+        trait_col="t", hap_test="pcs")
+    assert {"kinship_model", "h2_null", "eta2_pcs_only"} <= set(empty.columns)
+
+
+def test_the_kinship_test_never_writes_the_kernels():
+    p = _two_chromosome_panel()
+    kernels = [p["K0"], *p["K_by_chr"].values()]
+    before = [np.asarray(k.val).copy() for k in kernels]
+    for k in kernels:
+        np.asarray(k.val).setflags(write=False)
+    _run(p, kernels=(p["K0"], p["K_by_chr"]))
+    for k, b in zip(kernels, before):
+        assert np.array_equal(np.asarray(k.val), b)

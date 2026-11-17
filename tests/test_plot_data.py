@@ -119,7 +119,8 @@ def test_the_pca_inset_labels_are_the_assignments_csvs(tmp_path):
     res, tables = run_haplotype_block_gwas(
         haplo_df=d["blocks"], chroms=d["chroms"], positions=d["positions"],
         geno_imputed=d["G"], sid=d["sid"], geno_df=d["geno_df"], pheno_df=d["pheno"],
-        trait_col="t", pcs=None, min_hap_count=4, min_group_size=5, n_perm=50)
+        trait_col="t", pcs=None, min_hap_count=4, min_group_size=5, n_perm=50,
+        hap_test="pcs")
     path = tmp_path / "assignments.csv"
     haplotype_assignments(res, tables, d["geno_df"], d["pheno"], "t").to_csv(path, index=False)
     csv = pd.read_csv(path, keep_default_na=False, dtype={"Haplotype": str})

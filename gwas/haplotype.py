@@ -11,6 +11,12 @@ from gwas.utils import _mean_impute_cols
 from gwas.models import _ols_fit, _nested_f_test, _one_hot_drop_first
 from gwas.ld import get_block_snp_mask
 from gwas.genostore import as_columns as _as_columns   # the table kept on disk
+from gwas import haplotype_kinship as _hk               # the kinship-aware test (the default)
+
+# the two haplotype tests (run_haplotype_block_gwas's hap_test, the CLI's --hap-test)
+HAP_TESTS = ("kinship", "pcs")
+# the result's permutation_type of the PCs-only test
+PCS_PERMUTATION_TYPE = "Freedman-Lane_residual_permutation_with_PCs"
 
 def _inv_simpson_from_counts(counts) -> float:
     """1 / sum(p_i^2) on a value_counts Series (T-31). NaN when empty.
@@ -104,6 +110,51 @@ def _lead_snp_partial_r2(lead_snp, sid, geno_imputed, sample_ids, test_samples,
     return float(r * r) if np.isfinite(r) else np.nan
 
 
+def _block_kernels(kernels):
+    """{canonical chromosome: (kernel, kinship_model)} from ``kernels`` = (K0, K_by_chr), the
+    scan's kernels: each chromosome's own kernel, named "global kernel" when it is K0 itself
+    (--no-loco, or a chromosome whose LOCO kernel fell back to K0) and "LOCO kernel" otherwise.
+    Chromosome labels are matched through annotation.canon_chr (the Post-GWAS page's blocks
+    carry canonical labels). Raises ValueError without kernels, or when two labels of one
+    chromosome name two kernels."""
+    from annotation import canon_chr
+
+    if kernels is None:
+        raise ValueError(
+            "The kinship-aware haplotype test needs the scan's kernels (kernels=(K0, K_by_chr)); "
+            "hap_test='pcs' is the test with the PCs alone.")
+    K0, K_by_chr = kernels
+    out = {}
+    for ch, K in (K_by_chr or {}).items():
+        c = canon_chr(str(ch))
+        if c in out and out[c][0] is not K:
+            raise ValueError(f"Two kernels are given for chromosome {c}.")
+        out[c] = (K, "global kernel" if K is K0 else "LOCO kernel")
+    return out
+
+
+def _lead_dose(lead_snp, sid, geno_imputed, sample_ids, test_samples):
+    """The block's lead SNP's dosage on the tested samples (looked up in the FULL sid array,
+    as _lead_snp_partial_r2 does), or None when the lead is empty or not in ``sid``."""
+    if not lead_snp:
+        return None
+    idx = np.flatnonzero(np.asarray(sid, dtype=str) == str(lead_snp))
+    if idx.size == 0:
+        return None
+    return (pd.Series(np.asarray(geno_imputed[:, idx[0]], dtype=float),
+                      index=np.asarray(sample_ids, dtype=str))
+            .reindex(np.asarray(test_samples, dtype=str)).to_numpy(dtype=float))
+
+
+def _test_dfs(n, covariates, groups):
+    """(df1, df2) of the nested F test of [1, covariates] against [1, covariates, groups]: the
+    degrees of freedom block_test_lm_with_pcs gives (max(1, n - columns) per model)."""
+    p0 = 1 + (0 if covariates is None else _ensure_2d(covariates).shape[1])
+    p1 = p0 + max(0, len(pd.unique(pd.Series(groups).astype(str))) - 1)
+    df_den = int(max(1, n - p1))
+    return int(max(1, n - p0) - df_den), df_den
+
+
 def run_haplotype_block_gwas(
     haplo_df,
     chroms,
@@ -120,9 +171,28 @@ def run_haplotype_block_gwas(
     geno_encoding="dosage012",
     n_pcs_used=None,
     user_covar=None,
+    *,
+    hap_test="kinship",
+    kernels=None,
 ):
     """
     Genome-wide haplotype/MLG association per LD block.
+
+    ``hap_test`` chooses the test (the CLI's --hap-test):
+
+    - ``"kinship"`` (the default): the kinship-aware Freedman-Lane test
+      (gwas.haplotype_kinship). ``kernels`` must be the scan's kernels, ``(K0, K_by_chr)``;
+      each block takes its chromosome's kernel from K_by_chr (no fall back), restricted to the
+      block's tested samples by ID. kinship_model names it ("LOCO kernel", or "global kernel"
+      when it is K0), h2_null is the null model's REML h2, eta2 is df1 F / (df1 F + df2) of the
+      whitened test, and eta2_pcs_only is the PCs-only test's eta2 for the same block and
+      samples. A block the test cannot test is kept with kinship_model "failed: <reason>" and
+      NaN statistics, never tested another way. FDR_BH is Benjamini-Hochberg over the finite
+      p-values.
+    - ``"pcs"``: the PCs-only test, unchanged; kinship_model is "none", h2_null empty and
+      eta2_pcs_only its eta2.
+
+    Kinship without kernels raises ValueError, as does an unknown ``hap_test``.
 
     The parametric test, the Freedman-Lane permutation and the effect sizes all use one
     design: an intercept, the population-structure PCs and the user covariates
@@ -143,6 +213,14 @@ def run_haplotype_block_gwas(
     reported effect sizes are conditional on that selection and are upward-biased as
     estimates of a randomly-chosen block's effect.
     """
+    # the test and its kernels: a configuration error is raised before anything else
+    if hap_test not in HAP_TESTS:
+        raise ValueError(f"hap_test must be one of {HAP_TESTS} (got {hap_test!r}).")
+    _kmap = None
+    if hap_test == "kinship":
+        from annotation import canon_chr as _canon_chr   # the blocks' and kernels' labels
+        _kmap = _block_kernels(kernels)
+
     hap_tables = {}
     # ------------------------------------------------------------
     # SAFETY: phenotype / trait validation
@@ -214,6 +292,7 @@ def run_haplotype_block_gwas(
                 "MidPos", "-log10p",
                 "mlg_n_observed", "mlg_top1_freq", "mlg_eff_inv_simpson",
                 "mlg_n_other", "mlg_frac_retained", "mlg_min_group_n", "n_samples_tested",
+                "kinship_model", "h2_null", "eta2_pcs_only",
             ]
         ), {}
 
@@ -509,30 +588,62 @@ def run_haplotype_block_gwas(
             _cov_use = (np.column_stack([pcs_use, _uc_mat])
                         if pcs_use is not None else _uc_mat)
 
-        try:
-            F_param, pval_param, df1, df2 = block_test_lm_with_pcs(
-                y=y_test,
-                groups=g_test,
-                pcs=_cov_use,
-            )
+        if hap_test == "pcs":
+            try:
+                F_param, pval_param, df1, df2 = block_test_lm_with_pcs(
+                    y=y_test,
+                    groups=g_test,
+                    pcs=_cov_use,
+                )
 
-            # Seed the Freedman-Lane permutation from the block's coordinates only.
-            # The SNP id was dropped (P3): it is a reproducibility handle, not a
-            # statistical one (every seed gives an unbiased p-value), and it must not
-            # reference the lead_snp column (a p-value-derived quantity) -- otherwise
-            # any QC/normalisation change would silently reseed every permutation.
+                # Seed the Freedman-Lane permutation from the block's coordinates only.
+                # The SNP id was dropped (P3): it is a reproducibility handle, not a
+                # statistical one (every seed gives an unbiased p-value), and it must not
+                # reference the lead_snp column (a p-value-derived quantity) -- otherwise
+                # any QC/normalisation change would silently reseed every permutation.
+                block_seed = stable_seed(chr_sel, start_bp, end_bp, trait_col, "FL")
+                F_obs, pval_perm = freedman_lane_perm_pvalue(
+                    y=y_test,
+                    groups=g_test,
+                    pcs=_cov_use,
+                    n_perm=int(n_perm),
+                    seed=block_seed,
+                )
+
+            except Exception:
+                untested[_bkey] = "the haplotype test failed"
+                continue
+        else:
+            # The kinship-aware test (gwas.haplotype_kinship), with the same seed: the scan's
+            # kernel for the block's chromosome (no fall back to another kernel), restricted
+            # to the tested samples by ID. A block it cannot test is kept, with the reason in
+            # kinship_model and NaN statistics; it is never tested another way.
             block_seed = stable_seed(chr_sel, start_bp, end_bp, trait_col, "FL")
-            F_obs, pval_perm = freedman_lane_perm_pvalue(
-                y=y_test,
-                groups=g_test,
-                pcs=_cov_use,
-                n_perm=int(n_perm),
-                seed=block_seed,
-            )
-
-        except Exception:
-            untested[_bkey] = "the haplotype test failed"
-            continue
+            _kin, _kin_model = None, None
+            try:
+                _kentry = _kmap.get(_canon_chr(chr_sel))
+                if _kentry is None:
+                    raise _hk.KinshipTestError(f"no kernel for chromosome {chr_sel}")
+                _kin_model = _kentry[1]
+                _Kr, _ = _hk.kernel_for_samples(_kentry[0],
+                                                df_test["Sample"].astype(str).to_numpy())
+                _kin = _hk.kinship_block_test(
+                    y_test, g_test, _cov_use, _Kr, n_perm=int(n_perm), seed=block_seed,
+                    lead_dose=_lead_dose(lead_snp, sid, geno_imputed, sample_ids,
+                                         df_test["Sample"]))
+            except Exception as _kerr:          # reported, never a silent fall back
+                _reason = (str(_kerr) if isinstance(_kerr, _hk.KinshipTestError)
+                           else f"{type(_kerr).__name__}: {_kerr}")
+                _kin, _kin_model = None, f"failed: {_reason}"
+                logging.warning("Block %s: the kinship-aware haplotype test failed (%s).",
+                                _bkey, _reason)
+            if _kin is not None:
+                F_param, pval_param = _kin["F_param"], _kin["PValue_param"]
+                df1, df2 = _kin["df1"], _kin["df2"]
+                F_obs, pval_perm = _kin["F_perm"], _kin["P_perm"]
+            else:
+                F_param = pval_param = F_obs = pval_perm = np.nan
+                df1, df2 = _test_dfs(len(y_test), _cov_use, g_test)
 
         # η² must be on the residuals of the test's own design ([1, PCs, covariates]) to be
         # consistent with the F-test
@@ -545,15 +656,26 @@ def run_haplotype_block_gwas(
             _y_for_effects = y_test
         hap_effects = compute_haplotype_effects(_y_for_effects, g_test)
 
-        # Effect-size statistics (additive; parametric; on the SAME residualised phenotype
-        # + retained samples as eta2). With the intercept alone as the design (no PCs, no
-        # covariates) eta2 == df1*F_param/(df1*F_param+df2); these reuse F_param/df1/df2.
-        _eta2_lo, _eta2_hi = _eta2_confint(F_param, df1, df2)
-        _om2 = _omega2_from_f(F_param, df1, df2)
-        _lead_r2 = _lead_snp_partial_r2(
-            lead_snp, sid, geno_imputed, sample_ids,
-            df_test["Sample"], _y_for_effects, _X_pcs,
-        )
+        if hap_test == "pcs":
+            # Effect-size statistics (additive; parametric; on the SAME residualised phenotype
+            # + retained samples as eta2). With the intercept alone as the design (no PCs, no
+            # covariates) eta2 == df1*F_param/(df1*F_param+df2); these reuse F_param/df1/df2.
+            _eta2_lo, _eta2_hi = _eta2_confint(F_param, df1, df2)
+            _om2 = _omega2_from_f(F_param, df1, df2)
+            _lead_r2 = _lead_snp_partial_r2(
+                lead_snp, sid, geno_imputed, sample_ids,
+                df_test["Sample"], _y_for_effects, _X_pcs,
+            )
+            _eta2, _perm_type = hap_effects["eta2"], PCS_PERMUTATION_TYPE
+            _kin_model, _h2_null = "none", np.nan
+        else:
+            # the whitened model's effect sizes (gwas.haplotype_kinship); hap_stats_json and
+            # eta2_pcs_only stay those of the residualised phenotype above
+            _kv = _kin if _kin is not None else {}
+            _eta2 = _kv.get("eta2", np.nan)
+            _eta2_lo, _eta2_hi = _kv.get("eta2_ci_low", np.nan), _kv.get("eta2_ci_high", np.nan)
+            _om2, _lead_r2 = _kv.get("omega2", np.nan), _kv.get("lead_snp_r2", np.nan)
+            _perm_type, _h2_null = _hk.PERMUTATION_TYPE, _kv.get("h2", np.nan)
 
         results.append(
             {
@@ -568,13 +690,13 @@ def run_haplotype_block_gwas(
                 "df1": int(df1),
                 "df2": int(df2),
                 "n_permutations": int(n_perm),
-                "permutation_type": "Freedman-Lane_residual_permutation_with_PCs",
+                "permutation_type": _perm_type,
                 "F_param": float(F_param) if np.isfinite(F_param) else np.nan,
                 "PValue_param": float(pval_param) if np.isfinite(pval_param) else np.nan,
                 "F_perm": float(F_obs) if np.isfinite(F_obs) else np.nan,
                 "P_perm": float(pval_perm) if np.isfinite(pval_perm) else np.nan,
                 "PValue": float(pval_perm) if np.isfinite(pval_perm) else np.nan,
-                "eta2": hap_effects["eta2"],
+                "eta2": _eta2,
                 # Effect-size additions (all additive; eta2 unchanged). eta2_ci_* =
                 # noncentral-F 95% CI on eta2; omega2 = less-biased variance-explained
                 # (not a replacement); lead_snp_r2 = 1-df additive R^2 of the lead SNP.
@@ -593,6 +715,12 @@ def run_haplotype_block_gwas(
                 "mlg_frac_retained": float(len(df_test) / n_samples_block_used) if n_samples_block_used > 0 else np.nan,
                 "mlg_min_group_n": int(counts.loc[valid_haps].min()),
                 "n_samples_tested": int(len(df_test)),
+                # the test that ran: its kernel ("none" for the PCs-only test, or the reason
+                # the kinship-aware test could not test the block), the null model's REML h2
+                # (empty for the PCs-only test), and the PCs-only test's eta2, for comparison
+                "kinship_model": _kin_model,
+                "h2_null": _h2_null,
+                "eta2_pcs_only": hap_effects["eta2"],
             }
         )
 
@@ -608,6 +736,7 @@ def run_haplotype_block_gwas(
                 "MidPos", "-log10p",
                 "mlg_n_observed", "mlg_top1_freq", "mlg_eff_inv_simpson",
                 "mlg_n_other", "mlg_frac_retained", "mlg_min_group_n", "n_samples_tested",
+                "kinship_model", "h2_null", "eta2_pcs_only",
             ]
         )
         empty.attrs["untested"] = untested
@@ -618,10 +747,14 @@ def run_haplotype_block_gwas(
     df_res["-log10p"] = -np.log10(np.clip(df_res["PValue"].values, 1e-300, 1.0))
 
     from statsmodels.stats.multitest import multipletests
-    try:
-        df_res["FDR_BH"] = multipletests(df_res["PValue"], method="fdr_bh")[1]
-    except (ValueError, ZeroDivisionError):
-        df_res["FDR_BH"] = np.nan
+    if hap_test == "pcs":
+        try:
+            df_res["FDR_BH"] = multipletests(df_res["PValue"], method="fdr_bh")[1]
+        except (ValueError, ZeroDivisionError):
+            df_res["FDR_BH"] = np.nan
+    else:
+        # over the blocks with a p-value: a block the test could not test has none
+        df_res["FDR_BH"] = _hk.bh_qvalues(df_res["PValue"].to_numpy(dtype=float))
     df_res.attrs["untested"] = untested
 
     return df_res, hap_tables

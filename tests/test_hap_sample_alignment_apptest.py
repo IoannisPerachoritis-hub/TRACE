@@ -133,7 +133,7 @@ def _hap_real(blocks_, chroms_, positions_, geno_, sid_, geno_df_, pheno_, trait
         haplo_df=blocks_, chroms=chroms_, positions=positions_, geno_imputed=geno_,
         sid=sid_, geno_df=geno_df_, pheno_df=pheno_, trait_col=trait_, pcs=pcs_,
         min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=99,
-        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, **kw)
+        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, **{"hap_test": "pcs", **kw})
 def _qc_stub(hap_gwas_df=None, **k):
     return hap_gwas_df
 def _r2_stub(*a, **k):

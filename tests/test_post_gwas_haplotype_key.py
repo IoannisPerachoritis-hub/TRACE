@@ -80,7 +80,7 @@ def test_two_tables_of_one_shape_get_their_own_haplotype_tests(session, monkeypa
             haplo_df=blocks_, chroms=chroms_, positions=positions_, geno_imputed=geno_,
             sid=sid_, geno_df=geno_df_, pheno_df=pheno_, trait_col=trait_, pcs=pcs_,
             min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=n_perm,
-            geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, **kw)
+            geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, **{"hap_test": "pcs", **kw})
 
     shown = {}
     for name, G in tables.items():
@@ -104,7 +104,7 @@ def test_two_tables_of_one_shape_get_their_own_haplotype_tests(session, monkeypa
             haplo_df=blocks, chroms=chroms, positions=positions, geno_imputed=G, sid=sid,
             geno_df=pd.DataFrame(G, index=pd.Index(ids, dtype=object)), pheno_df=pheno,
             trait_col="t", pcs=None, min_hap_count=5, min_group_size=3, n_perm=99,
-            geno_encoding="dosage012", n_pcs_used=None)
+            geno_encoding="dosage012", n_pcs_used=None, hap_test="pcs")
         want[name] = res
     cols = ["Chr", "Start", "End", "n_samples_tested", "n_tested_haplotypes", "F_perm", "P_perm", "eta2"]
     assert not want["A"][cols].equals(want["B"][cols]), "the two tables' tests do not differ"

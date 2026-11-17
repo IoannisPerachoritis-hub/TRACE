@@ -398,7 +398,7 @@ def test_the_haplotype_test_gets_the_runs_covariates():
         haplo_df=p["blocks"], chroms=p["chroms"], positions=p["pos"], geno_imputed=p["G"],
         sid=p["sid"], geno_df=p["geno_df"], pheno_df=p["pheno"], trait_col="t", pcs=p["pcs"],
         min_hap_count=5, min_group_size=3, n_perm=99, geno_encoding="dosage012",
-        n_pcs_used=2, user_covar=cov)
+        n_pcs_used=2, user_covar=cov, hap_test="pcs")
     pd.testing.assert_frame_equal(got, want)
     without, _ = gp.run_haplotype_tests(*args)
     assert not np.allclose(got["F_param"], without["F_param"])

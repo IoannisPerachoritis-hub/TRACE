@@ -850,7 +850,8 @@ def run_haplotype_tests(haplo_df, chroms, positions, geno_imputed, sid, geno_df,
         haplo_df=haplo_df, chroms=chroms, positions=positions, geno_imputed=geno_imputed,
         sid=sid, geno_df=geno_df, pheno_df=pheno_df, trait_col=trait_col, pcs=pcs,
         min_hap_count=min_hap_count, min_group_size=min_group_size, n_perm=n_perm,
-        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, user_covar=user_covar)
+        geno_encoding=geno_encoding, n_pcs_used=n_pcs_used, user_covar=user_covar,
+        hap_test="pcs")
 
 
 # ----------------------------------------------------------- the session keys (for Clear)

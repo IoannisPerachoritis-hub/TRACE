@@ -98,6 +98,7 @@ def _run_hap(blocks, chroms, positions, geno, sid, geno_df, pheno_df, tcol):
         geno_imputed=geno.astype(float), sid=sid,
         geno_df=geno_df, pheno_df=pheno_df, trait_col=tcol,
         pcs=None, n_perm=N_PERM, n_pcs_used=0, min_hap_count=5, min_group_size=3,
+        hap_test="pcs",   # the PCs-only test this benchmark has always timed (no kernels here)
     )
     return 0 if hap is None else len(hap)
 

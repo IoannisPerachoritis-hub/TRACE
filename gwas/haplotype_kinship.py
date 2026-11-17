@@ -242,6 +242,20 @@ def _lead_r2(dose, e, Q0, W):
     return eg * eg / (ee * gg)
 
 
+def bh_qvalues(p):
+    """Benjamini-Hochberg q-values over the finite p-values of ``p``, NaN elsewhere: a block
+    the kinship-aware test could not test has no p-value and is not one of the tests. With
+    every p-value finite this is statsmodels' fdr_bh over all of them."""
+    from statsmodels.stats.multitest import multipletests
+
+    p = np.asarray(p, dtype=float)
+    q = np.full(p.shape, np.nan)
+    ok = np.isfinite(p)
+    if ok.any():
+        q[ok] = multipletests(p[ok], method="fdr_bh")[1]
+    return q
+
+
 # ---------------------------------------------------------------------------------- the test
 def kinship_block_test(y, groups, covariates, K=None, *, n_perm=1000, seed=0, lead_dose=None,
                        h2=None, eig=None):
