@@ -680,6 +680,66 @@ def test_a_revisited_haplotype_result_keeps_its_tables_and_assignments(monkeypat
         st.session_state.update(saved)
 
 
+def test_the_haplotype_result_follows_the_runs_loco_choice(monkeypatch):
+    """In one session: the Run's record with LOCO kernels gives a test with "LOCO kernel";
+    the session's own current kernels (the GWAS page's K0 / K_by_chr, here set to the global
+    ones without a new Run) change nothing; a record of a Run without LOCO (K0 for every
+    chromosome) gives a new test with "global kernel"; the LOCO record again is served from
+    the session. So the key's kernel part comes from the Run's record."""
+    import streamlit as st
+    import pages._ld_tabs.tab_genome_wide as tgw
+    from pages._ld_tabs import LDContext
+    from tests.test_haplotype_kinship import _two_chromosome_panel
+
+    p = _two_chromosome_panel()
+    ran = []
+
+    def _test(*a, **k):
+        ran.append(k["kernels"])
+        return gp.run_haplotype_tests(*a, **k)
+
+    monkeypatch.setattr(tgw, "_render_block_visualization", lambda **kw: None)
+    monkeypatch.setattr(tgw, "_render_lead_snp_gallery", lambda *a, **kw: None)
+    keys = ("pheno_used_for_hap", "n_perm_hap", "GWAS_CTX", "geno_row_ids", gp.RUN_KERNELS,
+            "hap_gwas_df_enriched", "_hapgwas_order", "K0", "K_by_chr")
+    saved = {k: st.session_state[k] for k in keys if k in st.session_state}
+    loco = {"identity": "TK", "trait": "t", "use_loco": True, "K0": p["K0"],
+            "K_by_chr": p["K_by_chr"]}
+    glob = dict(loco, use_loco=False, K_by_chr={c: p["K0"] for c in p["K_by_chr"]})
+    try:
+        for k in keys:
+            st.session_state.pop(k, None)
+        st.session_state["pheno_used_for_hap"] = p["pheno"]
+        st.session_state["n_perm_hap"] = 99
+        ctx = LDContext(
+            geno_ld=p["G"], geno_hard=p["G"], chroms=p["chroms"], positions=p["pos"],
+            sid=p["sid"], geno_df=pd.DataFrame(index=p["ids"]), pheno_df=p["pheno"],
+            trait_col="t", ph_aligned=p["pheno"], y_aligned=p["pheno"]["t"].to_numpy(),
+            keep_mask=np.ones(len(p["ids"]), dtype=bool), geno_ld_aligned=p["G"],
+            gwas_df=pd.DataFrame({"SNP": p["sid"], "PValue": 0.5}), haplo_df_auto=p["blocks"],
+            ld_decay_kb=None, adj_r2_min_global=0.2, ld_trait="t", table_identity="TK")
+
+        def tab(record):
+            st.session_state[gp.RUN_KERNELS] = record
+            tgw._render_haplotype_gwas(
+                ctx=ctx, haplo_df_auto=p["blocks"], cached_extract_block_geno=None,
+                compute_block_qc_effects=lambda hap_gwas_df=None, **k: hap_gwas_df,
+                run_haplotype_block_gwas_cached_fn=_test, settings={"hap_test": "kinship"})
+            return st.session_state["hap_gwas_df_enriched"]["kinship_model"].tolist()
+
+        assert tab(loco) == ["LOCO kernel"] * 2 and len(ran) == 1
+        st.session_state["K0"], st.session_state["K_by_chr"] = glob["K0"], glob["K_by_chr"]
+        assert tab(loco) == ["LOCO kernel"] * 2 and len(ran) == 1      # the session's own: no part
+        assert tab(glob) == ["global kernel"] * 2 and len(ran) == 2   # a Run without LOCO
+        assert all(K is p["K0"] for K in ran[1][1].values())
+        assert tab(loco) == ["LOCO kernel"] * 2 and len(ran) == 2      # served from the session
+    finally:
+        for k in list(st.session_state.keys()):
+            if k in keys or (isinstance(k, str) and k.startswith("HAPGWAS::")):
+                del st.session_state[k]
+        st.session_state.update(saved)
+
+
 def test_haplotype_and_detection_keys_name_the_identity_not_the_shape():
     pcs = np.zeros((N, 2))
     a = gp.haplotype_key("t", 5, 3, pcs, "identityA", 1000, "B", "P", hap_test="kinship",
