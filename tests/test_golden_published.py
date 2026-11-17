@@ -2,7 +2,8 @@
 
 Rebuilds the tomato locule-number downstream tables from the *real* Varitome QC
 inputs and asserts they are bitwise-stable against the frozen golden
-(`tests/golden/tomato_locule/`). Marked ``golden`` because it needs
+(`tests/golden/tomato_locule/`), apart from the kinship-aware haplotype test's floats, whose
+last digits depend on the BLAS thread count (compared to a relative 1e-6). Marked ``golden`` because it needs
 ``benchmarks/qc_data/`` (gitignored), so it is excluded from CI with
 ``-m "not golden"`` and skips cleanly on a machine without the data.
 
@@ -111,13 +112,18 @@ def test_ld_blocks_bitwise_stable(tmp_path):
 def test_haplotype_blocks_bitwise_stable(tmp_path):
     _skip_unless_ready()
     out = _rebuild(tmp_path)
-    got = pd.read_csv(out / "haplotype_blocks.csv")
-    exp = pd.read_csv(GOLDEN / "haplotype_blocks.csv")
-    # permutation p-values are deterministic given stable_seed -> exact to 1e-12
-    pd.testing.assert_frame_equal(
-        got.reset_index(drop=True), exp.reset_index(drop=True),
-        check_exact=False, rtol=0, atol=1e-12, check_dtype=False,
-    )
+    got = pd.read_csv(out / "haplotype_blocks.csv").reset_index(drop=True)
+    exp = pd.read_csv(GOLDEN / "haplotype_blocks.csv").reset_index(drop=True)
+    # the permutation p-values are deterministic given stable_seed: exact to 1e-12, as are the
+    # counts and labels. The kinship-aware test's F, parametric p, eta2 and h2_null depend on
+    # the BLAS thread count in their last digits (its kernels and their eigendecomposition;
+    # measured on this golden: at most 2.3e-7 relative between 1 and 12 threads, the golden
+    # being made at 12), so the other floats are compared to a relative 1e-6
+    exact = ["P_perm", "PValue"]
+    pd.testing.assert_frame_equal(got[exact], exp[exact], check_exact=False, rtol=0, atol=1e-12,
+                                  check_dtype=False)
+    pd.testing.assert_frame_equal(got, exp, check_exact=False, rtol=1e-6, atol=1e-12,
+                                  check_dtype=False)
 
 
 @pytest.mark.golden

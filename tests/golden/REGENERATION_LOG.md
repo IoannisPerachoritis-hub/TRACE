@@ -98,3 +98,44 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   164x43749 QC and copied byte-identical here; TRACE-release cannot regenerate them locally (stale 165-sample
   on-disk QC from before the missing-as-reference parse fix), so the real-data @golden/@manuscript tests skip on a
   clean clone and fail locally only when the stale QC is present. No push (freeze).
+
+## 2026-11-17 -- the kinship-aware haplotype test becomes the default (Reviewer 2, point 3a). Published numbers move.
+- reason: run_haplotype_block_gwas's default test is now the kinship-aware Freedman-Lane test
+  (gwas/haplotype_kinship.py): a mixed model with the scan's own kernel for the block's chromosome (its LOCO
+  kernel), the null model fitted by REML, the F test and the permutations on the data whitened by it. The CLI's
+  `--hap-test` defaults to it; `--hap-test pcs` keeps the earlier test. capture_golden takes the test as a required
+  keyword (the manifest records it) and builds the scan's kernels as the pipeline does (gwas.kinship.scan_kernels,
+  from the imputed QC matrix as float32); its frozen haplotype columns gain kinship_model, h2_null and
+  eta2_pcs_only (the earlier test's eta2).
+- tomato_locule/haplotype_blocks.csv, every changed value, old -> new (P_perm and PValue stay 0.000999000999000999,
+  the 1/1001 floor, in all four blocks; the counts, df and lead SNPs are unchanged):
+  - 46,461,623-46,582,239: F_param = F_perm 19.862817014728254 -> 9.121456845576859; PValue_param
+    8.736420877330159e-11 -> 1.4842817510206519e-05; eta2 0.2985566085233715 -> 0.16350176832126323; added
+    kinship_model LOCO kernel, h2_null 0.8818453080777714, eta2_pcs_only 0.2985566085233715.
+  - 46,799,142-46,914,856: F 18.690069933283134 -> 15.408534364775809; PValue_param 5.4681306067581076e-08 ->
+    8.005306837908999e-07; eta2 0.1963447442194616 -> 0.1676507461605347; added LOCO kernel, h2_null
+    0.8693474408882625, eta2_pcs_only 0.1963447442194616.
+  - 47,017,547-47,129,438: F 13.118450398569394 -> 7.548474393364311; PValue_param 7.371161381870086e-12 ->
+    4.547988964697973e-07; eta2 0.3487238378928092 -> 0.23553303351398328; added LOCO kernel, h2_null
+    0.8800909568573887, eta2_pcs_only 0.3487238378928092.
+  - 47,301,921-47,616,243: F 20.667557367627072 -> 6.191613734315433; PValue_param 2.202588113653581e-13 ->
+    0.00012941637291169163; eta2 0.372942409397862 -> 0.151230329475897; added LOCO kernel, h2_null
+    0.9337777828049028, eta2_pcs_only 0.372942409397862.
+- tomato_locule/run_manifest.json: "hap_test": "kinship" added; meff_value 249.0 -> 248.0 and n_significant_meff
+  43 -> 44. Cause (measured in the Table S8 check, revision_reports/tableS8_check_report.md, "Recommendation for the
+  CC-5 regeneration"): the old M_eff rule took the ceiling of a sum that is 248 in exact arithmetic and lands just
+  above 248 on this harness's float64, C-order matrix; the whole-number rule now in the code gives 248. The data,
+  the blocks and the thread count play no part; the 249 / 43 recorded above (2026-09-01, 2026-09-04) are the old
+  rule's. n_significant_bonf (11), n_blocks (4) and the settings are unchanged; the two machine paths keep the
+  placeholder convention ("<qc_data>/...", "data/Sol_genes_SL3.csv").
+- unchanged: tomato_locule/ld_blocks.csv and annotated_blocks.csv (byte-identical), varitome_locule, the Tier-A
+  cases, GOLDEN_LOCK (it covers the expected_*.csv files only).
+- test: tests/test_golden_published.py compares P_perm and PValue to 1e-12 as before, the other haplotype floats to
+  a relative 1e-6: the kinship-aware test's F, parametric p, eta2 and h2_null depend on the BLAS thread count in
+  their last digits (measured on this golden: at most 2.3e-7 relative between 1 and 12 threads). The golden tests
+  pass at 12 and at 1 thread.
+- provenance: produced in TRACE-scaling/batch14/tree (b14/work) by benchmarks/capture_golden.py with this manifest's
+  settings, 12 threads, from the corrected 164x43749 QC copy in benchmarks/qc_data/tomato_locule_number; gwas
+  imported from the tree (logged). The same cells come from the CLI at its defaults on the Varitome VCF and
+  phenotype file (to a relative 3.5e-7 at most, the report's 4-digit columns at their 4 digits, P_perm as counts), and the
+  four blocks from benchmarks/reconstruct_table_s8_params.py.

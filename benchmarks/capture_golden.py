@@ -38,12 +38,13 @@ from gwas import ld  # noqa: E402
 from gwas.haplotype import run_haplotype_block_gwas  # noqa: E402
 
 # Exact frozen column sets (coverage_and_scope.md T-60/T-94). hap_stats_json is
-# excluded (non-contractual serialised dict); MidPos and -log10p are derived.
+# excluded (non-contractual serialised dict); MidPos and -log10p are derived. The last three
+# haplotype columns name the test's kernel, its null model's h2 and the PCs-only test's eta2.
 LD_BLOCK_COLS = ["Chr", "Start (bp)", "End (bp)", "lead_snp", "lead_snp_pvalue", "SNP_IDs"]
 HAP_COLS = [
     "Chr", "Start", "End", "lead_snp", "n_samples_block", "n_snps", "n_haplotypes",
     "n_tested_haplotypes", "df1", "df2", "n_permutations", "F_param", "PValue_param",
-    "F_perm", "P_perm", "PValue", "eta2",
+    "F_perm", "P_perm", "PValue", "eta2", "kinship_model", "h2_null", "eta2_pcs_only",
 ]
 ANN_COLS = [
     "Chr", "Start", "End", "Interval_start", "Interval_end",
