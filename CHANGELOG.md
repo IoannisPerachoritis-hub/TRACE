@@ -30,10 +30,11 @@ All notable changes to TRACE are documented in this file.
   and any covariates: the null model's heritability is fitted by REML, and the F test and its
   Freedman-Lane permutations are made on the data whitened by that model. `--hap-test pcs`
   (in the GUI "PCs and covariates only", in the LD Blocks & Haplotypes tab's Settings and in
-  One-Click) keeps the earlier test. The haplotype results gain three columns in both tests:
-  `kinship_model` (the kernel, `none` for the earlier test, or why the kinship-aware test could
-  not test a block), `h2_null` (the null model's heritability) and `eta2_pcs_only` (the earlier
-  test's η², for comparison). A block the kinship-aware test cannot test (for example one whose
+  One-Click) keeps the earlier test. The old test from version 1.1.0. It ignores relatedness and
+  can give false positives in related panels. Use it only to reproduce old results. The haplotype
+  results gain three columns in both tests: `kinship_model` (the kernel, `none` for the earlier
+  test, or why the kinship-aware test could not test a block), `h2_null` (the null model's
+  heritability) and `eta2_pcs_only` (the earlier test's η², for comparison). A block the kinship-aware test cannot test (for example one whose
   haplotype groups a covariate defines) is kept with the reason and no statistics (the tab's
   block table gives it under Tested), never tested another way, and the block FDR is over the
   blocks with a p-value. `run_metadata.json` records

@@ -166,7 +166,8 @@ kernel for the block's chromosome (its LOCO kernel, or the whole-genome kernel w
 `--no-loco`), the PCs and any covariates: the null model's heritability is fitted by REML,
 and the F test and its Freedman-Lane permutations are made on the data whitened by that model.
 `--hap-test pcs` (the GUI's "PCs and covariates only") gives the earlier test, with the PCs and
-covariates and no kinship.
+covariates and no kinship. The old test from version 1.1.0. It ignores relatedness and can give
+false positives in related panels. Use it only to reproduce old results.
 
 | Column | Meaning |
 |--------|---------|

@@ -161,7 +161,10 @@ LD & post-GWAS:
                         --no-loco), its null model fitted by REML; the F test
                         and the Freedman-Lane permutations are made on the
                         whitened data. 'pcs': the test with the PCs and
-                        covariates alone (no kinship), as before.
+                        covariates alone (no kinship). The old test from
+                        version 1.1.0. It ignores relatedness and can give
+                        false positives in related panels. Use it only to
+                        reproduce old results.
   --no-annotation       Skip gene annotation
   --genome-build {SL3,SL4}
                         Tomato gene-model assembly: SL3 = SL3.1 (default), SL4

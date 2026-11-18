@@ -172,7 +172,9 @@ def _build_parser():
                               "the global kernel with --no-loco), its null model fitted by REML; "
                               "the F test and the Freedman-Lane permutations are made on the "
                               "whitened data. 'pcs': the test with the PCs and covariates alone "
-                              "(no kinship), as before.")
+                              "(no kinship). The old test from version 1.1.0. It ignores "
+                              "relatedness and can give false positives in related panels. Use it "
+                              "only to reproduce old results.")
     ld_grp.add_argument("--no-annotation", action="store_true",
                          help="Skip gene annotation")
     ld_grp.add_argument("--genome-build", default="SL3", choices=["SL3", "SL4"],

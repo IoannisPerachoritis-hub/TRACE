@@ -279,7 +279,9 @@ HAP_TEST_HELP = (
     "run's own kinship kernel for the block's chromosome (its LOCO kernel, or the whole-genome "
     "kernel when LOCO is off), whose null model is fitted by REML; the F test and the "
     "Freedman-Lane permutations are made on the data whitened by it. PCs and covariates only "
-    "(--hap-test pcs): the earlier test, without kinship.")
+    "(--hap-test pcs): the earlier test, without kinship. The old test from version 1.1.0. It "
+    "ignores relatedness and can give false positives in related panels. Use it only to "
+    "reproduce old results.")
 
 NO_RUN_KERNELS_MESSAGE = (
     "The kinship-aware haplotype test needs the kinship kernels of the GWAS page's Run GWAS on "

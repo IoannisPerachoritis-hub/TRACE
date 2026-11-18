@@ -390,7 +390,8 @@ Haplotype test → Test model**, and One-Click's **Haplotype test**):
   made on the data whitened by it. When the REML estimate is h² = 0 the whitening is the
   identity, and the block is tested exactly as by `pcs`.
 - `pcs`: the earlier test, a nested F test and Freedman-Lane permutations with the PCs and
-  covariates alone (no kinship).
+  covariates alone (no kinship). The old test from version 1.1.0. It ignores relatedness and
+  can give false positives in related panels. Use it only to reproduce old results.
 
 `run_metadata.json` and the report's metadata block record the choice as
 `Hap_test (--hap-test)`.
@@ -442,10 +443,11 @@ are called out because they are new capabilities.
 
 The haplotype test of every LD block (the section above): `kinship`, the default, the
 kinship-aware test with the scan's own kernels; `pcs`, the earlier test with the PCs and
-covariates alone. With `pcs` the haplotype results are the earlier test's; the report's
-haplotype tables also carry the three columns above (`kinship_model` `none`, an empty
-`h2_null`, `eta2_pcs_only` equal to `eta2`), and the run information records
-`Hap_test (--hap-test)`.
+covariates alone. The old test from version 1.1.0. It ignores relatedness and can give false
+positives in related panels. Use it only to reproduce old results. With `pcs` the haplotype
+results are the earlier test's; the report's haplotype tables also carry the three columns
+above (`kinship_model` `none`, an empty `h2_null`, `eta2_pcs_only` equal to `eta2`), and the
+run information records `Hap_test (--hap-test)`.
 
 ### `--covar` / `--covar-cols`
 
