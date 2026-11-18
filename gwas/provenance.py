@@ -3,8 +3,8 @@
 The linear algebra libraries (OpenBLAS or MKL; numpy and scipy each bring their own) split
 matrix products over their threads, and the order of the partial sums changes the last bits of
 the results: between 1 and 12 threads the
-p-values of the same run differ by up to about 5 parts in 10 million (scaling audit, section
-8.4). With --boot-jobs above 1, each subsampling worker gets the thread count set in the
+p-values of the same run differ by up to about 5 parts in 10 million.
+With --boot-jobs above 1, each subsampling worker gets the thread count set in the
 environment (OPENBLAS_NUM_THREADS and the like) or, when none is set, max(cores / workers, 1),
 so subsampling can also depend on the number of cores. A run's numbers are byte-identical to
 another's at the same library, thread count and (for parallel subsampling) worker thread count;

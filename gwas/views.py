@@ -1,10 +1,10 @@
-"""T-34 — per-block two-view sample ledger (pure; importable without Streamlit).
+"""Per-block two-view sample ledger (pure; importable without Streamlit).
 
 Makes "the two panels use different sample sets" visible as data rather than
 implied: one row per sample stating whether it is in the lead-SNP view, in the
 haplotype (MLG) view, or excluded — and, when excluded, why (a closed
 vocabulary, each value traceable to one exclusion in run_haplotype_block_gwas).
-numpy + pandas only. Spec: docs/revision/specs/ld_triage_spec.md §7.2.
+numpy + pandas only.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ LEDGER_COLUMNS = [
     "mlg_string", "mlg_label", "in_hap_view", "exclusion_reason",
 ]
 
-# closed exclusion vocabulary (§7.2) — each value maps to one code site
+# closed exclusion vocabulary — each value maps to one code site
 EXCLUSION_REASONS = (
     "", "phenotype_missing", "lead_call_missing", "rare_mlg_below_min_hap_count",
     "group_below_min_group_size", "pc_row_missing", "block_missingness_gt_0.30",
@@ -100,7 +100,7 @@ def build_view_sample_ledger(sample_ids, y_raw, lead_calls, hap_table, tested_sa
 
 
 def view_sample_counts(ledger) -> dict:
-    """The three-cell strip aggregates (§7.2): the two view sizes + their overlap
+    """The three-cell strip aggregates: the two view sizes + their overlap
     as an asymmetric split (a sample can be in the haplotype view while missing
     the lead call, so the sets are not nested)."""
     if ledger is None or len(ledger) == 0:

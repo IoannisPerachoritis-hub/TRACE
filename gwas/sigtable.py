@@ -1,4 +1,4 @@
-"""T-20 / T-23 — the significant-SNP table (the no-omission guarantee).
+"""The significant-SNP table (the no-omission guarantee).
 
 Every SNP passing the **reporting** threshold appears as one row — never the
 seeding threshold, never truncated — marked ``in_block`` or one of four
@@ -6,7 +6,7 @@ seeding threshold, never truncated — marked ``in_block`` or one of four
 label. This is the table that surfaces the SNPs the post-GWAS view silently
 dropped (23 of 44 on the tomato demo).
 
-It is a **presentation layer over C1's rescue**: it calls
+It is a **presentation layer over the isolated-SNP rescue**: it calls
 ``gwas.isolated.run_isolated_snp_rescue`` for the unblocked rows and reads the
 emitted block table for the in-block rows. It never re-runs the block detector
 (``gwas.isolated`` has no ``gwas.ld`` import; this module only reads block
@@ -14,12 +14,10 @@ coordinates and calls the public annotator).
 
 Coverage authority: a SNP is ``in_block`` iff it is **positionally covered**
 (``Start ≤ Pos ≤ End``) by an emitted block — the same rule as the census and the
-rescue, so the in-block / unblocked split equals the measured 23/21. (The T-77
-spec also describes an ``SNP_IDs``-membership rule; where the two differ,
+rescue, so the in-block / unblocked split equals the measured 23/21. (There is
+also an ``SNP_IDs``-membership rule; where the two differ,
 ``sigtable_membership_divergence`` records it rather than letting them disagree
 silently.)
-
-Spec: post_gwas_visibility_design.md §2.1; integration_and_testing.md §2.1 (T-77).
 """
 from __future__ import annotations
 
@@ -30,7 +28,7 @@ from annotation import canon_chr
 from gwas import isolated as _iso
 from gwas.genostore import as_columns as _as_columns, is_lazy as _is_lazy   # the table kept on disk
 
-# 38-column normative order (integration §2.1).
+# 38-column normative order.
 SIG_TABLE_COLUMNS = [
     "SNP", "Chr", "Pos", "PValue", "-log10p",
     "Beta_MLM", "SE_MLM", "Beta_OLS", "SE_OLS", "Effect_Source",
@@ -113,7 +111,7 @@ def build_significant_snp_table(
     mlm_all_nan = has_mlm and not np.isfinite(pd.to_numeric(gwas_df["Beta_MLM"], errors="coerce")).any()
     reduced = not has_mlm and not has_ols
 
-    # ── C1 rescue for the unblocked (positionally uncovered) rows ──
+    # ── Isolated-SNP rescue for the unblocked (positionally uncovered) rows ──
     rescue = _iso.run_isolated_snp_rescue(
         gwas_df, blocks_df, sig_rule, chroms, positions, sid, genes=genes,
         seed_p_used=seed_p_used, top_n_used=top_n_used,

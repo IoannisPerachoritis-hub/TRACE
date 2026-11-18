@@ -1,4 +1,4 @@
-"""T-21 / T-84–T-89 — per-SNP effect-plot rendering + the plot budget.
+"""Per-SNP effect-plot rendering + the plot budget.
 
 Renders the significant-SNP genotype-class boxplots for the HTML report from the
 pure summaries in ``gwas/snpview.py``. Uses the Agg backend so it is
@@ -6,12 +6,10 @@ headless-testable and never opens a window. Like ``snpview``, this module never
 calls the block detector — it only draws what ``genotype_class_summary`` and
 ``effect_flag`` already computed.
 
-Rendering budget (T-84–T-86): the significant-SNP TABLE is always complete; only
+Rendering budget: the significant-SNP TABLE is always complete; only
 the *plots* are capped. ``select_snps_for_plotting`` chooses which rows get a
 figure; ``collapse_snps_for_plotting`` (in ``snpview``) may thin near-redundant
 SNPs to a representative for plotting **only**.
-
-Spec: post_gwas_visibility_design.md §2.2-2.4; integration_and_testing.md §5.2.
 """
 from __future__ import annotations
 
@@ -43,7 +41,7 @@ def select_snps_for_plotting(sig_table, *, mode="capped", max_plots=24):
 
     ``none`` → nothing; ``capped`` → the top ``max_plots``; ``all`` → every row.
     The significant-SNP table itself is ALWAYS complete regardless of this budget
-    (T-86) — this only bounds how many figures the report embeds.
+    — this only bounds how many figures the report embeds.
     """
     if mode not in SNP_PLOT_MODES:
         raise ValueError(f"mode must be one of {SNP_PLOT_MODES}, got {mode!r}")
@@ -189,7 +187,7 @@ def render_snp_boxplot(snp_id, geno_col, y, *, beta_mlm=None, se_mlm=None,
     class 0/1/2 is shown including n=0; the structure-adjusted β_MLM ± SE, the
     raw-vs-adjusted effect flag, and the per-SNP η² are annotated. When β_MLM is
     absent the annotation says "structure-unadjusted (p-values unaffected)" — the
-    effect axis is suppressed, never faked (integration §5.2).
+    effect axis is suppressed, never faked.
 
     ``hap_labels`` (one label per sample, aligned with ``geno_col`` and ``y``; a
     missing label counts as "Other") colours each dot by its haplotype, with

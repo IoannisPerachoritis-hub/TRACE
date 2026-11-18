@@ -275,7 +275,7 @@ def release_upload(uploaded):
 
 
 # ------------------------------------------------------------------ the GUI's memory estimate
-# An open GUI session keeps more than a CLI run (exclusive measurements of 16 Nov, batch 13: the
+# An open GUI session keeps more than a CLI run (exclusive measurements of 16 Nov: the
 # process tree's peak working set, every cache full, with SVG exports; tests/test_guitable.py
 # pins them). Added to the CLI's estimate (gwas.storeplan.estimate_memory_mib):
 GUI_FIXED_MIB = 600.0                  # Streamlit, the page's figures, downloads and session objects
@@ -524,7 +524,7 @@ def own_folders():
 # --------------------------------------------------------------------- Clear session data
 # TRACE's .memo files in Streamlit's cache folder (~/.streamlit/cache, written by st.cache_data
 # with persist="disk"): named <function key>-<value key>.memo. TRACE's one persisted cache was
-# gwas.qc._impute_cached until batch 13; these are the function keys of all its versions, from
+# gwas.qc._impute_cached, now removed; these are the function keys of all its versions, from
 # Streamlit 1.50's _make_function_key over the git history of gwas/qc.py.
 TRACE_MEMO_FUNCTION_KEYS = (
     "b3e084e866e81f46fac0e0291c06e77b",     # c359acf .. a585645 (the source did not change)

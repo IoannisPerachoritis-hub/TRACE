@@ -1,4 +1,4 @@
-"""T-40 — SignificanceRule: the reporting-threshold carrier.
+"""SignificanceRule: the reporting-threshold carrier.
 
 The block-*seeding* threshold (`--ld-seed-p`, default 1e-5) and the *reporting*
 threshold (`--sig-thresh`, Meff / Bonferroni / FDR) are different numbers, and
@@ -19,8 +19,6 @@ pure code and by Streamlit without pulling either in.
 ``add_significance_columns`` writes the ``Significant_*`` columns themselves, with one
 rule for every model's table (MLM, MLMM, FarmCPU) in the pipeline and in the GUI's
 single-trait run.
-
-Spec: ``docs/revision/specs/isolated_snp_spec.md`` §T-40.
 """
 from __future__ import annotations
 

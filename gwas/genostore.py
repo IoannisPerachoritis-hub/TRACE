@@ -4,7 +4,7 @@ GenotypeStore   one file, ``calls.i8``: one byte per call (the ALT-allele count,
                 missing call), variant-major (n_variants x n_samples), so the bytes of a run of
                 variants are one contiguous read. Reads are explicit (seek + read), never
                 memory-mapped: a mapped file counts as resident memory on Windows and in
-                containers, which misleads memory guards (scaling audit, section 9.5).
+                containers, which misleads memory guards.
 LazyColumns     a samples x SNPs table that stays on disk: a selection of store rows and
                 columns, an optional per-SNP fill value (the mean-imputed table) and the layout
                 (C or F) today's in-memory array has at the point where it stands in. Every
@@ -397,8 +397,7 @@ class LazyColumns:
         ``layout`` "F" or "C" (default: this object's layout). ``_strided`` (C layout only): the
         block comes back as a view of a buffer one column wider, so its rows are NOT contiguous,
         as a column slice ``G[:, a:b]`` of today's whole C-ordered table is not. BLAS takes
-        another path for a contiguous one- to three-column operand, and the last bits change
-        (scaling audit, section 8.3, family C)."""
+        another path for a contiguous one- to three-column operand, and the last bits change."""
         sel = self._col_index(sel)
         g8 = self.store.gather(self.cols[sel], self.rows, _log=False)
         out = np.empty(g8.shape, dtype=np.float32, order="F")

@@ -256,7 +256,7 @@ def _clean_chr_series(chr_array_like, canonical=None):
 
     # keep only pure digits now
     is_digit = s.str.fullmatch(r"\d+")
-    # P8: disomic-allopolyploid subgenome labels (wheat 1A/1B/1D ... 7D, oat, etc.)
+    # Disomic-allopolyploid subgenome labels (wheat 1A/1B/1D ... 7D, oat, etc.)
     # are DISTINCT linkage groups -- keep them, never collapse on the number
     # (mapping 1A/1B/1D all to "1" would merge three non-recombining chromosomes
     # and corrupt LOCO).  Barley 1H is still handled upstream (trailing-H strip).

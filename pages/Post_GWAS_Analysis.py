@@ -459,7 +459,7 @@ def ld_analysis_page():
 
     # --------------------------------------------------------
     # Mega-block containment is structurally impossible after the disjoint-block
-    # redesign (WO4): _occupancy_select claims each accepted span and rejects any
+    # redesign: _occupancy_select claims each accepted span and rejects any
     # candidate overlapping a claimed marker, so block detection is disjoint by
     # construction. The former page-scoped mega-block filter control (mode /
     # min_contained / size_ratio) is RETIRED -- it configured a case that cannot

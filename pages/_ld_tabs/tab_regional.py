@@ -1,4 +1,4 @@
-"""Tab: Regional association plot (locus-zoom-style), T-08.
+"""Tab: Regional association plot (locus-zoom-style).
 
 A display of the existing genome-wide scan around a lead SNP: −log₁₀(p) vs
 position, points coloured by r² to the lead (computed from the user's own

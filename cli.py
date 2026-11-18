@@ -70,7 +70,7 @@ def _build_parser():
                      help="LD-kNNi neighbours per call (default: 5).")
     qc.add_argument("--impute-l", type=int, default=20,
                      help="LD-kNNi predictor SNPs by r2 (default: 20).")
-    # P13: heterozygosity screen (one-sided heterozygote EXCESS; NOT two-sided HWE).
+    # Heterozygosity screen (one-sided heterozygote EXCESS; NOT two-sided HWE).
     # Both OFF by default -> byte-identical QC. Excess het flags paralog / repeat-
     # mismapping artifacts; heterozygote deficit (expected in selfers) is never screened.
     qc.add_argument("--max-het", type=float, default=None,
@@ -203,7 +203,7 @@ def _build_parser():
                               "default 5).")
     ld_grp.add_argument("--hap-min-group-size", type=int, default=3,
                          help="Min tested-group size for the haplotype F-test (default 3).")
-    # ── Isolated-SNP rescue (T-45) ──
+    # ── Isolated-SNP rescue ──
     ld_grp.add_argument("--no-isolated-rescue", action="store_true",
                          help="Disable the isolated-SNP rescue (reporting-significant SNPs that "
                               "form no LD block). Rescue is ON by default; this is the byte-exact "
@@ -231,7 +231,7 @@ def _build_parser():
     parser.add_argument("--no-plots", action="store_true", help="Skip plot generation")
     parser.add_argument("--export-qc", action="store_true",
                          help="Export post-QC genotype matrix, SNP map, and phenotype for benchmarking")
-    # P11: --drop-alt removed. Unplaced/scaffold (ALT) markers carry no valid genomic
+    # --drop-alt was removed. Unplaced/scaffold (ALT) markers carry no valid genomic
     # position, so no position-dependent step can use them and they must never enter
     # the significance divisor; TRACE now always excludes them (no flag).
     parser.add_argument("--n-chromosomes", type=int, default=None,

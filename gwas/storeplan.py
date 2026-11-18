@@ -7,7 +7,7 @@ the peak memory of an in-memory run from the number of samples, the number of SN
 chosen options, compares it with the free memory, and checks the free disk space for the table.
 
 The estimate (estimate_memory_mib) is a linear envelope of measured peaks of in-memory runs
-(the process tree's working set; scaling audit, section 7.2, and batch 12, CC-42):
+(the process tree's working set):
 
   peak (MiB) = fixed part + bytes per genotype call x samples x SNPs + option terms + n x n
 
@@ -45,7 +45,7 @@ BYTES_PER_CALL = 50.0
 FIXED_MIB_MLM = 800.0
 FIXED_MIB_MULTI = 1200.0
 NN_MATRICES = 16
-# measured options (batch 12, CC-42): extra bytes per call
+# measured options: extra bytes per call
 BYTES_PER_CALL_PER_EXTRA_WORKER = 12.0    # --subsampling with --boot-jobs N > 1, per worker after the first
 FIXED_MIB_PER_EXTRA_WORKER = 300.0        # each extra worker is a Python process with its own libraries
 BYTES_PER_CALL_EXPORT_QC = 24.0           # --export-qc: two tables as CSV text inside the ZIP

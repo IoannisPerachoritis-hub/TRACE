@@ -73,7 +73,7 @@ def _block_heatmap(ctx, window):
 
 def _lead_snp_heatmap(r2, region_pos, region_sids, chr_sel, start_bp, end_bp, lead_snp,
                       table=""):
-    """Lead-SNP mode: the SNP-centred local LD heatmap (unchanged by CC-8). ``table`` names
+    """Lead-SNP mode: the SNP-centred local LD heatmap. ``table`` names
     the genotype table and its rows in the image cache's key."""
     show_star = st.checkbox(
         "Show lead-SNP star", value=True, key="local_ld_show_star",

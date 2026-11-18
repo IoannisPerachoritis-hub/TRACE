@@ -84,8 +84,8 @@ class ArrayColumns(LazyColumns):
     column selections stay lazy (lazy_rows, lazy_cols, ``[rows, :]``), and every read returns a
     new array with numpy's layout for the same expression on the whole array: ``[:, index]``
     F-ordered, a column slice of a C-ordered table strided, a single column 1-D. So the code
-    that receives a block does today's arithmetic on today's operand (scaling audit, section
-    8.6), and a whole-table read happens only if someone asks for it (np.asarray), logged and
+    that receives a block does today's arithmetic on today's operand, and a whole-table read
+    happens only if someone asks for it (np.asarray), logged and
     refusable as on disk (TRACE_STORE_FORBID_MATERIALIZE). ``kind`` says which table the array
     is, "imputed" or "raw" (the in-memory array has no fill to tell them apart, as a table on
     disk does), or None when not given."""
@@ -259,7 +259,7 @@ def table_released(session_table):
 
 
 # ------------------------------------------- the GWAS page's results and the table they are of
-# Session keys of the contract between the two pages (batch 13): the GWAS page writes the first
+# Session keys of the contract between the two pages: the GWAS page writes the first
 # two, this page the third.
 RUN_IDENTITY = "gwas_run_identity"        # with gwas_results: the identity of its Run's table
 MEFF_IDENTITY = "meff_identity"           # with meff_val: the identity of the table of M_eff

@@ -696,7 +696,7 @@ def find_ld_blocks_graph(
         return [(int(region_pos[final_seg].min()), int(region_pos[final_seg].max()),
                  int(final_seg.size), _mean_r2, region_sids[final_seg].tolist())]
 
-    # Legacy pre-WO4 path: no seed passed -> emit every connected component (the
+    # Legacy path: no seed passed -> emit every connected component (the
     # original multi-component algorithm, with the seed NOT guaranteed a member).
     # Production always passes seed_sid; a caller reaching here is a direct unit test
     # or a future caller that omitted it. Warn, do not raise (test_ld.py uses this path).
@@ -856,7 +856,7 @@ def merge_coherence(row_a, row_b, chroms, positions, sid, geno_imputed, min_pair
 
 def _iou_merge_blocks(df, chroms, positions, sid, geno_imputed, min_pair_n,
                       merge_iou, ld_merge_mode, ld_merge_r2):
-    """Overlapping-window IoU merge (pre-D-109 behaviour; reachable via
+    """Overlapping-window IoU merge (the behaviour before occupancy selection; reachable via
     --ld-merge-mode iou/correlation). Fuses blocks whose interval IoU exceeds
     merge_iou; in correlation mode a fuse also requires the cross-block seam AND
     the merged-block mean r2 to reach ld_merge_r2 (Gate B)."""
@@ -907,7 +907,7 @@ def _iou_merge_blocks(df, chroms, positions, sid, geno_imputed, min_pair_n,
 
 
 def _occupancy_select(df, chroms, positions, pval_by_snp, pos_by_snp):
-    """Greedy occupancy selection -> disjoint LD blocks (D-109).
+    """Greedy occupancy selection -> disjoint LD blocks.
 
     Overlapping +/-flank windows produce candidate blocks that share markers, so a
     shared marker would inflate the BH denominator. Accept candidates in order of
@@ -941,7 +941,7 @@ def _occupancy_select(df, chroms, positions, pval_by_snp, pos_by_snp):
                 n_discarded += 1
                 continue
             claimed[span_idx] = True
-            # P5: carry merge_r2 from the correlation-merge pass through occupancy
+            # Carry merge_r2 from the correlation-merge pass through occupancy
             # (occupancy resolves residual overlap; it must not erase the seam value).
             accepted.append({k: r.get(k, np.nan) for k in
                              ("Chr", "Start (bp)", "End (bp)", "Lead SNP", "SNP_IDs", "merge_r2")})
@@ -996,7 +996,7 @@ def find_ld_clusters_genomewide(
     members (see block_mean_r2) — the block's coherence.
     """
 
-    # P16: refuse unanchored (ALT) markers up front -- they carry no valid
+    # Refuse unanchored (ALT) markers up front -- they carry no valid
     # genomic position, so they can neither seed a block (threshold set OR the
     # top-N floor) nor form a meaningful LD window across concatenated scaffolds.
     _keep_anchored = gwas_df["Chr"].astype(str).map(canon_chr) != "ALT"
@@ -1060,7 +1060,7 @@ def find_ld_clusters_genomewide(
         if region_geno.shape[1] < 2:
             continue
 
-        # Remove monomorphic (P1: never drop the seed itself; if the seed IS
+        # Remove monomorphic (never drop the seed itself; if the seed IS
         # monomorphic in its own window, skip the window and log -- do not fail).
         snp_var = np.nanvar(region_geno, axis=0)
         keep = snp_var > 0
@@ -1097,7 +1097,7 @@ def find_ld_clusters_genomewide(
                 dtype=int
             )
 
-            # P1: guarantee the seed survives the decimation (its index need not
+            # Guarantee the seed survives the decimation (its index need not
             # land on the linspace grid).
             _sh = np.where(region_sids.astype(str) == snp_id)[0]
             if _sh.size:
@@ -1163,7 +1163,7 @@ def find_ld_clusters_genomewide(
             gap_factor=float(gap_factor),
             region_sids=region_sids,
             ld_merge_r2=ld_merge_r2,
-            seed_sid=snp_id,            # P2: emit only the seed's component
+            seed_sid=snp_id,            # emit only the seed's component
             _discard_out=_discards,
         )
 
@@ -1813,11 +1813,11 @@ def anova_eta_sq_from_labels(y: np.ndarray, labels: np.ndarray) -> tuple[float, 
 
 
 # ==================================================================
-# LD-quality triage — Layer 1 (predictive; T-30).  APPEND-ONLY.
+# LD-quality triage — Layer 1 (predictive).  APPEND-ONLY.
 # Pure, phenotype-free per-block LD metrics. Reuses the existing detection
 # primitives (get_block_snp_mask / pairwise_r2 / pairwise_r) + compute_r2_to_lead;
 # NEVER calls the st.cache_data-wrapped compute_meff_li_ji. Adds no module-level
-# state and edits no existing function. See docs/revision/specs/ld_triage_spec.md.
+# state and edits no existing function.
 # ==================================================================
 
 LDQ_COLUMNS = [
@@ -1898,7 +1898,7 @@ def compute_block_ld_quality(blocks_df, chroms, positions, sid, geno_imputed, gw
     """Per-block predictive LD-quality metrics (Layer 1). Phenotype-free.
 
     One row per input block, same order, index reset: the join keys Chr /
-    Start (bp) / End (bp) plus the ldq_* columns of the spec §4.1. Does not
+    Start (bp) / End (bp) plus the ldq_* columns (LDQ_COLUMNS). Does not
     mutate blocks_df. Membership via get_block_snp_mask (SNP_IDs honoured, else
     coordinate fallback). Member r² via pairwise_r2 on geno_imputed
     ("pairwise_r2_lowmiss_imputed"); M_eff via pairwise_r (signed) ->

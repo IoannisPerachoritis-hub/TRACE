@@ -435,7 +435,7 @@ def run_mlmm_research_grade_fast(
     # ---------------------------
     geno_std = _standardize_genotypes_impl(geno_imputed)
 
-    # P16: exclude ALT (unplaced/scaffold) markers -- they carry no valid genomic
+    # Exclude ALT (unplaced/scaffold) markers -- they carry no valid genomic
     # position, so no position-dependent step can use them.  MLM/FarmCPU already
     # drop ALT (the chroms_unique filter); align MLMM so ALT markers are never
     # tested against a kinship that excludes their own sequence.
@@ -1022,7 +1022,7 @@ def _bin_select_pseudo_qtns(
         sig_mask[np.array(exclude_idxs, int)] = False
 
     sig_idx = np.where(sig_mask)[0]
-    if diag is not None:  # §4 funnel: markers entering binning this iteration
+    if diag is not None:  # selection funnel: markers entering binning this iteration
         diag["n_sig_markers"] = int(sig_idx.size)
     if sig_idx.size == 0:
         if diag is not None:
@@ -1030,7 +1030,7 @@ def _bin_select_pseudo_qtns(
         return []
 
     selected = set()
-    _bin_contrib = {}  # §4: unique candidates each bin size adds (union order)
+    _bin_contrib = {}  # unique candidates each bin size adds (union order)
     for bin_size in bin_sizes:
         _before = len(selected)
         for ch in np.unique(chroms[sig_idx]):
@@ -1185,7 +1185,7 @@ def _optimize_pseudo_qtns_mlm(
     """
     candidate_idxs = list(candidate_idxs)
     if not candidate_idxs:
-        if diag is not None:  # §4 funnel: nothing entered validation
+        if diag is not None:  # selection funnel: nothing entered validation
             diag.update(n_pool_truncated=0, n_accepted=0, n_exceptions=0)
         return []
 
@@ -1198,7 +1198,7 @@ def _optimize_pseudo_qtns_mlm(
     _cap = pool_cap if pool_cap is not None else max_pseudo_qtns * 2
     if len(candidate_idxs) > _cap:
         candidate_idxs = candidate_idxs[:_cap]
-    _n_pool_truncated = len(candidate_idxs)  # §4: pool size after the cap
+    _n_pool_truncated = len(candidate_idxs)  # pool size after the cap
 
     pheno_val = np.asarray(y_vec, float)
     if pheno_val.ndim == 1:
@@ -1214,7 +1214,7 @@ def _optimize_pseudo_qtns_mlm(
 
     # Forward selection: accepted pseudo-QTNs accumulate into covariates
     accepted = []
-    _n_exceptions = 0  # §4: candidates skipped by the except branch below
+    _n_exceptions = 0  # candidates skipped by the except branch below
     geno_std = _standardize_genotypes_impl(geno_imputed)
 
     for test_idx in candidate_idxs:
@@ -1275,14 +1275,14 @@ def _optimize_pseudo_qtns_mlm(
                 accepted.append(test_idx)
         except Exception as exc:
             import logging
-            _n_exceptions += 1  # §4 funnel
+            _n_exceptions += 1  # selection funnel counter
             logging.debug("pseudo-QTN %s skipped: %s", sid[test_idx], exc)
             continue
 
         if len(accepted) >= max_pseudo_qtns:
             break
 
-    if diag is not None:  # §4 funnel counters (out-param, no return-shape change)
+    if diag is not None:  # selection funnel counters (out-param, no return-shape change)
         diag.update(n_pool_truncated=_n_pool_truncated,
                     n_accepted=len(accepted), n_exceptions=_n_exceptions)
         # pool-membership test: truncated pool identities (OLS-p rank order) +
@@ -1456,7 +1456,7 @@ def run_farmcpu(
         Step-5 bin selection is NOT told to exclude the current pseudo-QTNs
         (``exclude_idxs=None``), so an incumbent persists only if it re-earns a
         bin, and the new set is the re-selection ALONE (no union with the prior
-        set).  This fixes the spec error where "incumbents persist" was read as
+        set).  This fixes the error of reading "incumbents persist" as
         accumulate: under the union+exclude default an incumbent is never
         re-evaluated (immortal) and retention ratchets to ``_accept_bound``.
         With re-selection, Step 7's exact-set equality means "re-selection
@@ -1479,7 +1479,7 @@ def run_farmcpu(
     the published FarmCPU algorithm end-to-end (Liu et al. 2016), with no
     kinship in the association test (with ``selection_kinship="global"`` no
     GRM is built at all).  The ``"mlm"`` option instead applies MLM with LOCO
-    kinship: an opt-in alternative that trades power for lower FDR (D-102).
+    kinship: an opt-in alternative that trades power for lower FDR.
     """
     if _is_lazy(geno_imputed):
         geno_imputed = geno_imputed.astype(np.float32).as_layout("C")   # stays on disk
@@ -1575,7 +1575,7 @@ def run_farmcpu(
     # Candidate p-gate (non-step5 path): override p_threshold when set.
     _cand_p = candidate_p_gate if candidate_p_gate is not None else p_threshold
 
-    break_site = "cap_exhausted"  # §4: overwritten by whichever break fires
+    break_site = "cap_exhausted"  # overwritten by whichever break fires
     n_pruned_collinear = 0
     pval_running_min = None  # Step 3 substitution: row-wise min p over iterations
     _entry_iter = {}  # marker idx -> iteration it first entered the pseudo-QTN set
@@ -1614,7 +1614,7 @@ def run_farmcpu(
                 pvals[_pq] = pval_running_min[_pq]
 
         # Step 2: Bin-select candidate pseudo-QTNs
-        _iter_diag = {}  # §4 funnel: filled by the two helpers this iteration
+        _iter_diag = {}  # selection funnel: filled by the two helpers this iteration
         if step5_reml_bins:
             # Published Step 5: REML-optimised (bin_size x top_N) selection.
             # Step-4 stop (FarmCPU p.threshold, 1% Bonferroni). Two MEASURED arms:
@@ -1648,7 +1648,7 @@ def run_farmcpu(
 
         if not candidates:
             converged = True
-            break_site = "no_candidates"  # §4
+            break_site = "no_candidates"
             break
 
         # Step 3: Merge candidates with existing pseudo-QTNs, then
@@ -1714,10 +1714,10 @@ def run_farmcpu(
 
         if not new_pseudo_qtns:
             converged = True
-            break_site = "none_validated"  # §4
+            break_site = "none_validated"
             break
 
-        # §4 funnel — note: n_iterations = len(iteration_log) UNDERCOUNTS loop
+        # Selection funnel. Note: n_iterations = len(iteration_log) UNDERCOUNTS loop
         # passes, because this append is after the no_candidates + none_validated
         # breaks (which exit earlier and never log). break_site (in
         # convergence_info) is the authoritative termination reason.
@@ -1742,7 +1742,7 @@ def run_farmcpu(
             pseudo_qtns = new_pseudo_qtns
         if set(new_pseudo_qtns) == set(prev_pseudo_qtns):
             converged = True
-            break_site = "exact_match"  # §4
+            break_site = "exact_match"
             break
         # Jaccard > 0.8 early exit is NOT in the paper; disabled for the
         # canonical gate-free arm, which stops only on exact-set equality
@@ -1752,7 +1752,7 @@ def run_farmcpu(
             _union = len(set(new_pseudo_qtns) | set(prev_pseudo_qtns))
             if _union > 0 and _inter / _union > 0.8:
                 converged = True
-                break_site = "jaccard"  # §4
+                break_site = "jaccard"
                 break
 
         pseudo_qtns = new_pseudo_qtns
@@ -1769,7 +1769,7 @@ def run_farmcpu(
                 "%d -> %d pseudo-QTNs.", _n_drop, len(pseudo_qtns), len(kept),
             )
             pseudo_qtns = kept
-            n_pruned_collinear = _n_drop  # §4
+            n_pruned_collinear = _n_drop
 
     # ── Final scan ───────────────────────────────────────────────────
     covar_final = _build_covar(pseudo_qtns)
@@ -1889,8 +1889,8 @@ def run_farmcpu(
         "converged": converged,
         "n_pseudo_qtns": len(pseudo_qtns),
         "log": iteration_log,
-        "break_site": break_site,                   # §4: authoritative reason
-        "n_pruned_collinear": n_pruned_collinear,   # §4
+        "break_site": break_site,                   # authoritative reason
+        "n_pruned_collinear": n_pruned_collinear,
     }
     if step5_reml_bins:
         # first-entry iteration per surviving pseudo-QTN (incumbency diagnostic

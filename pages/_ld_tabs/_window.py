@@ -1,4 +1,4 @@
-"""Shared window selector for the LD-page tabs (T-08).
+"""Shared window selector for the LD-page tabs.
 
 The Regional Plot and Local LD tabs are two renderings of ONE window selection.
 Streamlit forbids the same keyed widget in two ``st.tabs`` bodies (DuplicateWidgetID,

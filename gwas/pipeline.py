@@ -351,7 +351,7 @@ def _run_trait(parsed, pheno, args):
                  if args.n_chromosomes else None)
     geno_df, chroms, chroms_num, positions, sid, n_raw, qc_snp, info_scores = \
         _pipeline_snp_qc(geno_df, chroms, positions, sid,
-                         args.maf, args.miss, args.mac, True,  # P11: ALT always excluded
+                         args.maf, args.miss, args.mac, True,  # ALT always excluded
                          info_scores, args.info_thresh, canonical=canonical,
                          max_het=args.max_het, het_excess_p=args.het_excess_p)
     log.info("  QC: %s", qc_snp)
@@ -427,7 +427,7 @@ def _run_trait(parsed, pheno, args):
     extra_csvs = {}  # additional CSVs to include in ZIP
     figures = {}     # figures to include in ZIP
 
-    # ── QC report (P1-P5): report-only statistics; never removes a sample or
+    # ── QC report: report-only statistics; never removes a sample or
     #    marker and never breaks the run (wrapped) ──
     try:
         from gwas import qc_report as _qcr
@@ -466,7 +466,7 @@ def _run_trait(parsed, pheno, args):
         )
         geno_export.index.name = "SampleID"
         extra_csvs["QC_genotype_matrix.csv"] = geno_export.reset_index()
-        # P3: also export the RAW dosage matrix (NaN preserved) -- the imputed
+        # Also export the RAW dosage matrix (NaN preserved) -- the imputed
         # export destroys the missing-call evidence.  QC_genotype_matrix.csv is
         # unchanged; this is an additional file.
         geno_raw_export = pd.DataFrame(
@@ -680,7 +680,7 @@ def _run_trait(parsed, pheno, args):
         gwas_farmcpu, pqtn_tbl, conv_info = run_farmcpu(
             geno_imputed, sid, chroms, chroms_num, positions, iid,
             pheno_reader, K0, covar_fc,
-            final_scan="ols", verbose=False,  # D-103: FarmCPU MLM final scan frozen out (published OLS)
+            final_scan="ols", verbose=False,  # FarmCPU MLM final scan frozen out (published OLS)
             use_loco=not getattr(args, "no_loco", False),
             **({"max_iterations": int(args.farmcpu_max_iter)}
                if getattr(args, "farmcpu_max_iter", None) else {}),  # GUI-only setting
@@ -784,7 +784,7 @@ def _run_trait(parsed, pheno, args):
                    else ("Significant_FDR" if sig_rule == "fdr" else "Significant_Bonf"))
     chroms_canon = np.array([canon_chr(str(c)) for c in chroms])
 
-    # ── Isolated-SNP rescue setup (T-45) ──────────────────
+    # ── Isolated-SNP rescue setup ──────────────────
     # Reporting rule + gene model resolved ONCE, before the per-model loop, so the
     # rescue can mine genes even for models with no LD blocks. The rescue is a
     # positional set difference against the FINAL emitted block table and NEVER
@@ -839,8 +839,8 @@ def _run_trait(parsed, pheno, args):
                             "is SKIPPED.", _gm_res.gene_model, e)
                 _gm_status = f"load failed: {_gm_res.gene_model} ({e})"
 
-    # ── Post-GWAS frames captured for the HTML report (T-80) ─────────────
-    # The report previously omitted every post-GWAS table (defect 0.2). Capture
+    # ── Post-GWAS frames captured for the HTML report ─────────────
+    # The report previously omitted every post-GWAS table. Capture
     # the primary model's frames (MLM if run, else the first model) plus each
     # model's annotation/haplotype. Additive: when a frame is absent the report
     # renders exactly as before (every report section is {% if %}-guarded).
@@ -851,7 +851,7 @@ def _run_trait(parsed, pheno, args):
     _report_ld_blocks = _report_assignments = None   # the per-SNP plots' haplotype colours
     _per_model_post = {}
 
-    # P14: LD-block seed mode (mirrors the GUI radio). "suggestive" (default) =
+    # LD-block seed mode (mirrors the GUI radio). "suggestive" (default) =
     # the --ld-seed-p threshold + the --ld-top-n floor -> byte-identical to the
     # prior CLI behaviour; "significant" = seeds restricted to the genome-wide
     # --sig-thresh, with NO top-N floor. FDR (no single p-threshold) falls back to
@@ -871,7 +871,7 @@ def _run_trait(parsed, pheno, args):
         m_ld_blocks = pd.DataFrame()   # always defined; empty => no blocks (rescue still runs)
 
         # LD block detection
-        # P15: report both seed counts so the suggestive vs significant distinction
+        # Report both seed counts so the suggestive vs significant distinction
         # is visible regardless of --ld-seed-mode (the top-N floor can also form
         # non-significant blocks -- e.g. pepper forms 3 FarmCPU blocks this way).
         _n_sugg = int((model_df["PValue"] < args.ld_seed_p).sum())
@@ -908,7 +908,7 @@ def _run_trait(parsed, pheno, args):
         if model_name == "MLM":
             ld_blocks_mlm = m_ld_blocks
 
-        # ── Isolated-SNP rescue (T-45): runs for EVERY model, with or without
+        # ── Isolated-SNP rescue: runs for EVERY model, with or without
         #    blocks. Set difference vs the FINAL block table; the block detector
         #    is untouched. Emits parallel CSVs; never writes into m_ld_blocks. ──
         if _do_rescue:
@@ -937,7 +937,7 @@ def _run_trait(parsed, pheno, args):
             except Exception as e:
                 log.warning("  Isolated-SNP rescue failed for %s: %s", model_name, e)
 
-        # ── Significant-SNP table (T-20): every reporting-significant SNP, marked
+        # ── Significant-SNP table: every reporting-significant SNP, marked
         #    in_block/unblocked with candidate interval + gene evidence. Same escape
         #    hatch as the rescue so --no-isolated-rescue stays byte-clean. Runs for
         #    every model (block or not) before the empty-block skip below. ──
@@ -1056,10 +1056,11 @@ def _run_trait(parsed, pheno, args):
         except Exception as e:
             log.warning("  LD block consolidation failed for %s: %s", model_name, e)
 
-        # ── LD-quality triage (T-36): Layer 1 (predictive) + Layer 2 (mlg_*) ->
+        # ── LD-quality triage: Layer 1 (predictive) + Layer 2 (mlg_*) ->
         #    router -> a NEW supplementary LD_triage_{model}.csv. Additive + gated
         #    by --no-triage (existing outputs byte-identical when off). Never a
-        #    filter; changes no p/F/eta2/boundary. N1 safe: consolidate drops mlg_*. ──
+        #    filter; changes no p/F/eta2/boundary. Consolidation drops mlg_*, so
+        #    LD_blocks_annotated keeps its columns. ──
         _stagelog.mark(f"S30_triage:{model_name}")
         if not args.no_triage and m_ld_blocks is not None and not m_ld_blocks.empty:
             try:
@@ -1132,7 +1133,7 @@ def _run_trait(parsed, pheno, args):
             except Exception as e:
                 log.warning("  Haplotype assignments failed for %s: %s", model_name, e)
 
-        # Capture per-model annotation/haplotype frames for the HTML report (T-80)
+        # Capture per-model annotation/haplotype frames for the HTML report
         _mp = {}
         if m_ld_annotated is not None and not getattr(m_ld_annotated, "empty", True):
             _mp["ld_blocks_annotated_df"] = m_ld_annotated
@@ -1324,20 +1325,20 @@ def _run_trait(parsed, pheno, args):
             figures["PCA_scatter.png"] = fig_pca
 
         if pca_eigenvalues is not None:
-            # P4: scree plot (eigenvalues already computed; parity with the GUI which
+            # Scree plot (eigenvalues already computed; parity with the GUI which
             # renders plot_pca_scree). Gated on availability, not n_pcs_mlm >= 2, so it
             # emits even at k=0 (e.g. the tomato deflation-guard panel).
             from gwas.plotting import plot_pca_scree
             figures["PCA_scree.png"] = plot_pca_scree(
                 pca_eigenvalues, n_pcs_used=n_pcs_mlm, title="PCA Scree Plot")
 
-    # ── Per-SNP effect boxplots + plotting ledger (T-21/T-84–86) ──────────
+    # ── Per-SNP effect boxplots + plotting ledger ──────────
     # Primary model only. The significant-SNP table stays complete — this only
     # bounds how many figures the report embeds (--snp-plots / --max-snp-plots),
     # and --collapse-r2 thins near-redundant SNPs for PLOTTING only. Emits
     # SNP_view_index; gated by --no-isolated-rescue (no _report_sig_table).
-    # (Block_sample_retention is deferred to the LD-triage sub-batch, where the
-    # haplotype test's frac_retained is hoisted into its output frame.)
+    # (Block sample retention is reported by the LD triage step: the haplotype test's
+    # output frame carries frac_retained as mlg_frac_retained.)
     _stagelog.mark("S36_snp_plots")
     _snp_boxplots = []
     if (_do_rescue and _report_sig_table is not None and not _report_sig_table.empty
@@ -1415,7 +1416,7 @@ def _run_trait(parsed, pheno, args):
     if getattr(args, "gene_model_label", None) and _gm_res.gene_model is not None:
         _gm_status = str(_gm_status).replace(str(_gm_res.gene_model), args.gene_model_label)
 
-    # Addition B: block-detection provenance. Effective detection seed/top-N (P14) +
+    # Block-detection provenance. Effective detection seed/top-N +
     # the find_ld_clusters_genomewide defaults for the params the call inherits.
     import inspect as _md_ins
     from gwas import ld as _md_ld

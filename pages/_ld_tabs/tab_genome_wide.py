@@ -642,7 +642,7 @@ def render(
                 )
 
                 # Mega-block containment is structurally impossible after the
-                # disjoint-block redesign (WO4): _occupancy_select claims each accepted
+                # disjoint-block redesign: _occupancy_select claims each accepted
                 # span and rejects any candidate overlapping a claimed marker. This is
                 # now an invariant CHECK on a copy, never a silent removal -- the block
                 # set passes through unchanged.
@@ -1039,7 +1039,7 @@ def _render_haplotype_gwas(
         qvals = bh_qvalues(pvals)
     hap_gwas_df["FDR_qvalue"] = qvals
 
-    # T-34 (§2.8 fix): enrich BEFORE display so Frac_other/Block_length_kb/MAF reach the
+    # Enrich BEFORE display so Frac_other/Block_length_kb/MAF reach the
     # on-screen table and the window R² the CSV, not only the downloaded CSV/ZIP.
     with st.spinner("Computing block lengths, MAF and the window R²…"):
         hap_gwas_df = compute_block_qc_effects(
@@ -1223,7 +1223,7 @@ def _render_lead_snp_gallery(ctx, hap_gwas_df, haplo_df_auto, hap_assignments=No
     if not isinstance(gdf, pd.DataFrame) or gdf.empty or "SNP" not in gdf.columns:
         return
     # Genotype matrix, SNP axis and sample axis all come from ctx, so they cannot
-    # disagree (WO-HAPMASK-01). The SNP axis must move with the matrix: `_ci` below is
+    # disagree. The SNP axis must move with the matrix: `_ci` below is
     # a column index into it, so a stale sid/positions array would silently select the
     # wrong marker.
     geno_hard = ctx.geno_hard
@@ -1604,8 +1604,8 @@ def _render_block_visualization(
         f"dl_mlg_summary_{selected_block}",
     )
 
-    # ── T-34: make the two views' differing sample sets VISIBLE, not implied ──
-    # (the reviewer concern). Show the haplotype view's denominator + how many
+    # ── Make the two views' differing sample sets VISIBLE, not implied ──
+    # Show the haplotype view's denominator + how many
     # accessions it excluded; the lead-SNP view uses a different sample set.
     _n_tested = block_row.get("n_samples_tested")
     _n_block = block_row.get("n_samples_block")

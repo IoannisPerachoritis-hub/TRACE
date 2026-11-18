@@ -1,4 +1,4 @@
-"""Isolated-SNP rescue (T-42 … T-44, T-48).
+"""Isolated-SNP rescue.
 
 Genome-wide-significant SNPs that form no LD block are currently dropped from the
 post-GWAS view. This module recovers them as a **parallel** output — never by
@@ -7,25 +7,23 @@ re-running or relaxing the block detector. The unblocked set is a positional
 
 The rule that makes that guarantee mechanical: **this module must never import
 ``gwas.ld``.** All coverage arithmetic is local; the block table is an input, not
-something recomputed here. (Asserted by ``tests/test_isolated.py`` and the C1
-negative-acceptance suite, AC-N4.)
+something recomputed here. (Asserted by ``tests/test_isolated.py`` and
+``tests/test_isolated_cli.py``.)
 
 Contents
 --------
-- ``find_unblocked_significant_snps`` (T-42) — the set-difference detector.
+- ``find_unblocked_significant_snps`` — the set-difference detector.
 - ``candidate_interval`` — the one interval rule for an unblocked SNP, a run of them or an
   LD block's member SNPs: the nearest post-QC marker on each side, with the chromosome-edge
   flank and the very-wide clamp.
 - ``block_candidate_intervals`` — each LD block's candidate interval by that rule.
 - ``candidate_interval_table`` — every candidate interval of a run (blocks and unblocked
   SNPs), the list the GUI's Regional Plot and Gene Annotation tab use.
-- ``build_flanking_intervals`` (T-43) — the nearest-typed-marker interval.
-- ``annotate_isolated_intervals`` (T-44) — gene mining via the PUBLIC
+- ``build_flanking_intervals`` — the nearest-typed-marker interval.
+- ``annotate_isolated_intervals`` — gene mining via the PUBLIC
   ``annotation.annotate_ld_blocks`` (unchanged) + evidence labelling.
 - ``run_isolated_snp_rescue`` — orchestrator returning a small result object.
-- ``isolated_interval_caption`` (T-48) — the guarded, denylist-clean caption.
-
-Spec: ``docs/revision/specs/isolated_snp_spec.md``.
+- ``isolated_interval_caption`` — the guarded, denylist-clean caption.
 """
 from __future__ import annotations
 
@@ -34,7 +32,7 @@ import pandas as pd
 
 from annotation import canon_chr
 
-# 12-column contract for find_unblocked_significant_snps (T-42).
+# 12-column contract for find_unblocked_significant_snps.
 UNBLOCKED_COLUMNS = [
     "snp_id", "chr", "pos", "p_value", "neg_log10_p",
     "reporting_rule", "reporting_threshold", "beta_ols", "beta_mlm",
@@ -88,7 +86,7 @@ def find_unblocked_significant_snps(
     top_n_used=0,
     pad_bp=0,
 ):
-    """Reporting-significant SNPs not covered by any emitted LD block (T-42).
+    """Reporting-significant SNPs not covered by any emitted LD block.
 
     Pure: does not modify ``gwas_df`` or ``blocks_df``, and does not call
     ``gwas.ld``. The significant set is ``sig_rule.significant_mask(gwas_df)`` and
@@ -166,7 +164,7 @@ _UNBLOCKED_DTYPE = {
 
 
 # ---------------------------------------------------------------------------
-# T-43 — flanking-marker intervals
+# flanking-marker intervals
 # ---------------------------------------------------------------------------
 INTERVAL_COLUMNS = [
     "interval_id", "region_type", "Chr", "Start (bp)", "End (bp)", "lead_snp", "SNP_IDs",
@@ -313,7 +311,7 @@ def build_flanking_intervals(
     merge_runs=True,
     significant_snp_ids=None,
 ):
-    """Recombination-bounded interval for each uncovered SNP (T-43).
+    """Recombination-bounded interval for each uncovered SNP.
 
     The interval is ``[nearest typed marker strictly upstream, nearest strictly
     downstream]`` over the sorted-unique POST-QC marker positions, closed on both
@@ -321,7 +319,7 @@ def build_flanking_intervals(
     *consecutive* marker slots merge into one run (parameter-free). Six edge cases
     (``chr_start`` / ``chr_end`` / ``chr_both`` / very-wide clamp / significant
     flank / run) each get an explicit rule. Emits ``INTERVAL_COLUMNS`` (block-schema
-    names, so T-44 can call the public ``annotate_ld_blocks`` unchanged).
+    names, so ``annotate_isolated_intervals`` can call the public ``annotate_ld_blocks`` unchanged).
 
     ``significant_snp_ids`` (optional) is the full reporting-significant id set, used
     only to fill ``flank_*_is_significant`` (a flanking marker may itself be a
@@ -424,7 +422,7 @@ def build_flanking_intervals(
 
 
 # ---------------------------------------------------------------------------
-# T-48 — wording + denylist
+# wording + denylist
 # ---------------------------------------------------------------------------
 # Phrases forbidden from any user-facing string this module emits. Enforced
 # word-boundary-wise so "candidate region"/"candidate interval" stay legal.
@@ -436,7 +434,7 @@ DENYLIST = (
 
 
 def isolated_interval_caption(row) -> str:
-    """Guarded, denylist-clean caption for one isolated-SNP interval (T-48)."""
+    """Guarded, denylist-clean caption for one isolated-SNP interval."""
     ch = row["Chr"]
     start, end = int(row["Start (bp)"]), int(row["End (bp)"])
     kb = (end - start) / 1000.0
@@ -464,7 +462,7 @@ def isolated_interval_caption(row) -> str:
 
 
 # ---------------------------------------------------------------------------
-# T-44 — gene mining + evidence labelling (calls the PUBLIC annotate_ld_blocks)
+# gene mining + evidence labelling (calls the PUBLIC annotate_ld_blocks)
 # ---------------------------------------------------------------------------
 LONG_COLUMNS = [
     "interval_id", "Chr", "interval_start_bp", "interval_end_bp", "lead_snp_id", "lead_p_value",
@@ -497,7 +495,7 @@ def annotate_isolated_intervals(
 ):
     """Mine the genes inside each isolated interval via the PUBLIC ``annotate_ld_blocks``
     (a gene counts when it overlaps the interval; nothing outside it is listed) and
-    attach the isolated-specific descriptors + evidence labels (T-44). Returns
+    attach the isolated-specific descriptors + evidence labels. Returns
     ``(wide_df, genes_long_df)``. All evidence is hard-coded to
     ``distance_only`` / ``flanking_markers_only`` — an isolated SNP has, by
     construction, no LD-supported interval.
@@ -585,7 +583,7 @@ def annotate_isolated_intervals(
 # orchestrator
 # ---------------------------------------------------------------------------
 class IsolatedRescueResult:
-    """Small result carrier for the CLI/GUI wiring (T-45/T-47)."""
+    """Small result carrier for the CLI/GUI wiring."""
 
     def __init__(self, unblocked, intervals, genes_long):
         self.unblocked = unblocked

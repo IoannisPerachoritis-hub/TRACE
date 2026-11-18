@@ -1,9 +1,9 @@
-"""LD-quality triage — Layer 3 routing + η² comparability (T-32 / T-35).
+"""LD-quality triage — Layer 3 routing + η² comparability.
 
 Pure module: numpy + pandas only, no Streamlit, no logging, no I/O — usable from
-cli.py and from tests without a Streamlit runtime. T-35 (η² comparability) lands
-first; T-32 (TriageThresholds + triage_locus_view + triage_blocks) extends this
-module. See docs/revision/specs/ld_triage_spec.md.
+cli.py and from tests without a Streamlit runtime. It holds the η² comparability
+(add_eta2_comparability) and the routing (TriageThresholds + triage_locus_view +
+triage_blocks).
 """
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ import pandas as pd
 
 ETA2_COMPARABILITY_COLUMNS = ["eta2_null_expected", "eta2_adj", "eta2_F_rank_delta"]
 
-# ---- Layer 3 routing (T-32) ---------------------------------------------------
+# ---- Layer 3 routing ---------------------------------------------------
 TRIAGE_COLUMNS = ["triage_view", "triage_primary", "triage_reason_code",
                   "triage_reason", "triage_axis_ld", "triage_flag_lead_outside_block",
                   "triage_thresholds_json"]
 
-# reason codes (§6.5) + the §14.6 not-tested code
+# reason codes + the not-tested code
 OK_BOTH = "OK_BOTH"
 MLG_SAMPLE_LOSS = "MLG_SAMPLE_LOSS"
 MLG_CONCENTRATED = "MLG_CONCENTRATED"
@@ -36,8 +36,8 @@ LEAD_OUTSIDE_BLOCK = "LEAD_OUTSIDE_BLOCK"
 
 @dataclass(frozen=True)
 class TriageThresholds:
-    """Routing thresholds (§6.6). Five are bound to existing constants/flags at
-    call time; ``lead_r2_frac`` is the one admitted CONVENTION (T-33: not
+    """Routing thresholds. Five are bound to existing constants/flags at
+    call time; ``lead_r2_frac`` is the one admitted CONVENTION (not
     load-bearing on the published set). ``r2_coherent`` has no default — the
     caller binds it to the run's ``--ld-r2`` so triage is a self-consistency
     check on the detector, not a new opinion."""
@@ -69,9 +69,9 @@ def _null_triage(thr: TriageThresholds) -> dict:
 
 
 def triage_locus_view(row, thr: TriageThresholds) -> dict:
-    """Pure routing decision for one merged locus (Layer 3, §6.5). Consumes only
+    """Pure routing decision for one merged locus (Layer 3). Consumes only
     the ldq_* / mlg_* / lead-usability fields of the row (no genotype access, no
-    I/O). Returns exactly the triage_* keys of §9.4. Missing/NaN inputs degrade to
+    I/O). Returns exactly the TRIAGE_COLUMNS keys. Missing/NaN inputs degrade to
     both / lead_snp / INSUFFICIENT_METRICS — never to a suppression."""
     if not thr.enabled:
         return _null_triage(thr)
@@ -139,7 +139,7 @@ def triage_locus_view(row, thr: TriageThresholds) -> dict:
         else:
             view, primary, code = "both", "lead_snp", LD_UNDETERMINED
     else:
-        # A, B, L all in {pass, fail}: walk §6.5 rows 1-7
+        # A, B, L all in {pass, fail}: apply the routing rules below in order
         if A == "pass" and B == "pass" and L == "pass":
             view, primary, code = "both", "haplotype", OK_BOTH
         elif A == "pass" and B == "fail" and L == "pass":
@@ -154,7 +154,7 @@ def triage_locus_view(row, thr: TriageThresholds) -> dict:
         else:  # L fail and (A fail or B fail)
             view, primary, code = "neither", "none", NO_INTERPRETABLE_VIEW
 
-    # lead-outside-block override (§6.5): force lead_snp primary where a lead view
+    # lead-outside-block override: force lead_snp primary where a lead view
     # exists, and always record the flag + append the code token.
     if lead_outside:
         if view in ("both", "lead_snp"):
@@ -177,7 +177,7 @@ def _pct(x):
 
 
 def _reason_string(code, thr, v) -> str:
-    """Prose reason (§6.7): quote the numbers, name the threshold, name the figure
+    """Prose reason: quote the numbers, name the threshold, name the figure
     to check. Never asserts causality or that a view is 'wrong'."""
     codes = code.split(";")
     base = codes[0]
@@ -231,7 +231,7 @@ def _reason_string(code, thr, v) -> str:
 
 def triage_blocks(merged: pd.DataFrame, thr: TriageThresholds) -> pd.DataFrame:
     """Row-wise application of triage_locus_view. Returns a copy with the triage_*
-    columns appended in §9.4 order. Row count and row order are invariant."""
+    columns appended in TRIAGE_COLUMNS order. Row count and row order are invariant."""
     out = merged.copy()
     n0 = len(out)
     if n0 == 0:
@@ -246,7 +246,7 @@ def triage_blocks(merged: pd.DataFrame, thr: TriageThresholds) -> pd.DataFrame:
 
 
 def add_eta2_comparability(df: pd.DataFrame) -> pd.DataFrame:
-    """T-35 — append η²-comparability columns. Pure arithmetic on the EXISTING
+    """Append η²-comparability columns. Pure arithmetic on the EXISTING
     ``eta2`` / ``df1`` / ``df2`` / ``F_perm`` columns; ``eta2`` is never recomputed
     and never modified, so any pre-existing value is bit-identical after this call.
 

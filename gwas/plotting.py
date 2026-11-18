@@ -959,7 +959,7 @@ def plot_maf_histogram(maf_values, maf_threshold=0.05,
 
 
 # ============================================================
-# REGIONAL ASSOCIATION (locus-zoom-style) — T-08
+# REGIONAL ASSOCIATION (locus-zoom-style)
 # ============================================================
 
 # r² bins (LocusZoom convention), ordered low -> high LD to the lead SNP.
@@ -1211,7 +1211,7 @@ def ld_pairs_long(matrix, labels):
 
 
 # ---------------------------------------------------------------------------
-# LD-block heatmap with neighbouring SNPs (reviewer point 2-INT.3)
+# LD-block heatmap with neighbouring SNPs
 # ---------------------------------------------------------------------------
 # One drawing for every LD-block heatmap (CLI ZIP, One-Click ZIP, and the
 # Post-GWAS Local LD tab in "Detected block" mode), so a reader can see whether

@@ -71,7 +71,7 @@ def allele_freq_from_called_dosage(G_dos):
     """
     G = np.asarray(G_dos, float)
     _gmax = float(np.nanmax(G)) if np.isfinite(G).any() else 0.0
-    if _gmax > 2.5:  # P9: polyploid dosage is a hard error, not silently clipped
+    if _gmax > 2.5:  # polyploid dosage is a hard error, not silently clipped
         raise ValueError(
             f"Genotype dosage > 2 detected (maximum observed: {_gmax:g}). "
             "TRACE models diploid panels; polyploid dosage coding is not supported."
@@ -541,7 +541,7 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     missing_rate = geno_df.isna().mean(axis=0)
 
     dos = geno_df.astype(float).values
-    # P9: refuse polyploid dosage coding loudly rather than silently clipping it
+    # Refuse polyploid dosage coding loudly rather than silently clipping it
     # to 2 (which would make the allele frequency -- and everything built on it
     # -- wrong).  Disomic allopolyploids coded 0/1/2 per subgenome are fine.
     _dmax = float(np.nanmax(dos)) if np.isfinite(dos).any() else 0.0
@@ -560,7 +560,7 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     maf = np.minimum(AF, 1.0 - AF)
     mac = np.minimum(AC, AN - AC)
 
-    # ── P13: heterozygosity screen (report ALWAYS; filter only on a flag) ──
+    # ── Heterozygosity screen (report ALWAYS; filter only on a flag) ──
     # This is a ONE-SIDED heterozygote-EXCESS screen, NEVER a two-sided HWE test.
     # Excess heterozygosity flags paralog / repeat-mismapping artifacts (the
     # mating-system-agnostic direction).  Heterozygote *deficit* is expected
@@ -636,7 +636,7 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
     n_alt = int((chroms == "ALT").sum())
     qc_snp["ALT chromosomes"] = n_alt
 
-    # ── P6: non-autosome disclosure (report-only) -- ALT markers are already
+    # ── Non-autosome disclosure (report-only) -- ALT markers are already
     #    excluded from kinship and the association scan; this only surfaces the
     #    counts, split into non-autosomal (X/Y/MT) vs unplaced/scaffold ──
     _alt_raw = pd.Series(chroms_raw).astype(str)[np.asarray(chroms) == "ALT"]
@@ -671,7 +671,7 @@ def _pipeline_snp_qc(geno_df, chroms, positions, sid,
         sid = sid[keep]
         if info_scores is not None:
             info_scores = info_scores[keep]
-        # P12: the former `if len(chroms) == 0` branch here was unreachable -- the
+        # The former `if len(chroms) == 0` branch here was unreachable -- the
         # all-ALT guard above (n_alt == len(chroms)) always raises first -- removed.
 
     # Sort by ChrNum / Pos
@@ -793,7 +793,7 @@ def _pipeline_build_kinship(geno_df, geno_imputed, chroms, positions):
 # ============================================================
 # The GWAS page's preprocessing (gwas.guigwas.preprocess calls it). The imputation is not
 # cached: the page keeps one current preprocessing per session, keyed by every setting, so no
-# table sits in Streamlit's caches (until batch 13 it was an st.cache_data entry with
+# table sits in Streamlit's caches (it used to be an st.cache_data entry with
 # persist="disk", whose .memo files Clear session data now removes).
 # ============================================================
 
@@ -907,7 +907,7 @@ def _gwas_pipeline_stages(
     K, Z_for_pca, chroms_grm, positions_grm, kinship_model = \
         build_kinship(geno_df, geno_imputed, chroms, positions)
 
-    # QC report (P1-P5): report-only; never removes a sample/marker, never raises.
+    # QC report: report-only; never removes a sample/marker, never raises.
     try:
         from gwas import qc_report as _qcr
         _qc_trait = (pheno[trait_col].to_numpy()

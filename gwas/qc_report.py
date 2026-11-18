@@ -1,4 +1,4 @@
-"""Report-only QC statistics (packages P1-P5 of the QC overhaul).
+"""Report-only QC statistics.
 
 Everything here is *report-only*: it computes and summarises QC statistics but
 filters nothing -- no sample, marker, or trait is removed on the strength of any
@@ -6,14 +6,14 @@ value below.  The functions take the post-QC genotype DataFrame (samples x
 markers, NaN for missing) that both orchestration paths already build, so no
 existing pipeline function changes signature.
 
-  P1  per_sample_heterozygosity  -- het fraction + |z|>3 outlier flag
-  P2  duplicate_pairs            -- pairwise genotype concordance, near-dup list
-  P3  per_variant_fis            -- per-marker Ho and F_IS = 1 - Ho/He
-  P4  trait_summary              -- trait distribution summary
-  P5  compute_qc_report / render_qc_report_markdown / qc_report_figures
+  per_sample_heterozygosity  -- het fraction + |z|>3 outlier flag
+  duplicate_pairs            -- pairwise genotype concordance, near-dup list
+  per_variant_fis            -- per-marker Ho and F_IS = 1 - Ho/He
+  trait_summary              -- trait distribution summary
+  compute_qc_report / render_qc_report_markdown / qc_report_figures
 
 Wired into cli.py (written into the run ZIP) and pages/GWAS_analysis.py
-(rendered inline).  DEV tree only for now.
+(rendered inline).
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 
-# ── P1 ─────────────────────────────────────────────────────────────────────
+# ── Per-sample heterozygosity ──────────────────────────────────────────────
 def per_sample_heterozygosity(geno_df: pd.DataFrame, z_thresh: float = 3.0) -> dict:
     """Per-sample heterozygosity = fraction of *called* genotypes that are
     heterozygous (dosage == 1).  Flags samples with |z| > ``z_thresh`` against
@@ -57,7 +57,7 @@ def per_sample_heterozygosity(geno_df: pd.DataFrame, z_thresh: float = 3.0) -> d
     }
 
 
-# ── P2 ─────────────────────────────────────────────────────────────────────
+# ── Duplicate pairs ────────────────────────────────────────────────────────
 def duplicate_pairs(
     geno_df: pd.DataFrame,
     conc_thresh: float = 0.99,
@@ -124,7 +124,7 @@ def duplicate_pairs(
     }
 
 
-# ── P3 ─────────────────────────────────────────────────────────────────────
+# ── Per-variant F_IS ───────────────────────────────────────────────────────
 def per_variant_fis(geno_df: pd.DataFrame, he_min: float = 0.05) -> dict:
     """Per-marker observed heterozygosity Ho and F_IS = 1 - Ho/He, He = 2pq
     (guarded at He == 0).  Summary (median, 5-95th pct) is over markers with
@@ -156,7 +156,7 @@ def per_variant_fis(geno_df: pd.DataFrame, he_min: float = 0.05) -> dict:
     }
 
 
-# ── P4 ─────────────────────────────────────────────────────────────────────
+# ── Trait summary ──────────────────────────────────────────────────────────
 def trait_summary(trait_values, trait_col: str, n_original: int | None = None) -> dict:
     """Trait distribution: n, mean, SD, min, max, skewness, % missing, and the
     count of distinct values.  Report only.
@@ -183,9 +183,9 @@ def trait_summary(trait_values, trait_col: str, n_original: int | None = None) -
     }
 
 
-# ── P5 ─────────────────────────────────────────────────────────────────────
+# ── Report assembly, markdown and figures ──────────────────────────────────
 def _imputation_summary(geno_dosage_raw, geno_imputed, method, impute_k, impute_l):
-    """P4 (report-only): what imputation did, so an instant no-op run is
+    """Report-only: what imputation did, so an instant no-op run is
     distinguishable from a broken selector.  Both mean and LD-kNNi fill the SAME
     cells (the missing set); only the value written differs -- so 'cells filled' is
     one number and the class distribution (LD-kNNi writes discrete 0/1/2; mean
@@ -219,7 +219,7 @@ def _imputation_summary(geno_dosage_raw, geno_imputed, method, impute_k, impute_
             nd = int((filled != mean_fill).sum())
             out["discordance_vs_mean"] = nd
             out["discordance_pct"] = round(100.0 * nd / n_missing, 2)
-            # P4: markers that fell back to per-SNP mode (empty top-l predictor
+            # Markers that fell back to per-SNP mode (empty top-l predictor
             # list) -- silently NOT LD-kNNi.  Reuses the impute module's own r^2.
             from gwas.impute import empty_topl_fraction
             _mt = np.where(per_marker_missing)[0]
@@ -244,9 +244,9 @@ def compute_qc_report(
     impute_k: int = 5,
     impute_l: int = 20,
 ) -> dict:
-    """Assemble P1-P4 into one report dict.  Called from both orchestration
+    """Assemble the statistics above into one report dict.  Called from both orchestration
     paths right after the post-QC dosage matrix is built (before any LD-dedup
-    marker subset), so P2 sees the full retained marker set.
+    marker subset), so the duplicate-pair scan sees the full retained marker set.
     """
     return {
         "sample_het": per_sample_heterozygosity(geno_df, z_thresh=het_z_thresh),
@@ -404,7 +404,7 @@ def qc_report_dataframes(report: dict) -> dict:
 
 
 def qc_report_figures(report: dict):
-    """Small figure set (P5): heterozygosity, F_IS, and trait histograms.
+    """Small figure set: heterozygosity, F_IS, and trait histograms.
     Returns {filename.png: matplotlib Figure}.  Import matplotlib lazily so the
     module stays importable in headless/no-mpl contexts.
     """

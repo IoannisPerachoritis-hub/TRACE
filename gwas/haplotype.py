@@ -19,7 +19,7 @@ HAP_TESTS = ("kinship", "pcs")
 PCS_PERMUTATION_TYPE = "Freedman-Lane_residual_permutation_with_PCs"
 
 def _inv_simpson_from_counts(counts) -> float:
-    """1 / sum(p_i^2) on a value_counts Series (T-31). NaN when empty.
+    """1 / sum(p_i^2) on a value_counts Series. NaN when empty.
 
     Inverse Simpson on the pre-collapse MLG frequency vector: the number of
     equally-frequent MLGs that would produce the same homozygosity. Insensitive
@@ -298,7 +298,7 @@ def run_haplotype_block_gwas(
 
     # Normalize LD block schema
     haplo_df = normalize_ld_blocks_schema(haplo_df)
-    # P16: refuse unanchored (ALT) blocks -- their members span concatenated
+    # Refuse unanchored (ALT) blocks -- their members span concatenated
     # unplaced scaffolds, so asserting linkage/haplotype structure across the bin
     # has no basis (align with MLM/FarmCPU/kinship, which all exclude ALT).
     if "Chr" in haplo_df.columns:
@@ -517,7 +517,7 @@ def run_haplotype_block_gwas(
         df_test = df_test[df_test["MLG"].isin(valid_haps)].copy()
 
         # Warn when rare-haplotype filtering discards too many samples
-        frac_retained = np.nan  # T-31: always bound (drives the warning; reported as mlg_frac_retained)
+        frac_retained = np.nan  # always bound (drives the warning; reported as mlg_frac_retained)
         if n_samples_block_used > 0:
             frac_retained = len(df_test) / n_samples_block_used
             if frac_retained < 0.75:
@@ -597,7 +597,7 @@ def run_haplotype_block_gwas(
                 )
 
                 # Seed the Freedman-Lane permutation from the block's coordinates only.
-                # The SNP id was dropped (P3): it is a reproducibility handle, not a
+                # The SNP id was dropped: it is a reproducibility handle, not a
                 # statistical one (every seed gives an unbiased p-value), and it must not
                 # reference the lead_snp column (a p-value-derived quantity) -- otherwise
                 # any QC/normalisation change would silently reseed every permutation.
@@ -705,9 +705,9 @@ def run_haplotype_block_gwas(
                 "omega2": _om2,
                 "lead_snp_r2": _lead_r2,
                 "hap_stats_json": json.dumps(hap_effects["hap_stats"]),
-                # T-31 Layer 2 — MLG fragmentation + sample retention. Additive:
+                # Layer 2 — MLG fragmentation + sample retention. Additive:
                 # every value reuses names already in scope; no new estimation, no
-                # second genotype pass, exclusion chain untouched (§2.5 frozen).
+                # second genotype pass, exclusion chain untouched.
                 "mlg_n_observed": int(hap_counts.shape[0]),
                 "mlg_top1_freq": float(hap_counts.iloc[0] / hap_counts.sum()) if hap_counts.size else np.nan,
                 "mlg_eff_inv_simpson": _inv_simpson_from_counts(hap_counts),

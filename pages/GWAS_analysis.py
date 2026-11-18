@@ -671,7 +671,7 @@ if "FarmCPU (multi-locus)" in model_choices:
         )
     else:
         farmcpu_max_iter = 10
-    farmcpu_final_scan = "ols"  # D-103: FarmCPU MLM final scan frozen out (published OLS end-to-end)
+    farmcpu_final_scan = "ols"  # FarmCPU MLM final scan frozen out (published OLS end-to-end)
 
 # --- Significance rule ---
 st.sidebar.subheader("Significance threshold")
@@ -989,7 +989,7 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # =========================
     # 4. GWAS preprocessing (VCF, QC, kinship, PCs)
     # =========================
-    # P10/P11: unplaced/scaffold (ALT) markers are always excluded -- they carry no
+    # Unplaced/scaffold (ALT) markers are always excluded -- they carry no
     # valid genomic position, so no analysis can use them (and they must never enter
     # the significance divisor). Not a user choice.
     drop_alt = True

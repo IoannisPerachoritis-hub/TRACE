@@ -165,11 +165,11 @@ def generate_gwas_report(
             ]):
                 model_sections.append(section)
 
-    # Significant-SNP table (complete; T-20) + isolated intervals (T-45/46)
+    # Significant-SNP table (complete) + isolated intervals
     significant_snps_html = _df_to_html(significant_snps_df, max_rows=None)
     isolated_intervals_html = _df_to_html(isolated_intervals_df, max_rows=50)
 
-    # Per-SNP effect boxplots (T-21). Many small figures -> lower dpi to bound the
+    # Per-SNP effect boxplots. Many small figures -> lower dpi to bound the
     # self-contained report size; the table above stays complete regardless.
     snp_plots = []
     for _sp in (snp_boxplots or []):

@@ -569,7 +569,7 @@ def subsampling_workers_fit(n_samples, n_snps_, n_jobs, available=None):
     """(fits, need_bytes, free_bytes): whether ``n_jobs`` subsampling workers fit in the free
     memory. Each worker after the first is a process with its own share of the table:
     gwas.storeplan.estimate_memory_mib with ``boot_jobs`` minus the same with one worker (300 MiB
-    and 12 bytes per genotype call each, batch 12's measurements). They fit when that is at most
+    and 12 bytes per genotype call each, as measured). They fit when that is at most
     storeplan.AUTO_MEMORY_FRACTION of the free memory, the rule --geno-store auto applies."""
     from gwas import storeplan as sp
 

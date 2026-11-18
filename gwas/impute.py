@@ -128,7 +128,7 @@ def empty_topl_fraction(G, target_idx=None, min_pair_n=20, max_targets=2000,
                         block_size=512, random_state=0):
     """Fraction of target SNPs with NO valid LD partner -- i.e. an empty top-l
     predictor list, so ``ld_knni`` falls back to that SNP's per-SNP MODE for its
-    missing calls, NOT LD-kNNi.  A cheap diagnostic for the P4 imputation report.
+    missing calls, NOT LD-kNNi.  A cheap diagnostic for the QC report's imputation summary.
 
     A SNP's top-l is empty iff it has zero partner with (co-observed >= min_pair_n
     AND r^2 > 0) -- independent of l -- so this reuses the blocked pairwise-complete

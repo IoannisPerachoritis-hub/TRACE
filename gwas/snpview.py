@@ -1,13 +1,11 @@
-"""T-21 / T-23 / T-85 — the per-SNP view layer (effects, gene evidence, plot budget).
+"""The per-SNP view layer (effects, gene evidence, plot budget).
 
 Display/evidence helpers over the significant-SNP table. Pure or near-pure and
 headlessly testable. Like the rescue, this module must never call the block
 detector — it may read r² (``compute_r2_to_lead``) and η²
 (``anova_eta_sq_from_labels``) but not ``find_ld_clusters_genomewide`` /
 ``find_ld_blocks_graph`` / ``find_ld_blocks_from_genotypes`` /
-``filter_contained_blocks`` (integration §1.7).
-
-Spec: post_gwas_visibility_design.md §2.2-2.4; integration_and_testing.md §3.2.
+``filter_contained_blocks``.
 """
 from __future__ import annotations
 
@@ -20,7 +18,7 @@ EFFECT_FLAGS = ("sign-flip", "structure-sensitive", "concordant", "undetermined"
 
 
 def effect_flag(beta_mlm, beta_ols, *, ols_floor=1e-6):
-    """Raw-vs-adjusted effect flag (T-21 §2.3). Computed only when both β are
+    """Raw-vs-adjusted effect flag. Computed only when both β are
     finite and |β_OLS| exceeds a small floor; never a bare ratio."""
     bm = float(beta_mlm) if beta_mlm is not None else np.nan
     bo = float(beta_ols) if beta_ols is not None else np.nan
@@ -34,7 +32,7 @@ def effect_flag(beta_mlm, beta_ols, *, ols_floor=1e-6):
 
 
 def genotype_class_summary(geno_col, y):
-    """Per-genotype-class counts/means + per-SNP η² for the boxplot (T-21 §2.2).
+    """Per-genotype-class counts/means + per-SNP η² for the boxplot.
 
     Classes are hard calls (0/1/2) from the raw dosage; missing are counted, not
     dropped; every class is reported including n=0. η² reuses
@@ -61,9 +59,9 @@ def genotype_class_summary(geno_col, y):
 def ld_supported_interval(lead_snp_id, geno_dosage_raw, sid, chroms, positions,
                           *, r2_thresh=0.6, flank_bp=300_000, min_pair_n=15):
     """Span of markers with r² ≥ ``r2_thresh`` to the lead SNP within its flank
-    window (T-23). Returns ``(start, end)`` bp, or ``None`` if the lead is absent /
+    window. Returns ``(start, end)`` bp, or ``None`` if the lead is absent /
     r² is uncomputable. r² is genotype-derived, so this interval is immune to the
-    assembly-coordinate problem (design §2.4)."""
+    assembly-coordinate problem."""
     from gwas.plotting import compute_r2_to_lead
 
     sid = np.asarray(sid).astype(str)
@@ -89,7 +87,7 @@ def ld_supported_interval(lead_snp_id, geno_dosage_raw, sid, chroms, positions,
 
 def label_genes_by_ld(genes_df, ld_interval):
     """Label each gene ``ld_supported`` (overlaps the LD-supported interval) or
-    ``distance_only`` (T-23). Nothing is filtered — labels are added. When the
+    ``distance_only``. Nothing is filtered — labels are added. When the
     interval is ``None`` (e.g. an isolated SNP) every gene is ``distance_only``."""
     labels = {}
     if genes_df is None or len(genes_df) == 0:
@@ -106,8 +104,8 @@ def label_genes_by_ld(genes_df, ld_interval):
 
 def collapse_snps_for_plotting(sig_df, geno_dosage_raw, sid,
                                *, r2_threshold=0.9, flank_bp=300_000, min_pair_n=15):
-    """Greedy collapse of near-redundant SNPs to a representative — **plots only**
-    (T-85). Never filters or reorders rows: returns one row per input SNP with
+    """Greedy collapse of near-redundant SNPs to a representative — **plots only**.
+    Never filters or reorders rows: returns one row per input SNP with
     ``SNP, Representative_SNP, Representative_Of_Count, r2_to_representative``.
     Reuses the ``_thin_block_snps`` r²=0.9 threshold and the flank_kb=300 scale so
     "redundant" means one thing across the code."""
