@@ -1,5 +1,5 @@
 [server]
-# Upload limit: 2 GB. An upload is held in the server's memory while it arrives (twice at its
+# Upload limit: 2,048 MiB. An upload is held in the server's memory while it arrives (twice at its
 # end), before TRACE can check anything, and until the GWAS page has saved it in its work
 # folder; TRACE then frees it. Bigger VCFs go through the GWAS page's location box ("Or type the
 # VCF's location on this computer"), which reads the file where it is and holds nothing in memory.

@@ -2,8 +2,9 @@
 
 The scripts and summary files behind the paper's benchmark tables and figures. Each entry below
 names one table or figure: what it shows, the commands that rebuild it in order, the result
-file, the input data and a rough run time on a desktop with 6 cores. The result files are committed,
-so you can compare a rebuild with them. They keep the exact bytes of the runs behind the paper,
+file, the input data and, for the steps that were timed, the measured run time. The times were
+measured on 17 November 2026 with a development version before 1.2.0, on a desktop with 6 cores,
+at 12 threads unless noted. The result files are committed, so you can compare a rebuild with them. They keep the exact bytes of the runs behind the paper,
 which were written on Windows (CRLF line ends).
 
 ## Before you start
@@ -12,7 +13,7 @@ which were written on Windows (CRLF line ends).
 2. Get the source data. The tomato panel is the Varitome VCF and its phenotype file (Pereira et
    al. 2021). The pepper panel is the G2P-SOL VCF and its averaged phenotypes (Tripodi et al.
    2021). The paper's data availability statement gives where to download them.
-3. Make the QC data, one run per dataset (about a minute each):
+3. Make the QC data, one run per dataset (11 to 47 s each):
 
 ```bash
 bash benchmarks/make_qc_data.sh tomato_locule_number varitome_filtered.vcf varitome_phenotypes.csv locule_number
@@ -50,9 +51,9 @@ scripts work the same way: run them from the side analysis's folder.
 lambda_GC, Bonferroni counts, Spearman rho and the overlap of the top 10 SNPs of the three tools'
 MLM scans, at the published PC counts (FWe 2, the others 0).
 
-1. `python benchmarks/rerun_trace_mlm.py` (about 30 s)
-2. For each run, `Rscript benchmarks/run_gapit.R <run>` (15 to 35 s each) and
-   `Rscript benchmarks/run_rmvp.R <run>` (2 to 6 s each)
+1. `python benchmarks/rerun_trace_mlm.py` (24 to 25 s)
+2. For each run, `Rscript benchmarks/run_gapit.R <run>` (12 to 36 s each) and
+   `Rscript benchmarks/run_rmvp.R <run>` (1.9 to 6.2 s each)
 3. `python benchmarks/compare_results.py`
 
 Result: `benchmarks/table_s4_comparison.csv`. Each statistic has an `_unrounded` column beside it:
@@ -71,7 +72,7 @@ The side rows at the strict band rule's counts: in the side folder, steps 1 to 3
 
 The four LD blocks near the lc locus on chromosome 2 and their kinship-aware haplotype tests.
 
-1. `python benchmarks/table_s8.py` (about a minute). Run it with OPENBLAS_NUM_THREADS=12 for the
+1. `python benchmarks/table_s8.py` (10 s). Run it with OPENBLAS_NUM_THREADS=12 for the
    committed last digits.
 
 Result: `benchmarks/table_s8.csv`. Input: `benchmarks/qc_data/tomato_locule_number`. The golden
@@ -83,9 +84,9 @@ files of the same run are `tests/golden/tomato_locule/`, and
 lambda_GC, Bonferroni counts, Spearman rho and the overlap of the top 10 SNPs of the two FarmCPU
 scans, and the tail recovery: the share of one tool's top 1% that falls in the other's top 5%.
 
-1. `python benchmarks/rerun_trace_farmcpu.py` (about 20 s). TRACE-FarmCPU uses the PC counts of
+1. `python benchmarks/rerun_trace_farmcpu.py` (22 s). TRACE-FarmCPU uses the PC counts of
    the published Table S10 run: FWe 4, BX 5, weight 10, locule 10.
-2. For each run, `Rscript benchmarks/run_gapit_farmcpu.R <run>` (15 to 80 s each). Its default
+2. For each run, `Rscript benchmarks/run_gapit_farmcpu.R <run>` (14 to 81 s each). Its default
    PC counts are the ones GAPIT FarmCPU ran with: FWe 3, BX 0, weight 0, locule 2.
 3. `python benchmarks/run_farmcpu_benchmarks.py`
 4. `python benchmarks/tail_recovery.py`
@@ -111,9 +112,9 @@ How TRACE's LOCO and global runs, with the GRM of the LD pruned markers and with
 agree with GAPIT3 and rMVP: Spearman rho on -log10 p and lambda_GC.
 
 1. Steps 1 and 2 of Table S4
-2. `python benchmarks/rerun_global_gwas.py` (about 30 s)
+2. `python benchmarks/rerun_global_gwas.py` (29 s)
 3. `python benchmarks/loco_sensitivity/compare_loco.py`
-4. `python benchmarks/prune_ablation.py --write` (about 80 s)
+4. `python benchmarks/prune_ablation.py --write` (63 s)
 
 Results: `benchmarks/loco_sensitivity/table_s11_loco_global.csv` (the LOCO and Global rows) and
 `benchmarks/loco_sensitivity/table_s11_unpruned.csv` (the unpruned rows). With `--rmvp-pcs-twice`,
@@ -126,7 +127,7 @@ published values on the earlier QC data, which a test checks.
 The pass counts behind Table S14's rates, the precision with and without the subsampling filter,
 and the share of true blocks kept, computed from the published table.
 
-1. `python benchmarks/simulation/table_s14_columns.py` (a second)
+1. `python benchmarks/simulation/table_s14_columns.py` (0.6 s)
 
 Result: `benchmarks/simulation/sim_summary/table_s14_columns.csv`.
 
@@ -152,7 +153,7 @@ Result: `benchmarks/plots/figure_s7_manhattan_comparison.png` and `.pdf`.
 
 ## Figure S8: the subsampling of tomato locule number
 
-1. Run the CLI with 100 resamples (about 10 minutes):
+1. Run the CLI with 100 resamples (9.5 minutes):
 
 ```bash
 trace-gwas --vcf varitome_filtered.vcf --pheno varitome_phenotypes.csv --trait locule_number --model mlm --n-pcs 0 --sig-thresh meff --subsampling --boot-reps 100 --boot-frac 0.8 --boot-thresh 1e-4 --seed 42 --output subsampling_run
@@ -170,8 +171,8 @@ Results: `benchmarks/plots/figure_s8_subsampling.png` and `.pdf`, and the figure
 How often the kinship-aware test and the earlier PCs-only test reject a true null on tomato and
 rice, at h2 0, 0.3 and 0.6.
 
-1. `python benchmarks/haplotype_null/null_calibration.py --dataset tomato --vcf varitome_filtered.vcf --pheno varitome_phenotypes.csv --out tomato_run` (about 15 minutes)
-2. `python benchmarks/haplotype_null/null_calibration.py --dataset rice --vcf rice_core_matched.vcf.gz --pheno rice_pheno.csv --out rice_run --band-k 0` (about 2 hours)
+1. `python benchmarks/haplotype_null/null_calibration.py --dataset tomato --vcf varitome_filtered.vcf --pheno varitome_phenotypes.csv --out tomato_run` (14 minutes, at 8 threads)
+2. `python benchmarks/haplotype_null/null_calibration.py --dataset rice --vcf rice_core_matched.vcf.gz --pheno rice_pheno.csv --out rice_run --band-k 0` (2.1 hours)
 
 Results: `benchmarks/haplotype_null/tomato_rates.csv` and `rice_rates.csv` (the rejection rates
 with Clopper-Pearson 95% intervals, and `interval_entirely_above_alpha` as the check), the blocks
@@ -187,7 +188,7 @@ accessions with grain length (SNP-Seek, Core v0.7) and the phenotypes of Wang et
 The strict band rule behind the paper's PC counts (smallest k with 0.95 <= lambda_GC <= 1.05,
 commit 03095b7), run on the corrected QC data. It gives FWe 3, BX 3, weight 0, locule 0.
 
-1. `python benchmarks/band_rule_pc_counts.py` (about 3 minutes)
+1. `python benchmarks/band_rule_pc_counts.py` (2.5 minutes)
 
 Result: `benchmarks/band_rule_pc_counts.csv`, the lambda_GC scan for k = 0 to 10 with each rule's
 pick (`strict_pick`, and `edge_tolerant_pick` for the later variant with a wider band in
@@ -199,8 +200,8 @@ Table S6 and Figure S1 stay as published (the earlier 165 x 43,974 template). Th
 the null calibration on the corrected template.
 
 1. In the side folder: `python benchmarks/simulation/simulate_phenotypes.py --data-root DIR --mode template`,
-   then `--mode null --n-perms 100 --seed 2026` (seconds)
-2. `python benchmarks/simulation/run_simulation_platform.py --data-root DIR --mode null --n-pcs 2` (about 8 minutes)
+   then `--mode null --n-perms 100 --seed 2026` (4.3 and 4.8 s)
+2. `python benchmarks/simulation/run_simulation_platform.py --data-root DIR --mode null --n-pcs 2` (7.6 minutes)
 3. `python benchmarks/simulation/evaluate_simulation.py --data-root DIR --mode null`
 
 Results, copied in: `benchmarks/simulation/sim_summary/null_type1_error_corrected_template.csv` and
@@ -215,7 +216,7 @@ table (Table S9) was measured with the CLI.
 
 ## Other scripts
 
-- `reproduce.sh`: a short check of the whole pipeline on a simulated panel (under a minute).
+- `reproduce.sh`: a short check of the whole pipeline on a simulated panel.
 - `capture_golden.py`, `reconstruct_table_s8_params.py`: the golden files and the Table S8 block
   settings.
 - `published_pc_counts.py`, `_pc_band_select.py`, `_options.py`: shared by the scripts above.

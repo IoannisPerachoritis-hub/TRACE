@@ -21,9 +21,9 @@ All notable changes to TRACE are documented in this file.
 - **The thread and core counts are recorded.** `run_metadata.json` and the report's provenance
   table list the linear-algebra libraries and their versions (numpy's and scipy's), the number of
   threads they use, the CPU cores and `--boot-jobs` with the threads each subsampling worker
-  gets. The last digits of p-values depend on the thread count (by about 1 part in 10 million
-  between 1 and 12 threads), so results are byte-identical between runs at the same thread count;
-  no default changes.
+  gets. The last digits of p-values depend on the thread count (by at most 5.1e-7 of the p-value
+  between 1 and 12 threads in our tests), so results are byte-identical between runs at the same
+  thread count; no default changes.
 - **The haplotype test accounts for kinship, by default** (`--hap-test`). Each LD block's
   haplotype groups are tested by a mixed model with the GWAS scan's own kinship kernel for the
   block's chromosome (its LOCO kernel, or the whole-genome kernel with `--no-loco`), the PCs
