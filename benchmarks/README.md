@@ -95,15 +95,15 @@ In the tail recovery file, `variant` names the definition: `std` is GAPIT's stan
 (its "(Kansas)" file, behind the rest of the table), `nyc` its "(NYC)" file. `gapit_to_trace` is the
 share of GAPIT3's top 1% in TRACE's top 5%, `trace_to_gapit` the other way.
 
-The PCs of step 1 come from an exact SVD, so a rebuild gives the same table. The published run
-used a randomized SVD with no seed. Its values on the corrected data are in
-`benchmarks/table_s10_farmcpu_comparison_randomized_pca.csv` and
-`benchmarks/table_s10_tail_recovery_randomized_pca.csv`.
+The PCs of step 1 come from an exact SVD, so a rebuild gives the same table. The paper's Table
+S10 prints these exact SVD values. The first submission used a randomized SVD with no seed. That
+draw, on the corrected data, is in `benchmarks/table_s10_farmcpu_comparison_randomized_pca.csv`
+and `benchmarks/table_s10_tail_recovery_randomized_pca.csv`.
 
 The second set: in its side folder, step 2 with k = 2, 0, 0, 0, then steps 1, 3 and 4. Results,
 copied in: `benchmarks/table_s10_farmcpu_comparison_second_set.csv` and
 `benchmarks/table_s10_tail_recovery_second_set.csv` (and `_second_set_randomized_pca` for the
-published run's draw).
+first submission's draw).
 
 ## Table S11: LOCO against global kinship, and an unpruned GRM
 
