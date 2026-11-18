@@ -42,6 +42,10 @@ All notable changes to TRACE are documented in this file.
   docs/outputs.md.
 
 ### Fixed
+- **A run with thousands of significant SNPs no longer stalls before the per-SNP box plots.** The
+  step that groups near-identical significant SNPs for the plots built the set of all SNP IDs
+  again for every SNP it looked at. With 3,744 significant SNPs among 185,618 (a rice run), it ran
+  for hours. It now builds the set once, and the results are the same.
 - **The haplotype test's parametric F, η² and lead SNP R² now use the user covariates** that
   its permutations already used, so every statistic of the test has one design (intercept,
   PCs, covariates). A tested sample without a covariate value stops the test instead of

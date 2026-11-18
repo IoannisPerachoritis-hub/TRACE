@@ -114,6 +114,7 @@ def collapse_snps_for_plotting(sig_df, geno_dosage_raw, sid,
     from gwas.plotting import compute_r2_to_lead
 
     sid_arr = np.asarray(sid).astype(str)
+    sid_set = set(sid_arr)   # built once: rebuilt for every SNP it took hours at 185,618 SNPs
     positions = None
     # rank order: PValue asc, then Chr(canon), Pos, SNP (total, deterministic)
     order = sig_df.assign(_c=sig_df["Chr"].map(lambda c: (0, int(canon_chr(c))) if str(canon_chr(c)).isdigit()
@@ -132,13 +133,13 @@ def collapse_snps_for_plotting(sig_df, geno_dosage_raw, sid,
         rep_of[snp] = snp
         rep_r2[snp] = 1.0
         reps.append(snp)
-        if geno_dosage_raw is None or snp not in set(sid_arr):
+        if geno_dosage_raw is None or snp not in sid_set:
             continue
         # find unassigned sig SNPs within flank on same chr with r2 >= threshold
         cc, cpos = chr_by_snp[snp], pos_by_snp[snp]
         cand = [str(s) for s in sig_df["SNP"].astype(str)
                 if s not in rep_of and chr_by_snp.get(str(s)) == cc
-                and abs(pos_by_snp.get(str(s), cpos) - cpos) <= flank_bp and str(s) in set(sid_arr)]
+                and abs(pos_by_snp.get(str(s), cpos) - cpos) <= flank_bp and str(s) in sid_set]
         if not cand:
             continue
         mask = np.isin(sid_arr, cand)
