@@ -34,13 +34,13 @@ All notable changes to TRACE are documented in this file.
   can give false positives in related panels. Use it only to reproduce old results. The haplotype
   results gain three columns in both tests: `kinship_model` (the kernel, `none` for the earlier
   test, or why the kinship-aware test could not test a block), `h2_null` (the null model's
-  heritability) and `eta2_pcs_only` (the earlier test's η², for comparison). A block the kinship-aware test cannot test (for example one whose
-  haplotype groups a covariate defines) is kept with the reason and no statistics (the tab's
-  block table gives it under Tested), never tested another way, and the block FDR is over the
-  blocks with a p-value. `run_metadata.json` records
-  the choice as `Hap_test (--hap-test)`. `LD_blocks_annotated_*` and `LD_triage_*` keep their
-  columns; the new ones are in the report's haplotype tables and the GUI's block table CSV. See
-  docs/outputs.md.
+  heritability) and `eta2_pcs_only` (the earlier test's η², for comparison). A block the
+  kinship-aware test cannot test (for example one whose haplotype groups a covariate defines) is
+  kept with the reason and no statistics (the tab's block table gives it under Tested), never
+  tested another way, and the block FDR is over the blocks with a p-value. `run_metadata.json`
+  records the choice as `Hap_test (--hap-test)`. `LD_blocks_annotated_*` and `LD_triage_*` keep
+  their columns; the new ones are in the report's haplotype tables and the GUI's block table CSV.
+  See docs/outputs.md.
 
 ### Fixed
 - **A run with thousands of significant SNPs no longer stalls before the per-SNP box plots.** The

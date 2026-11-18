@@ -5,9 +5,9 @@ Run that stops part way. For large datasets in depth, see [Large datasets](large
 
 ## The run needs more memory than the computer has
 
-TRACE keeps one table of genotype calls for the whole run. In memory it needs about 50 bytes per
-genotype call at its peak, so 1,000 samples and 1 million SNPs need about 50 GB. With the table on
-disk, memory no longer grows with samples x SNPs, and the results are the same.
+TRACE keeps one table of genotype calls for the whole run. In memory, TRACE's estimate of the
+run's peak counts 50 bytes per genotype call. With the table on disk, memory no longer grows with
+samples x SNPs, and the results are the same.
 
 By default TRACE decides for you. Before it reads the genotypes, it estimates the memory an
 in-memory run needs and compares it with the free memory. When the run does not fit, it keeps the
@@ -21,7 +21,7 @@ mean imputation, the default.
 
 ## The file is too big to upload
 
-The GUI's upload box takes files up to 2 GB. An upload is held in memory while it arrives, so a
+The GUI's upload box takes files up to 2,048 MiB. An upload is held in memory while it arrives, so a
 bigger VCF goes through the box under it, "Or type the VCF's location on this computer". Type the
 full location of the `.vcf` or `.vcf.gz` file. TRACE reads the file where it is and copies nothing.
 

@@ -2,13 +2,21 @@
 
 TRACE holds one table of genotype calls (samples x SNPs) for the whole run. Held in memory,
 that table is copied several times by the analysis steps, so the memory a run needs grows with
-samples x SNPs: about 50 bytes per genotype call at the peak. At 1,000 samples and 100,000 SNPs
-that is about 5 GB; at 1,000 samples and 1 million SNPs about 50 GB.
+samples x SNPs. TRACE's estimate counts 50 bytes per genotype call (below).
 
 With the table **on disk**, the VCF is read in pieces into a file of one byte per genotype call,
 and every step reads from that file only the columns it works on. Memory then no longer grows
-with samples x SNPs. A simulated panel of 996 samples and 1,070,795 SNPs ran on a 16 GB desktop
-in 39 minutes at 2.1 GB of memory (MLM; 75 minutes and 2.6 GB with MLM, MLMM and FarmCPU).
+with samples x SNPs. Measured on a desktop with 16 GiB of memory:
+
+| Run | Samples x SNPs | Genotype calls | Table | Run time | Peak memory | Version |
+|---|---|---:|---|---:|---:|---|
+| Rice grain length, the CLI's defaults (MLM, LD blocks, haplotype tests, annotation, plots, report) | 2,260 x 185,618 after QC (2,261 x 442,308 read) | 1,000,058,388 | on disk | 80.4 min | 1.8 GB | 1.2.0 |
+| A simulated panel, the CLI with MLM | 996 x 1,070,795 | 1,066,511,820 | on disk | 38.1 min | 2.5 GB | a development version before 1.2.0 (12 November 2026) |
+| The same panel, the GWAS page's computations (MLM, MLMM and FarmCPU, without the post-GWAS steps) | 996 x 1,070,795 | 1,066,511,820 | on disk | 36.6 min | 2.0 GB | a development version before 1.2.0 (17 November 2026) |
+| Tomato locule number, the CLI with MLM, MLMM, FarmCPU and 100 subsampling replicates (the paper's Table S9b) | 164 x 43,749 after QC (166 x 44,317 read) | 7,356,622 | in memory | 8.0 min (1.1 min without the subsampling) | 1.4 GB | 1.2.0 |
+
+The two panel runs came before both the faster per-SNP plot step and the kinship-aware haplotype
+test. The peak is the working set of the run's processes (1 GB = 10^9 bytes).
 
 **The results are the same either way.** Every step receives the same numbers, in the same
 number format and order, as it does from the table in memory, so the results files are
@@ -28,11 +36,11 @@ yourself (see "Checking that both modes agree").
 The log says which mode ran and why, in one line, for example:
 
 ```text
-This dataset has about 1,066,511,820 genotype calls; an in-memory run would need about 54.3 GB,
-and 5.9 GB are free, so TRACE keeps the genotype table on disk. Results are the same either way.
+This dataset has about 1,000,058,388 genotype calls; an in-memory run would need about 51.5 GB,
+and 3.7 GB are free, so TRACE keeps the genotype table on disk. Results are the same either way.
 ```
 
-(a simulated panel of 996 samples and 1,070,795 SNPs on a 16 GB desktop).
+(the rice run in the table above, version 1.2.0).
 
 `run_metadata.json` in the results ZIP records the mode (`Genotype table`), how it was chosen
 (`Genotype table choice`: `auto` or the option) and why (`Genotype table reason`, for example
@@ -48,9 +56,10 @@ difference between the ZIPs of the two modes; the HTML report is the same.
 TRACE reads the number of samples from the VCF header. For the number of SNPs it takes the number
 of records: from the file size for a plain or a BGZF-compressed VCF (an upper bound, about twice
 the real count for a file with only the GT field, more for files with other FORMAT fields), or
-by counting the records in one pass for other gzip files (11 seconds for the 99 MB file of that
-example). Before choosing the disk, or stopping a
-run, a bound is replaced by an exact count, so no run goes to disk or stops on a loose bound.
+by counting the records in one pass for other gzip files (about 11 seconds for the 99 MB file of
+the simulated panel above, on a development version before 1.2.0, 16 November 2026). Before
+choosing the disk, or stopping a run, a bound is replaced by an exact count, so no run goes to
+disk or stops on a loose bound.
 
 The estimate is the memory peak of an in-memory run: a fixed part (800 MiB with MLM, 1,200 MiB with
 MLMM or FarmCPU) plus 50 bytes per genotype call, plus more for subsampling with several workers
@@ -63,10 +72,10 @@ memory limit (for example `docker run --memory 4g`), it is what the limit leaves
 
 ## Where the table file goes, and disk space
 
-The table file needs about one byte per genotype call: 1.1 GB for 1,000 samples and 1 million
-SNPs. While a plain-text VCF is read, a cleaned copy of it is kept next to the table file, so the
-disk also needs the VCF's size once more for that time. TRACE checks the free space on that drive
-before reading and stops with a clear message if it is short.
+The table file needs one byte per genotype call. While a plain-text VCF is read, a cleaned copy
+of it is kept next to the table file, so the disk also needs the VCF's size once more for that
+time. TRACE checks the free space on that drive before reading and stops with a clear message if
+it is short.
 
 Each run makes its own new folder for the file, named `_trace_geno_store_<process>_<random>`:
 
@@ -90,14 +99,18 @@ did not make in this run, since another run may still be using it.
 
 ## How long large runs take
 
-With the table on disk, the steps read the table file many times (51 GB of reads for the three
-models at 996 x 1,070,795), but in pieces of at most 8,192 SNPs, so the time is about that of the
-in-memory steps. Two steps grow with the number of SNPs in ways worth knowing:
+With the table on disk, the steps read the table file many times (44.9 GB of reads for the GWAS
+page's three models on the simulated panel, on a development version before 1.2.0, 17 November
+2026), but in pieces of at most 8,192 SNPs, so the time is about that of the in-memory steps. Two
+steps grow with the number of SNPs in ways worth knowing:
 
-* **LD-block detection** works around every seed SNP (the significant SNPs, at least the top
-  `--ld-top-n`): at 996 x 1,070,795 it took 23 minutes for 1,073 seed SNPs. `--ld-seed-mode`
-  and a lower `--ld-top-n` give fewer seeds.
-* **Per-SNP box plots** take about 5 minutes at that size; `--snp-plots none` skips them.
+* **LD-block detection** works around every seed SNP (by default the SNPs with p below
+  `--ld-seed-p`, and at least the top `--ld-top-n`). On the rice run (version 1.2.0) it took
+  67 minutes for 4,736 seed SNPs. On the simulated panel it took 23 minutes for 1,073 seed SNPs
+  (a development version before 1.2.0, 12 November 2026). `--ld-seed-mode`, a lower
+  `--ld-seed-p` and a lower `--ld-top-n` give fewer seeds.
+* **Per-SNP box plots**: on the rice run (version 1.2.0) the step took 72 seconds, with 3,744
+  significant SNPs. `--snp-plots none` leaves the plots out.
 
 MLMM scans the whole genome once per forward step, so it takes several times as long as MLM.
 Subsampling with the table on disk runs its replicates one after another, with the results of a
@@ -107,7 +120,8 @@ parallel run (each replicate uses the thread count a parallel worker would have)
 
 The results are byte-identical between the two modes at the same number of threads of the
 linear-algebra library (OpenBLAS or MKL). Between thread counts, the last digits of some p-values
-change (by about 1 part in 10 million; no significance call changed in our tests), and with
+change (in our tests on a development version before 1.2.0, 11 November 2026: at most 5.1e-7 of
+the p-value between 1 and 12 threads, and no significance call changed), and with
 `--boot-jobs` above 1 the subsampling results depend on the threads of each worker: the thread
 count you set (for example `OPENBLAS_NUM_THREADS`) or, if you set none, cores / workers. Every
 run records the libraries and their versions (numpy and scipy each bring their own, so both are
@@ -130,9 +144,9 @@ keeps its table on disk.
 **Opening a big VCF.** Next to the upload box, the GWAS page has a box "Or type the VCF's location
 on this computer". It takes a `.vcf` or `.vcf.gz` file on the computer that runs TRACE, checks
 that it exists and can be read, and shows its size. Nothing is uploaded or copied: TRACE reads the
-file where it is. The upload box takes files up to 2 GB; an upload is held in the server's memory
-while it arrives (twice at its end), before TRACE can check anything, so bigger files should go
-through the location box. An uploaded file is written once to the work folder (below) and read
+file where it is. The upload box takes files up to 2,048 MiB; an upload is held in the server's
+memory while it arrives (twice at its end), before TRACE can check anything, so bigger files
+should go through the location box. An uploaded file is written once to the work folder (below) and read
 from there; TRACE then removes the server's copy of the upload from memory and empties the upload
 box. A copy that fails (a full disk, for one) leaves nothing in the work folder, and the page says
 why. It is not tried again on every rerun, only when you upload the file again or choose another
@@ -164,9 +178,9 @@ settings, and, for each SVG download, a headless Chrome that kaleido starts. So 
 and One-Click's add to the CLI's estimate 600 MiB, 8 bytes per genotype call, 512 bytes per pair
 of samples, and 750 MiB plus 2.4 KiB per SNP (up to 500,000 SNPs) for Chrome. The basis is the
 GUI's measured peak (the whole process tree, with every cache full, three models, subsampling
-and SVG exports), which lies at least 14% below this estimate: 1,493 MiB against 2,554 MiB for
-the first example, 2,633 against 3,078 for tomato (166 samples x 44,317 SNPs), and 4,445 against
-6,043 for 1,000 samples x 50,000 SNPs. Automatic chooses by this estimate and the page shows it;
+and SVG exports, on a development version before 1.2.0, 16 November 2026), which lies at least
+14% below this estimate: 1,493 MiB against 2,554 MiB for the first example, 2,633 against 3,078
+for tomato (166 samples x 44,317 SNPs), and 4,445 against 6,043 for 1,000 samples x 50,000 SNPs. Automatic chooses by this estimate and the page shows it;
 `run_metadata.json` records the CLI's, so the metadata is the same whichever program ran.
 Chrome is always counted, which is cautious on a server without Chrome (the page then offers
 HTML downloads only).
@@ -239,10 +253,10 @@ must then be uploaded again.
 the others, in genome order, with k the smallest whole number that keeps the drawing at 500,000
 points or fewer. A caption under the figure says so ("N of M SNPs drawn: ..."). The static
 Manhattan and the results table keep every SNP. The reason is the browser: Streamlit sends a
-figure in one message, of at most 200 MB by default, and at 1,070,795 SNPs the full figure was
-157 MB; the thinned one is 53 MB, and a figure at the limit 73 MB. Below the limit nothing
-changes. The cross-model "Overlay Manhattan by model" is thinned when the points of all its
-models together are more than 500,000 (three models of 200,000 SNPs are 600,000 points): within
+figure in one message, of at most 200 MB by default. At 1,070,795 SNPs the full figure was
+147 MB as an HTML file and the thinned one, with 364,818 points, 53 MB (a development version
+before 1.2.0, 17 November 2026). Below the limit nothing changes. The cross-model "Overlay
+Manhattan by model" is thinned when the points of all its models together are more than 500,000 (three models of 200,000 SNPs are 600,000 points): within
 each model it draws every SNP with p ≤ 0.01 and one in k of the others, with the same k for every
 model, so every region shows each model's points alike. Its caption counts points ("N of M points
 drawn (S SNPs x 3 models): ...").
