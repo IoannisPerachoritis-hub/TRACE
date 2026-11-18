@@ -475,11 +475,6 @@ def main(argv=None):
     cb.ax.tick_params(labelsize=FS_TEXT - 1, length=2, width=0.6)
     cax.set_title(r"pairwise $\mathit{r}^2$", fontsize=FS_TEXT, pad=3)
     panel_title(ax, "(C) Pairwise LD in the window", dy_mm=0.5)
-    heat_note = (f"Heatmap (C): {n:,} of the window's\n{len(ids):,} SNPs, evenly by index,\n"
-                 f"keeping {a.snp} and the\nblock's end SNPs. Missing calls\n"
-                 f"filled with the SNP mean, on the\n{len(tested):,} tested accessions.")
-    fig.text((X_E - 0.30 * W_E) / FIG_W, 1 - (y_e + H_E + 14.0) / FIG_H, heat_note,
-             fontsize=FS_TEXT - 1.5, color="#333333", ha="left", va="top")
 
     # ---------------------------------------------------------------- (D) genes
     ax = axes(L, y_d, W_L, H_D)
@@ -538,9 +533,8 @@ def main(argv=None):
     classic(ax)
     ax.text(-0.30, 1.0 + 18.0 / H_E, f"(E) {a.trait_label.split(' (')[0]}\nat {a.snp}",
             transform=ax.transAxes, fontsize=FS_TITLE, fontweight="bold", ha="left", va="bottom")
-    ax.text(-0.30, 1.0 + 1.5 / H_E, "the top SNP of the MLM scan\n(not the block's lead SNP)\n"
-            f"MLM p = {fmt_p(mark_p)}\nmissing calls: {n_missing:,}",
-            transform=ax.transAxes, fontsize=FS_TEXT - 1, ha="left", va="bottom")
+    ax.text(-0.30, 1.0 + 17.0 / H_E, f"MLM p = {fmt_p(mark_p)}\nmissing calls: {n_missing:,}",
+            transform=ax.transAxes, fontsize=FS_TEXT - 1, ha="left", va="top")
 
     png = a.out_dir / "rice_gs3_figure.png"
     pdf = a.out_dir / "rice_gs3_figure.pdf"
