@@ -71,7 +71,7 @@ before reading and stops with a clear message if it is short.
 Each run makes its own new folder for the file, named `_trace_geno_store_<process>_<random>`:
 
 * inside the `--output` folder by default (a folder you can already write to, also under Docker
-  with the README's bind mount and user setting);
+  with the bind mount and user setting of the Docker command in [Installation](installation.md));
 * inside `--geno-store-dir` when you give it, for example a faster or larger drive. The folder is
   created if it is missing; if it cannot be created or written to, the run stops before reading.
 
@@ -117,11 +117,13 @@ To reproduce a run exactly, set the same thread count, for example `OPENBLAS_NUM
 
 ## Docker
 
-The default folder for the table file is inside `--output`, so the README's bind mount (and
-`--user "$(id -u):$(id -g)"` on Linux) gives TRACE a folder it can write. A Docker named volume
-works if the user TRACE runs as can write to it; a new volume is owned by root, so TRACE's image
-user cannot write there unless you give the volume to that user. A container memory limit is read
-by `auto`: a run that does not fit under the limit keeps its table on disk.
+The default folder for the table file is inside `--output`, so the bind mount of the Docker
+command in [Installation](installation.md), with Docker's `--user "$(id -u):$(id -g)"` on Linux,
+gives TRACE a folder it can write. A Docker named volume works if the user TRACE runs as can write to it. A
+new volume is owned by root, so TRACE's image user cannot write there unless you give the volume
+to that user ([Troubleshooting](troubleshooting.md#docker-trace-cannot-write-to-a-named-volume)
+shows how). A container memory limit is read by `auto`: a run that does not fit under the limit
+keeps its table on disk.
 
 ## In the GUI
 

@@ -14,7 +14,7 @@ README + docs/ points at a file that exists.
 Exemptions (documented, deliberate):
   * ``--help`` / ``-h`` (argparse-provided).
   * Flags on a line that invokes a third-party tool (docker / pip / apt-get /
-    useradd / streamlit / uv / conda / ...) -- those are that tool's flags shown
+    useradd / streamlit / uv / conda / plink / ...) -- those are that tool's flags shown
     in an install/run example, not trace-gwas flags. The trace-gwas flag
     documentation (parity table, help prose) never lives on such lines.
   * Flags on a line that names one of the repository's helper scripts with options of its
@@ -45,7 +45,7 @@ _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 _THIRD_PARTY = (
     "docker", "pip install", "pip3", "apt-get", "apt ", "useradd",
     "streamlit run", "uv pip", "uv venv", "uv ", "python -m pip",
-    "conda", "chmod", "chown", "gunicorn", "run ", "--no-cache-dir",
+    "conda", "chmod", "chown", "gunicorn", "run ", "--no-cache-dir", "plink",
 )
 # Lines naming one of the repository's helper scripts -> that script's own options are exempt.
 _REPO_SCRIPTS = ("compare_result_zips",)

@@ -1,42 +1,36 @@
-# TRACE Quick-Start Tutorial
+# TRACE tutorial
 
-This tutorial takes you end-to-end on a small synthetic example, first from the
-**command line**, then through the **web app**, so you can verify your TRACE
-installation and learn both interfaces in a few minutes.
+This tutorial runs TRACE on the small example that comes with it, first from the command line and
+then in the GUI. It ends with the four steps from GWAS hits to candidate genes, on the same
+example. It takes a few minutes.
 
-## The example dataset
+## The example
 
-The example ships in the repository:
+The example is in the repository:
 
-- `examples/example.vcf.gz`: 100 inbred lines and 600 SNPs across 3 chromosomes.
-  The lines are mosaics of four founder haplotypes, so neighbouring SNPs are in
-  linkage disequilibrium (LD) and LD decays with distance.
-- `examples/example_pheno.csv`: two traits: `Trait1` carries one QTL,
-  `chr02_1010000` (h² ≈ 0.3), inside an LD block on chromosome 2; `Trait2` is pure
-  noise.
+- `examples/example.vcf.gz`: 100 inbred lines and 600 SNPs on 3 chromosomes. The lines are
+  mosaics of four founder haplotypes, so neighbouring SNPs are in linkage disequilibrium (LD) and
+  LD decays with distance.
+- `examples/example_pheno.csv`: two traits. `Trait1` has one QTL, `chr02_1010000` (h² about 0.3),
+  inside an LD block on chromosome 2. `Trait2` is noise.
 
-It is byte-reproducible: `examples/simulate_example.py` regenerates it
-deterministically (seed 42), so a fresh clone and a re-run produce identical
-files. The MLM run below takes about 7 seconds, and about 13 with all three
-models.
+`examples/simulate_example.py` makes the same files again (seed 42), so a fresh clone gives
+identical files. A run with MLM takes about 7 seconds, and about 13 with all three models.
 
----
+## Part A: the command line
 
-## Part A: Command line
-
-### 1. One-shot reproducible run
+### 1. One command
 
 ```bash
 bash examples/run_example.sh
 ```
 
-That script (1) runs `simulate_example.py` to write `example.vcf.gz` and
-`example_pheno.csv`, then (2) runs the TRACE MLM pipeline on `Trait1` and writes
-a results ZIP to `examples/output/`.
+The script writes the example files with `simulate_example.py`, then runs TRACE's MLM on `Trait1`
+and writes a results ZIP to `examples/output/`.
 
-### 2. Manual CLI invocation
+### 2. Your own options
 
-Call the CLI directly to try a different model or options:
+Call the CLI yourself to try other models or options:
 
 ```bash
 trace-gwas \
@@ -47,80 +41,72 @@ trace-gwas \
   --model mlm
 ```
 
-**What you should see.** At the defaults (MLM, Bonferroni), `Trait1`'s significant
-SNPs all lie on chromosome 2 within 60 kb of the QTL. TRACE finds one LD block there
-(960,000–1,070,000 bp), tests its haplotypes (`Hap_PValue` in
-`tables/LD_blocks_annotated_MLM.csv`) and draws its LD heatmap
-(`figures/LD_heatmap_Chr2_960000_1070000.png`). `Trait2` has no significant SNP.
+**What you see.** At the defaults (MLM, Bonferroni), the significant SNPs of `Trait1` all lie on
+chromosome 2 within 60 kb of the QTL. TRACE finds one LD block there (960,000 to 1,070,000 bp),
+tests its haplotypes (`Hap_PValue` in `tables/LD_blocks_annotated_MLM.csv`) and draws its LD
+heatmap (`figures/LD_heatmap_Chr2_960000_1070000.png`). `Trait2` has no significant SNP.
 
-If you have not installed the package (`pip install -e .`), use
-`python cli.py` in place of `trace-gwas`. Run `trace-gwas --help`, or see
-[`docs/cli_reference.md`](cli_reference.md), for the complete list of options.
+Without the installed package (`pip install -e .`), use `python cli.py` in place of
+`trace-gwas`. `trace-gwas --help` and the [CLI reference](cli_reference.md) list every option.
 
-### Key CLI options
+### Main options
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--vcf` | Input VCF (bgzipped or plain) | Required |
-| `--pheno` | Phenotype CSV (SampleID + trait columns) | Required |
-| `--trait` | Trait column name(s); several run one after another | Required |
-| `--output` | Output directory | Required |
-| `--model` | Model(s) to run, space-separated (`mlm`, `mlmm`, `farmcpu`) | `mlm` |
-| `--n-pcs` | Number of principal components (fixed; the run report includes PC-selection diagnostics) | 0 |
-| `--maf` | Minor-allele-frequency filter | 0.05 |
-| `--miss` | Maximum per-SNP missingness | 0.10 |
-| `--sig-thresh` | Significance rule: `meff`, `bonferroni`, `fdr`, or a numeric p-value (e.g. `5e-8`) | `bonferroni` |
-| `--seed` | RNG seed for subsampling (haplotype permutations are seeded per block from its position and the trait) | 42 |
-| `--subsampling` | Enable subsampling stability analysis | Off |
-| `--export-qc` | Export QC'd matrices for external tools | Off |
-| `--no-plots` | Skip plot generation | Off |
-| `--no-annotation` | Skip gene annotation | Off |
+| Option | What it sets | Default |
+|---|---|---|
+| `--vcf` | the VCF, plain or compressed | required |
+| `--pheno` | the phenotype table (sample IDs, then traits) | required |
+| `--trait` | the trait or traits, run one after another | required |
+| `--output` | the folder for the results | required |
+| `--model` | the models (`mlm`, `mlmm`, `farmcpu`) | `mlm` |
+| `--n-pcs` | the number of PCs (a fixed count, with diagnostics in the report) | 0 |
+| `--maf` | the lowest minor allele frequency | 0.05 |
+| `--miss` | the highest missing rate per SNP | 0.10 |
+| `--sig-thresh` | the significance rule: `bonferroni`, `meff`, `fdr` or a p-value such as `5e-8` | `bonferroni` |
+| `--seed` | the seed of the subsampling (haplotype permutations are seeded per block from its position and the trait) | 42 |
+| `--subsampling` | the subsampling stability analysis | off |
+| `--export-qc` | the QC data for other tools | off |
+| `--no-plots` | skip the plots | off |
+| `--no-annotation` | skip the gene annotation | off |
 
-### Output files
+### The results ZIP
 
-The pipeline writes a ZIP containing:
+- `tables/GWAS_<trait>.csv`: the full GWAS table.
+- `tables/CrossModel_Consensus.csv`: each significant SNP with the models that detect it (with two
+  or more models).
+- `tables/LD_blocks_annotated_<model>.csv`: the LD blocks, with their genes and haplotype tests.
+- `figures/`: Manhattan and QQ plots, LD heatmaps.
+- `report.html`: one HTML report of the run.
 
-- `tables/GWAS_<trait>.csv`: full GWAS results table
-- `tables/CrossModel_Consensus.csv`: per-SNP detection across MLM/MLMM/FarmCPU (when multiple models are run)
-- `tables/LD_blocks_annotated_<model>.csv`: LD blocks with gene annotations and haplotype statistics (when significant LD blocks are detected)
-- `figures/`: Manhattan plots, QQ plots, LD heatmaps
-- `report.html`: self-contained HTML analysis report
+The Help & Reference page of the GUI explains every column. [Outputs](outputs.md) describes the
+files that the Post-GWAS tabs write.
 
-The columns of these tables are described in the CSV Column Glossary on the app's **Help & Reference** page. See [`docs/outputs.md`](outputs.md) for the additional post-GWAS CSVs written by the LD, haplotype and regional-plot tabs.
+## Part B: the GUI
 
----
-
-## Part B: Web app (Streamlit)
-
-The web app runs the same engine as the CLI, with an interactive, guided
-workflow. Launch it:
+The GUI runs the same analysis as the CLI. Start it:
 
 ```bash
 streamlit run app.py
 ```
 
-Your browser opens the TRACE landing page. The left sidebar lists the analysis
-pages; you will visit them in the order below. (The landing page also links the
-first three directly.)
+The browser opens TRACE's start page. The sidebar lists the pages, which you visit in this order.
 
 ### Step 1: GWAS Analysis
 
-Open **GWAS Analysis** ("TRACE GWAS") in the sidebar.
+Open **GWAS Analysis** ("TRACE GWAS").
 
-1. **Upload data.** Upload the VCF (`examples/example.vcf.gz`) and the phenotype
-   CSV (`examples/example_pheno.csv`).
-2. **Review quality control.** Accept the default QC thresholds (MAF, per-SNP
-   missingness, INFO) and imputation, or adjust them. Set the number of principal
-   components used as covariates (a fixed count; TRACE does not auto-select).
-3. **Select the trait.** Pick `Trait1`.
-4. **Run.** For the standard screen, open the **One-Click Full Analysis**
-   expander and click **Run Full Analysis**: this runs MLM GWAS →
-   multi-model → LD blocks → haplotype testing → gene annotation → report. To run
-   a single model on the selected trait instead, use **Run GWAS**.
+1. Upload the VCF (`examples/example.vcf.gz`) and the phenotype file
+   (`examples/example_pheno.csv`).
+2. Keep the QC settings (MAF, missing rates, INFO) and the imputation, or change them. Set the
+   number of PCs (a fixed count: TRACE does not pick one for you).
+3. Pick the trait `Trait1`.
+4. Run. For the whole analysis, open **One-Click Full Analysis** and click **Run Full Analysis**.
+   It runs MLM, the other models, the LD blocks, the haplotype tests, the gene annotation and the
+   report. **Run GWAS** runs the detailed view of one trait instead.
 
-When the run finishes you will see the Manhattan and QQ plots, the genomic
-inflation factor (λ_GC), and the significant-SNP table, plus a button to
-download the full results ZIP, the same archive the CLI produces.
+When the run ends, the page shows the Manhattan and QQ plots, λGC and the table of significant
+SNPs, with a button for the results ZIP: the same ZIP as the CLI's.
+
+![GWAS Analysis](screenshot_gwas.png)
 
 **Covariates from the phenotype file.** Under the phenotype file, "Use columns of
 this file as covariates" adds the columns you choose to the models as covariates,
@@ -133,29 +119,88 @@ heritable trait can create or hide associations at loci that affect that trait
 
 ### Step 2: Post-GWAS Analysis
 
-Open **Post-GWAS Analysis**. It reuses the QC'd genotype matrix from your GWAS
-run (run Step 1 first). Pick a region / lead SNP in the selector at the top, then
-explore the tabs:
+Open **Post-GWAS Analysis**. It uses the GWAS run of step 1, so run that first. Pick a region or a
+lead SNP in the selector at the top, then use the tabs:
 
-- **Significant SNPs**: the complete, never-truncated significant-SNP table, with each SNP marked in-block or unblocked.
-- **Regional Plot**: a locus-zoom view: −log₁₀(p) vs position, coloured by LD (r²) to the lead SNP, with a gene track.
-- **Local LD**: the pairwise r² heatmap for the selected window; for a detected block, the block with its neighbouring SNPs.
-- **Gene Annotation**: every LD block and unblocked significant SNP, with the genes in its candidate interval (the marker before the first SNP to the marker after the last).
-- **LD Blocks & Haplotypes**: detected blocks, haplotype-based association tests, and per-block MLG summaries. Its Settings show the genome-wide LD decay (estimated by the GWAS page's Run GWAS) and the default block window it sets, by the CLI's rule: int(2 × the decay), or 300 kb when the decay cannot be estimated. The Regional Plot's default window follows the same rule.
+- **Significant SNPs**: the whole table of significant SNPs, each marked in a block or unblocked.
+- **Regional Plot**: −log₁₀(p) against position, coloured by r² with the lead SNP, with a gene
+  track.
+- **Local LD**: the r² heatmap of the window. For a detected block, the block with its
+  neighbouring SNPs.
+- **Gene Annotation**: each LD block and each unblocked significant SNP, with the genes in its
+  candidate interval (from the marker before its first SNP to the marker after its last).
+- **LD Blocks & Haplotypes**: the blocks, their haplotype tests and the haplotype groups. Its
+  Settings show the LD decay of the GWAS run and the block window it sets: twice the decay, or
+  300 kb when the decay cannot be estimated. The Regional Plot's window follows the same rule.
 
 ### Step 3: Help & Reference
 
-Open **Help & Reference** for the output-file glossary, a column glossary, and
-guidance on interpreting results for breeding decisions.
+**Help & Reference** explains the output files and their columns, and how to read the results.
 
----
+## From GWAS hits to candidate genes
+
+The four steps below take a hit to a short list of genes. On the example they take a few minutes.
+The values given are those of the example with all three models at the default settings (the
+CLI's `--model mlm mlmm farmcpu`).
+
+### 1. Find SNPs that more than one model detects
+
+In the GWAS Analysis page's sidebar, under "Additional GWAS models", add MLMM to FarmCPU, then
+click **Run GWAS**. The section **Cross-model comparison** has the table "Cross-model consensus":
+each significant SNP with the models that detect it (`CrossModel_Consensus.csv` in the ZIP).
+
+On the example, 12 SNPs on chromosome 2 are significant in at least one model. Two are found by
+two models: `chr02_1020000` (MLM and FarmCPU) and `chr02_980000` (MLM and MLMM). The QTL,
+`chr02_1010000`, lies between them and is found by MLM. A SNP just below the line (around p =
+1e-4) that other models also pick up is worth a look, as a lead to check, not a finding.
+
+### 2. Look at the region
+
+Open **Post-GWAS Analysis** and choose the lead SNP in the selector at the top. The **Regional
+Plot** shows the signal along the chromosome, each SNP coloured by its r² with the lead SNP. The
+**Local LD** tab shows how far LD extends. Set the selector to "Detected block" to see the block
+with its neighbouring SNPs. On the example, the block runs from 960,000 to 1,070,000 bp and holds
+all 12 significant SNPs.
+
+![Regional plot](screenshot_regional.png)
+
+![Local LD](screenshot_local_ld.png)
+
+### 3. Check the effect
+
+Open **LD Blocks & Haplotypes**. For a SNP inside an LD block, the haplotype test compares the
+phenotype between the block's haplotype groups, with Tukey letters, a box plot and a forest plot.
+For a single SNP, the box plot under "Lead SNP genotype effect" shows the phenotype per genotype.
+Check that each group is big enough and that no outliers drive the p-value.
+
+On the example, the block's samples form two tested haplotype groups (67 and 21 lines, with 12 lines
+in rare haplotypes are left out of the test). The test's p-value is at its floor for 1,000
+permutations (0.001), and the groups explain 27% of the variance (η² 0.27).
+
+![LD blocks and haplotype tests](screenshot_ld.png)
+
+### 4. Go to the candidate genes
+
+Open **Gene Annotation**. It takes the region of each LD block, from the marker before its first
+SNP to the marker after its last, and lists the genes in it. Fewer genes, with a clean split
+between groups, make a stronger candidate.
+
+On the example, the region is 950,000 to 1,080,000 bp on chromosome 2. Its positions are
+simulated, so the bundled tomato gene model has no gene there. With your own data and gene model,
+the genes of the region appear in this table.
+
+### Screenshots still to take
+
+Steps 1 (the Cross-model consensus table), 3 (the box plot under Lead SNP genotype effect) and 4
+(the Gene Annotation tab) have no screenshot yet. The screenshots above show the tomato data, not
+the example.
 
 ## Real datasets
 
-TRACE has been validated on:
+TRACE was tested on:
 
-1. **Tomato Varitome panel**: 165 accessions, ~44K SNPs (Pereira et al., 2021)
-2. **Pepper G2P-SOL panel**: 350 accessions, ~5K SNPs (Tripodi et al., 2021)
+1. **The tomato Varitome panel**: 165 accessions, about 44,000 SNPs (Pereira et al., 2021).
+2. **The pepper G2P-SOL panel**: 350 accessions, about 5,000 SNPs (Tripodi et al., 2021).
 
 ## Docker
 
@@ -164,6 +209,6 @@ docker build -t trace .
 docker run -p 8501:8501 trace
 ```
 
-The web interface reads your files through the browser upload, so it needs no mount. Do not mount a folder over
-`/app` or `/app/data`: that hides the application or its bundled gene models. For a headless CLI run, see
-[Getting started](../README.md#getting-started) in the README.
+The GUI reads your files through the browser upload, so it needs no mount. Do not mount a folder
+over `/app` or `/app/data`: that hides TRACE or its bundled gene models. For the CLI in Docker, see
+[Installation](installation.md#docker-nothing-else-to-install).

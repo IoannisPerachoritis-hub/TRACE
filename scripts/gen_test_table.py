@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate the test-suite summary table in ``README.md``.
+"""Generate the test-suite summary table in ``docs/development.md``.
 
-The table between the ``BEGIN/END GENERATED: test-table`` markers in ``README.md``
+The table between the ``BEGIN/END GENERATED: test-table`` markers in ``docs/development.md``
 is auto-generated from the live suite -- **do not edit it by hand**. Re-run::
 
     python -m pytest tests/ --cov=gwas --cov=utils --cov-report=xml -q   # -> coverage.xml
@@ -17,7 +17,7 @@ Hard rule: a collected test file that is not mapped in ``AREAS`` makes this
 script exit non-zero and names the file. Silently dropping a file is exactly
 what let the hand-maintained table drift (378 rows vs a 739-test suite).
 
-Only the content between the two README markers is rewritten; the rest of the
+Only the content between the two markers is rewritten; the rest of the
 file is left byte-for-byte unchanged (LF endings are preserved).
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-_README = _ROOT / "README.md"
+_README = _ROOT / "docs" / "development.md"
 
 _BEGIN = "<!-- BEGIN GENERATED: test-table (scripts/gen_test_table.py -- do not edit by hand) -->"
 _END = "<!-- END GENERATED: test-table -->"
@@ -40,28 +40,31 @@ _END = "<!-- END GENERATED: test-table -->"
 #   (row label, "what it exercises", [test-file stems without the .py])
 AREAS: list[tuple[str, str, list[str]]] = [
     ("Genotype I/O & parsing", "VCF/dosage parsing, INFO scores, upload edge cases",
-        ["test_io", "test_info_scores", "test_upload_edge_cases"]),
+        ["test_io", "test_info_scores", "test_upload_edge_cases", "test_quality_field_number_a",
+         "test_duplicate_collapse_called"]),
     ("Quality control", "MAF/missingness/MAC/heterozygosity filters, per-group QC, QC report",
         ["test_qc", "test_qc_report", "test_qc_group_b", "test_qc_group_c",
          "test_qc_group_d", "test_qc_group_e"]),
     ("Imputation", "mean and LD-kNNi imputation and its cache",
         ["test_impute", "test_impute_cache"]),
     ("Phenotype QC & transforms", "normality diagnostics, transformations, embedded QC panel, applied transformations",
-        ["test_pheno_normality", "test_pheno_qc_embed_apptest", "test_pheno_transform_apply_apptest"]),
+        ["test_pheno_normality", "test_pheno_qc_embed_apptest", "test_pheno_transform_apply_apptest",
+         "test_pheno_id_blanks", "test_infinite_trait"]),
     ("Kinship (GRM / LOCO)", "VanRaden GRM and leave-one-chromosome-out kernels",
         ["test_kinship"]),
     ("Association models", "MLM / MLMM / FarmCPU scans and FarmCPU pseudo-QTN selection",
         ["test_models", "test_farmcpu_step5", "test_farmcpu_selection_guard",
          "test_mlm_per_copy", "test_mlmm_window", "test_mlmm_cofactors"]),
     ("Significance & multiple testing", "M_eff / Bonferroni / FDR / custom-threshold rules and every model's significance columns",
-        ["test_significance", "test_model_significance", "test_manhattan_tie"]),
-    ("Covariates & PC diagnostics", "user covariates and the PC eigenvalue-spectrum diagnostics",
-        ["test_covariates", "test_covar_cli_e2e", "test_pc_diagnostics", "test_covariate_drop"]),
+        ["test_significance", "test_model_significance", "test_manhattan_tie", "test_meff_exact"]),
+    ("Covariates & PC diagnostics", "user covariates, covariates from the phenotype file and the PC eigenvalue-spectrum diagnostics",
+        ["test_covariates", "test_covar_cli_e2e", "test_pc_diagnostics", "test_covariate_drop",
+         "test_covariates_from_pheno"]),
     ("LD block detection", "peak-centric LD block detection and merging",
         ["test_ld", "test_ld_merge", "test_ld_window"]),
-    ("Haplotype testing", "block haplotype effects, effect sizes, compact letter display, sample-to-haplotype assignments",
+    ("Haplotype testing", "block haplotype effects, the kinship-aware test, effect sizes, compact letter display, sample-to-haplotype assignments",
         ["test_haplotype", "test_haplotype_effects", "test_cld", "test_haplotype_assignments",
-         "test_block_table"]),
+         "test_block_table", "test_haplotype_kinship", "test_hap_tab_eta2"]),
     ("LD triage", "coherence/haplotype triage layers, router and eta-squared comparability",
         ["test_ld_triage_layer1", "test_ld_triage_layer2", "test_ld_triage_invariants",
          "test_triage_router", "test_triage_eta2", "test_triage_cli"]),
@@ -72,7 +75,8 @@ AREAS: list[tuple[str, str, list[str]]] = [
         ["test_regional_plot", "test_regional_tab_apptest", "test_ld_block_heatmap", "test_snpview",
          "test_snpplots", "test_plotting_stats", "test_views", "test_snp_boxplot_haplotypes",
          "test_snp_boxplot_haplotypes_cli", "test_snp_boxplot_haplotypes_apptest",
-         "test_lead_snp_plot_data", "test_hap_boxplot"]),
+         "test_lead_snp_plot_data", "test_hap_boxplot", "test_regional_gene_track", "test_snpview_collapse",
+         "test_manhattan_thinning"]),
     ("Gene annotation", "LD-block gene annotation, gene-model summaries and resolution",
         ["test_annotation", "test_gene_model_summary", "test_gene_model_resolution",
          "test_gene_files", "test_gff3"]),
@@ -82,21 +86,30 @@ AREAS: list[tuple[str, str, list[str]]] = [
         ["test_reports", "test_report_sections"]),
     ("Command-line interface", "CLI parsing, end-to-end and multi-trait runs, doc-to-parser flag parity",
         ["test_cli", "test_cli_e2e", "test_multitrait_cli", "test_doc_flag_parity", "test_example_blocks", "test_zip_patterns",
-         "test_numeric_sig_thresh_cli"]),
+         "test_numeric_sig_thresh_cli", "test_cli_phenotype_stop", "test_cli_warnings_logged", "test_seed_help"]),
     ("Web UI (Streamlit)", "app-test coverage of the GWAS, Post-GWAS, help and landing pages",
         ["test_gwas_analysis_apptest", "test_help_page_apptest", "test_zz_app_landing_apptest",
          "test_local_ld_star_apptest", "test_block_tables_apptest",
          "test_hap_sample_alignment_apptest", "test_one_click_multitrait_apptest",
          "test_ld_heatmap_same_window_apptest", "test_detailed_view_significance_apptest",
          "test_post_gwas_fdr_apptest", "test_haplotype_assignments_apptest",
-         "test_plot_display_guard", "test_show_plot", "test_tab_settings_panel"]),
+         "test_plot_display_guard", "test_show_plot", "test_tab_settings_panel",
+         "test_gui_cache_keys", "test_gui_clear", "test_gui_inputs", "test_gui_messages",
+         "test_gui_run_keys", "test_guigwas", "test_guipost", "test_guitable",
+         "test_post_gwas_haplotype_key", "test_post_gwas_r2_key", "test_post_gwas_run_identity"]),
+    ("Large datasets (genotype table on disk)", "the table file, its ingest and reads, the memory plan, the models and the Post-GWAS steps on disk, memory and disk giving the same results",
+        ["test_genostore", "test_genostore_ingest", "test_storepipe", "test_storeplan",
+         "test_store_models", "test_store_post_gwas", "test_store_shared_use",
+         "test_slow_store_equivalence", "test_cli_geno_store", "test_compare_result_zips",
+         "test_post_gwas_closed_reads"]),
     ("Pipeline integration", "end-to-end GWAS pipeline and stage wiring",
         ["test_gwas_integration", "test_pipeline_stages", "test_trait_pipeline"]),
     ("Golden regression & pinned defaults", "byte-stable golden fixtures, the golden lock, and pinned signatures/defaults",
         ["test_golden_harness", "test_golden_blocks", "test_golden_published",
-         "test_golden_lock", "test_defaults_pinned"]),
-    ("Calibration & reproducibility", "null-phenotype calibration and LOCO reproducibility",
-        ["test_null_calibration", "test_loco_reproducibility"]),
+         "test_golden_lock", "test_defaults_pinned", "test_golden_qc_copy"]),
+    ("Calibration & reproducibility", "null-phenotype calibration, LOCO reproducibility and the thread counts",
+        ["test_null_calibration", "test_loco_reproducibility", "test_thread_provenance",
+         "test_subsampling_worker_threads", "test_gui_thread_limits"]),
     ("Utilities", "shared helpers and the data behind the GUI's figures",
         ["test_utils", "test_plot_data", "test_offline_html"]),
 ]
