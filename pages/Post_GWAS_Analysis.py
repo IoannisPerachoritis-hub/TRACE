@@ -13,7 +13,7 @@ from gwas.ld import filter_contained_blocks
 from gwas.utils import canonicalize_chr, align_pheno_to_geno, resolve_trait_column, check_data_version
 from pages._ld_tabs import LDContext
 from pages._ld_tabs._decay import decay_run_label
-from gwas.windows import ld_window_kb
+from gwas.windows import block_window_kb, ld_window_kb
 from pages._ld_tabs import tab_local_ld
 from pages._ld_tabs import tab_gene_annotation
 from pages._ld_tabs import tab_genome_wide
@@ -427,7 +427,7 @@ def ld_analysis_page():
                 geno_imputed=geno_ld_masked,
                 sid=sid,
                 ld_threshold=0.6,
-                flank_kb=ld_window_kb(ld_decay_kb),   # the CLI's rule: int(2 x decay)
+                flank_kb=block_window_kb(ld_decay_kb),   # the CLI's block window: 2 x int(2 x decay)
                 min_snps=2,
                 top_n=10,
                 sig_thresh=1e-5,

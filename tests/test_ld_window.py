@@ -1,5 +1,6 @@
 """gwas.windows.ld_window_kb: the LD window by the CLI's rule, int(2 x the median LD decay), or
-300 kb without an estimate. Every default window, in the CLI and the GUI, uses it."""
+300 kb without an estimate. In the CLI and the GUI it sets the edge flank, MLMM's cofactor window
+and the plot windows. Default block detection uses gwas.windows.block_window_kb, twice it."""
 import json
 import math
 from pathlib import Path
@@ -42,17 +43,17 @@ def _src(rel):
 
 
 def test_every_default_window_uses_the_rule():
-    """The CLI's two branches, the GWAS page's run, Post-GWAS's auto-built blocks, the
-    Settings default and the Regional Plot's window all call ld_window_kb; no limits
-    or assumed decay remain."""
+    """The CLI's two branches, the GWAS page's run (MLMM's cofactor window) and the Regional
+    Plot's window call ld_window_kb; Post-GWAS's auto-built blocks and the Settings default
+    call block_window_kb, twice it. No limits or assumed decay remain."""
     pipe = _src("gwas/pipeline.py")
     assert "ld_flank_kb = ld_window_kb(ld_decay_kb)" in pipe
     assert "ld_flank_kb = ld_window_kb(None)" in pipe
     assert "flank_kb = ld_window_kb(ld_decay_kb)" in _src("pages/GWAS_analysis.py")
     post = _src("pages/Post_GWAS_Analysis.py")
-    assert "flank_kb=ld_window_kb(ld_decay_kb)" in post
+    assert "flank_kb=block_window_kb(ld_decay_kb)" in post
     assert "ld_decay_kb * 2" not in post and '"ld_decay_kb", 200.0' not in post
     tab = _src("pages/_ld_tabs/tab_genome_wide.py")
-    assert "flank_kb_default = ld_window_kb(ctx.ld_decay_kb)" in tab
+    assert "flank_kb_default = block_window_kb(ctx.ld_decay_kb)" in tab
     assert "np.clip(float(ld_decay_kb) * 2, 200, 2000)" not in tab
     assert "ld_window_kb(ctx.ld_decay_kb)" in _src("pages/_ld_tabs/_window.py")

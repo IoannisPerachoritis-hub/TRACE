@@ -600,7 +600,7 @@ def _run_trait(parsed, pheno, args):
     #    cofactor window; the estimate needs only the genotypes) ──
     _stagelog.mark("S19_ld_decay")
     import gwas.ld as ld
-    from gwas.windows import ld_window_kb
+    from gwas.windows import block_window_kb, ld_window_kb
     ld_flank_kb = args.ld_flank_kb
     ld_decay_kb = None
     ld_blocks_mlm = None  # track MLM blocks for subsampling aggregation
@@ -643,10 +643,15 @@ def _run_trait(parsed, pheno, args):
             # (an upper bound). Display/logging only; ld_decay_kb / flank unchanged.
             _cens = (f" ({_ld_decay_n_censored} of {len(ld_distances)} chromosomes "
                      f"grid-limited <= floor)") if _ld_decay_n_censored else ""
-            log.info("  LD decay ~ %.0f kb -> flank = %d kb%s", ld_decay_kb, ld_flank_kb, _cens)
+            log.info("  LD decay ~ %.0f kb -> LD window = %d kb (MLMM's cofactor window, the "
+                     "candidate-interval edge flank), block window = %d kb%s",
+                     ld_decay_kb, ld_flank_kb, block_window_kb(ld_decay_kb), _cens)
         else:
             ld_flank_kb = ld_window_kb(None)            # 300 kb
             log.warning("  Could not estimate LD decay; using 300 kb")
+    # the default LD-block window: twice the LD window (gwas.windows.block_window_kb), or
+    # 300 kb without an estimate; a --ld-flank-kb value is used as given, for blocks and MLMM
+    ld_block_flank_kb = block_window_kb(ld_decay_kb) if args.ld_flank_kb is None else args.ld_flank_kb
 
     _stagelog.mark("S20_mlmm")
     if "mlmm" in args.model and gwas_df is not None:
@@ -893,7 +898,7 @@ def _run_trait(parsed, pheno, args):
             m_ld_blocks = ld.find_ld_clusters_genomewide(
                 gwas_df=model_df, chroms=chroms, positions=positions,
                 geno_imputed=_geno_float, sid=sid,
-                ld_threshold=args.ld_r2, flank_kb=ld_flank_kb,
+                ld_threshold=args.ld_r2, flank_kb=ld_block_flank_kb,
                 ld_decay_kb=ld_decay_kb, min_snps=2,
                 top_n=_ld_seed_top_n, sig_thresh=_ld_seed_thresh,
                 ld_merge_r2=args.ld_merge_r2,
@@ -1461,6 +1466,7 @@ def _run_trait(parsed, pheno, args):
         "LD decay (kb)": round(ld_decay_kb, 1) if ld_decay_kb else "N/A",
         "LD decay grid-limited (n_chr)": _ld_decay_n_censored,
         "LD flank (kb)": ld_flank_kb if ld_flank_kb else "N/A",
+        "LD block window (kb)": ld_block_flank_kb if ld_block_flank_kb else "N/A",
         "LD_r2 (--ld-r2)": args.ld_r2,
         "LD_seed_p (effective)": _ld_seed_thresh,
         "LD_top_n (effective)": _ld_seed_top_n,

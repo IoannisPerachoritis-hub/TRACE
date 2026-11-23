@@ -132,7 +132,8 @@ LD & post-GWAS:
   --ld-r2 LD_R2         LD r^2 threshold for block detection (default: 0.6)
   --ld-flank-kb LD_FLANK_KB
                         LD flank window in kb, also MLMM's cofactor window
-                        (default: auto, 2 x the LD decay, or 300 kb)
+                        (default: auto: blocks 4 x the LD decay, MLMM 2 x the
+                        LD decay, or 300 kb)
   --ld-seed-mode {suggestive,significant}
                         LD-block seed SNPs (mirrors the GUI): 'suggestive'
                         (default) = the --ld-seed-p threshold plus the --ld-

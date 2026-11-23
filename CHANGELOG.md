@@ -92,6 +92,7 @@ All notable changes to TRACE are documented in this file.
   (checked on 469 tables at block sizes from 1 to 4,096) with far less memory.
 
 ### Changed
+- **The default LD-block window is 4 × the LD decay** (was 2 ×), or 300 kb without an estimate.
 - **LD-block detection keeps the r2 matrices of its last eight windows only.** It kept every
   window it had computed, which at a million SNPs grew past the size of the genotype table. A
   window that comes back is recomputed, with the same result; no output changes.

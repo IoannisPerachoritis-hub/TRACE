@@ -21,7 +21,7 @@ from gwas.ld import (
 )
 from . import LDContext
 from ._decay import decay_run_label
-from gwas.windows import ld_window_kb
+from gwas.windows import block_window_kb
 
 
 def _hash_df(df: pd.DataFrame) -> str:
@@ -383,15 +383,15 @@ def _kb(v):
 
 def ld_decay_line(ld_decay_kb, run):
     """The Settings panel's line on the LD decay behind the window's default, naming the
-    run it comes from (decay_run_label): the window is int(2 x decay) by the CLI's rule
-    (gwas.windows.ld_window_kb), or 300 kb without an estimate, when blocks are detected
-    without a decay value, as in the CLI."""
+    run it comes from (decay_run_label): the window is 2 x int(2 x decay), twice the LD
+    window, by the CLI's rule (gwas.windows.block_window_kb), or 300 kb without an
+    estimate, when blocks are detected without a decay value, as in the CLI."""
     if ld_decay_kb is None:
         return (f"LD decay: no estimate from {run}, so the window is "
-                f"{ld_window_kb(None)} kb, as in the CLI, and blocks are detected without "
+                f"{block_window_kb(None)} kb, as in the CLI, and blocks are detected without "
                 "a decay value.")
     return (f"LD decay (median across chromosomes, from {run}): {_kb(ld_decay_kb)} kb, "
-            f"so the window is {ld_window_kb(ld_decay_kb)} kb.")
+            f"so the window is {block_window_kb(ld_decay_kb)} kb.")
 
 
 def _render_ld_decay_curve():
@@ -467,10 +467,10 @@ def _render_settings(ctx):
             value=10,
             step=1,
         )
-        # the CLI's rule (gwas.windows.ld_window_kb): int(2 x decay), or 300 kb without an
-        # estimate; the input's range always holds it (2 x decay <= 10000: the decay
-        # estimate reaches at most 5000 kb)
-        flank_kb_default = ld_window_kb(ctx.ld_decay_kb)
+        # the CLI's default block window (gwas.windows.block_window_kb): 2 x int(2 x decay),
+        # twice the LD window, or 300 kb without an estimate; the input's range always holds
+        # it (max_value is at least the default)
+        flank_kb_default = block_window_kb(ctx.ld_decay_kb)
         flank_kb_auto = st.number_input(
             "LD window around each lead SNP (kb)",
             min_value=0.0,
@@ -481,8 +481,8 @@ def _render_settings(ctx):
                 "Physical distance (in kb) to extend around each seed SNP. After the "
                 "disjoint-block redesign it bounds how far one block can extend from "
                 "its seed; clusters that do not contain the seed are discarded. The "
-                "default is 2× the measured LD decay distance, as in the CLI "
-                "(300 kb when the decay could not be estimated)."
+                "default is 4× the measured LD decay distance (twice the LD window), as in "
+                "the CLI (300 kb when the decay could not be estimated)."
             ),
         )
         # the LD decay behind the default, estimated by the run the page shows (not

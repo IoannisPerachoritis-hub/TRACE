@@ -130,8 +130,8 @@ lead SNP in the selector at the top, then use the tabs:
 - **Gene Annotation**: each LD block and each unblocked significant SNP, with the genes in its
   candidate interval (from the marker before its first SNP to the marker after its last).
 - **LD Blocks & Haplotypes**: the blocks, their haplotype tests and the haplotype groups. Its
-  Settings show the LD decay of the GWAS run and the block window it sets: twice the decay, or
-  300 kb when the decay cannot be estimated. The Regional Plot's window follows the same rule.
+  Settings show the LD decay of the GWAS run and the block window it sets: four times the
+  decay, or 300 kb when the decay cannot be estimated. The Regional Plot keeps twice the decay.
 
 ### Step 3: Help & Reference
 

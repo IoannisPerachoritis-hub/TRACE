@@ -27,6 +27,7 @@ from statsmodels.stats.multitest import multipletests
 
 import gwas.pipeline as pl
 import gwas.plotting as gp
+import gwas.windows as gw
 from annotation import canon_chr
 from gwas.io import load_vcf_cached
 from tests import _multitrait_data as mt
@@ -126,7 +127,9 @@ def _zip_members(res):
 def test_blocks_significant_in_mlmm_or_farmcpu_get_one_heatmap_each(planted, monkeypatch):
     # T_chr3: since MLMM conditions on its real cofactors (batch 10), T_chr1's three
     # models report three different bounds; on T_chr3 MLMM and FarmCPU share a block that
-    # MLM reports with other bounds, which is what this test needs
+    # MLM reports with other bounds, which is what this test needs. That case exists with the
+    # previous default block window (2 x the decay), so the test keeps it
+    monkeypatch.setattr(gw, "block_window_kb", gw.ld_window_kb)
     calls = _record_heatmaps(monkeypatch)
     res = _run(planted, trait="T_chr3", sig_thresh="bonferroni")
     tables = _tables(res, trait="T_chr3")

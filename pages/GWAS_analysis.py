@@ -2965,7 +2965,8 @@ if (_vcf_file_ready() and phe_file) or _has_persisted_upload():
     # ============================================================
     # 6. Genome-wide LD DECAY: accurate per-chromosome computation
     # (the CLI's function and settings; Post-GWAS shows this estimate in the LD Blocks &
-    # Haplotypes Settings, next to the window it sets: gwas.windows.ld_window_kb)
+    # Haplotypes Settings, next to the block window it sets: gwas.windows.block_window_kb;
+    # MLMM's cofactor window below is the LD window, gwas.windows.ld_window_kb)
     try:
         _manual_decay_df, _manual_summary_df, _manual_median = _gg.ld_decay(
             _table_id, geno_imputed, chroms, positions)
