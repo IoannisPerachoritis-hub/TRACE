@@ -61,6 +61,44 @@ Result: `benchmarks/table_s8.csv`. Input: `benchmarks/qc_data/tomato_locule_numb
 files of the same run are `tests/golden/tomato_locule/`, and
 `benchmarks/reconstruct_table_s8_params.py` checks the block settings.
 
+## Table S9d: run time and memory on large panels
+
+Run time is the wall time and memory the peak working set of the process tree, both measured
+from outside the run, at 12 threads with nothing else running.
+
+1. The simulated panel of the reviewer's size, command line (12 November 2026, a development
+   version before 1.2.0; 2,284.6 s, 2,405.1 MiB). The panel has 996 samples and 1,070,795 SNPs on
+   12 chromosomes of 65 Mb with mosaic LD (seed 20260923). It was made by the panel generator of
+   the scaling work, which is not in the repository. The run used a test runner that kept the
+   genotype table on disk before the CLI had `--geno-store`:
+
+   ```bash
+   OPENBLAS_NUM_THREADS=12 TRACE_STORE_FORBID_MATERIALIZE=1 TRACE_STORE_MAX_BLOCK_CELLS=20000000 \
+       python store_runner.py --vcf p996_1070795_mosaic_gz.vcf.gz \
+       --pheno p996_1070795_mosaic_gz_pheno.csv --trait SimTrait --output OUT
+   ```
+
+   With 1.2.0 the CLI keeps the table on disk itself: `trace-gwas --vcf p996_1070795_mosaic_gz.vcf.gz
+   --pheno p996_1070795_mosaic_gz_pheno.csv --trait SimTrait --geno-store disk --output OUT`.
+2. The same panel, the GWAS page's computations (17 November 2026, a development version before
+   1.2.0; 2,193.3 s, 1,928.2 MiB): the page's steps one by one with the table on disk, MLM, MLMM
+   and FarmCPU, without the post-GWAS steps. The measurement script of that work, which is not in
+   the repository, was run as
+   `python reviewer_size_run.py --vcf p996_1070795_mosaic_gz.vcf.gz --pheno p996_1070795_mosaic_gz_pheno.csv --trait SimTrait --work-dir WORK --models mlm mlmm farmcpu --out run.json`.
+3. Rice grain length, MLM (18 November 2026; 4,825.4 s, 1,671.3 MiB), on the inputs of the rice
+   section below:
+
+   ```bash
+   TRACE_STAGE_LOG=stagelog.csv trace-gwas --vcf rice_core_filtered_windows.vcf.gz \
+       --pheno rice_pheno.csv --trait GRLT --species custom --gene-model locus.gff \
+       --gene-desc rice_gene_desc.tsv --geno-store auto --geno-store-dir STORE --output p1_grlt
+   ```
+
+4. Rice grain length, MLM and FarmCPU (18 November 2026; 5,590.7 s, 1,740.6 MiB): the same
+   command with `--model mlm farmcpu` and its own output folder.
+
+Rows 3 and 4 ran the CLI through a small wrapper that checked which copy of TRACE was imported.
+
 ## Table S10: TRACE-FarmCPU and GAPIT3 FarmCPU
 
 lambda_GC, Bonferroni counts, Spearman rho and the overlap of the top 10 SNPs of the two FarmCPU
@@ -252,12 +290,81 @@ above passes with `--band-k 0`). The rice inputs are the 3K Rice Genomes Core SN
 accessions with grain length (SNP-Seek, Core v0.7) and the phenotypes of Wang et al. 2018
 (Mendeley Data, doi 10.17632/sr8zzsrpcs.1).
 
+## Rice grain length (3K-RG)
+
+The rice runs (rows 3 and 4 of Table S9d, Table S15b, Figure S10 and the null calibration) read
+files made in November 2026 from these downloads, each gunzipped first:
+
+- the 3K-RG Core SNP set v0.7 as PLINK files:
+  https://s3.amazonaws.com/3kricegenome/snpseek-dl/3krg-base-filt-core-v0.7/core_v0.7.bed.gz (and
+  `.bim.gz`, `.fam.gz`);
+- the 3K-RG Filtered SNP set v0.7:
+  https://s3.amazonaws.com/3kricegenome/snpseek-dl/3krg-base-filt-v0.7/base_filtered_v0.7.bed.gz (and
+  `.bim.gz`, `.fam.gz`);
+- the IRGSP-1.0 genome of Ensembl Plants release 63:
+  https://ftp.ensemblgenomes.ebi.ac.uk/pub/plants/release-63/fasta/oryza_sativa/dna/Oryza_sativa.IRGSP-1.0.dna.toplevel.fa.gz;
+- RAP-DB's representative gene models and annotation of 5 February 2026:
+  https://rapdb.dna.naro.go.jp/download/archive/irgsp1/IRGSP-1.0_representative_2026-02-05.tar.gz
+  (`locus.gff`) and
+  https://rapdb.dna.naro.go.jp/download/archive/irgsp1/IRGSP-1.0_representative_annotation_2026-02-05.tsv.gz;
+- grain length: Mendeley Data, doi 10.17632/sr8zzsrpcs.1 (`real_quantitative_traits.csv`), with the
+  accession table of Wang et al. 2018 (Supplementary Data, `41586_2018_63_MOESM3_ESM.xlsx`).
+
+Small scripts of that work, not in the repository, made three of the files:
+
+- `matched_samples.txt` and `rice_pheno.csv`: the 2,261 accessions with grain length, matched to
+  the 3K-RG sample IDs, with their GRLT and GRWD values;
+- `vcf2_extract_chrpos.txt`: the 442,308 SNPs of the second VCF as CHROM:POS IDs, the Core SNPs
+  outside three windows and the Filtered SNPs inside them; the windows are the gene bounds of
+  *GS3*, *GW5* and *GL7* in `locus.gff`, plus and minus 500 kb;
+- `rice_gene_desc.tsv`: the gene descriptions from the RAP-DB annotation (the first transcript of
+  each gene; the RAP-DB symbol before the CGSNL one).
+
+The plink2 commands as they were run, with the paths cut to file names:
+
+```bash
+plink2 --bfile core_v0.7 --keep matched_samples.txt --chr-set 12 --fa Oryza_sativa.IRGSP-1.0.dna.toplevel.fa \
+    --ref-from-fa --set-all-var-ids @:# --export vcf bgz id-paste=iid --threads 6 --memory 4000 \
+    --out rice_core_matched
+plink2 --bfile base_filtered_v0.7 --keep matched_samples.txt --chr-set 12 --set-all-var-ids @:# \
+    --extract vcf2_extract_chrpos.txt --fa Oryza_sativa.IRGSP-1.0.dna.toplevel.fa --ref-from-fa \
+    --export vcf bgz id-paste=iid --threads 6 --memory 4000 --out rice_core_filtered_windows
+plink2 --bfile base_filtered_v0.7 --keep matched_samples.txt --chr-set 12 --set-all-var-ids @:# \
+    --extract vcf2_extract_chrpos.txt --fa Oryza_sativa.IRGSP-1.0.dna.toplevel.fa --ref-from-fa \
+    --make-bed --threads 6 --memory 4000 --out vcf2_matched_ref
+```
+
+`rice_core_matched.vcf.gz` (404,388 SNPs) is the null calibration's input.
+`rice_core_filtered_windows.vcf.gz` (442,308 SNPs) is read by the GWAS runs of Table S9d, Figure
+S10 and the rice steps of Table S15. `vcf2_matched_ref` holds the same SNPs as PLINK files, for
+PLINK at the rice locus in Table S15.
+
+Figure S10, from the two rice runs of Table S9d (rows 3 and 4; 20 s):
+
+```bash
+python benchmarks/plots/rice_gs3_figure.py --mlm-zip P1.zip --farmcpu-zip FARMCPU.zip \
+    --vcf rice_core_filtered_windows.vcf.gz --pheno rice_pheno.csv --gff locus.gff --out-dir DIR
+```
+
+Result: `rice_gs3_figure.png` and `.pdf` in DIR.
+
+## PLINK
+
+- Table S15 used PLINK v1.9.1 64-bit (11 Nov 2026), the "Windows 64-bit" build of
+  https://www.cog-genomics.org/plink/1.9/ (`plink_win64_20261111.zip`, sha256
+  03c83d4a6bb457f2b4f0bf02d2fde821faba06aaf38cff10577d9d5c23378f14). The page replaces its builds;
+  the sha256 names this one.
+- Table S1 used PLINK v2.00a5.13 64-bit (18 Aug 2024), through `plink_qc/compare_qc.py`.
+- The rice VCFs were made with PLINK v2.0.0-b.1.4 AVX2 (7 Nov 2026), from
+  https://www.cog-genomics.org/plink/2.0/.
+
 ## The other tables and figures
 
 The simulation benchmark (Tables S2, S3, S5, S6, S7, S12 and S13, and Figures S1 to S4) and the QC
 concordance with PLINK (Table S1) are as published. Their scripts are in `simulation/` and
-`plink_qc/`, and their summary files in `simulation/sim_summary/` and `plink_qc/`. The runtime
-table (Table S9) was measured with the CLI.
+`plink_qc/`, and their summary files in `simulation/sim_summary/` and `plink_qc/`.
+`plink_qc/qc_concordance.csv` predates the corrected data of the printed Table S1. Tables S9a to
+S9c were measured with the CLI.
 
 ## Other scripts
 
