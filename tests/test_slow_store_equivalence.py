@@ -142,6 +142,11 @@ AUDIT_INPUTS = {
 
 
 def test_farmcpu_inputs_are_the_audits(tmp_path):
+    # _gen_h redraws the last column until _stride_sensitive, which depends on the BLAS, so the
+    # fingerprints hold on the audit machine only: the rule of test_stored_baseline
+    _, path = _baseline_path()
+    if not path.exists():
+        pytest.skip("the inputs depend on this machine's BLAS; the fingerprints are for the audit machine")
     seen = set()
     for name in sc.FARMCPU_CASES:
         argv = sc.farmcpu_case(name, tmp_path)

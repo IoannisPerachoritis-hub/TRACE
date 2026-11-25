@@ -233,8 +233,14 @@ class TestBlockGwasCovariates:
             p, res, tables,
             lambda s: np.column_stack([pcs_df.reindex(s).iloc[:, :2].to_numpy(float),
                                        cov_df.reindex(s).to_numpy(float)]))
+        # both sides compute the same formula; on another machine they can differ in the last
+        # digit, so the numeric statistics are compared to a relative 1e-9
         for c in _STATS:
-            assert res[c].tolist() == exp[c].tolist(), c
+            if pd.api.types.is_numeric_dtype(res[c]) and pd.api.types.is_numeric_dtype(exp[c]):
+                np.testing.assert_allclose(res[c].to_numpy(float), exp[c].to_numpy(float),
+                                           rtol=1e-9, err_msg=c)
+            else:
+                assert res[c].tolist() == exp[c].tolist(), c
         # and the covariate changes the test (it explains part of the phenotype)
         base, _ = _run_cov_panel(p, user_covar=None)
         assert not np.allclose(res["F_param"], base["F_param"])
