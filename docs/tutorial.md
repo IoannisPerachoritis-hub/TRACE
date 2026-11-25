@@ -15,7 +15,7 @@ The example is in the repository:
   inside an LD block on chromosome 2. `Trait2` is noise.
 
 `examples/simulate_example.py` makes the same files again (seed 42), so a fresh clone gives
-identical files. A run with MLM takes about 7 seconds, and about 13 with all three models.
+identical files. A run with MLM takes about 8 seconds, and about 12 with all three models.
 
 ## Part A: the command line
 
@@ -108,6 +108,8 @@ SNPs, with a button for the results ZIP: the same ZIP as the CLI's.
 
 ![GWAS Analysis](screenshot_gwas.png)
 
+*The screenshots show the tomato data, not the example.*
+
 **Covariates from the phenotype file.** Under the phenotype file, "Use columns of
 this file as covariates" adds the columns you choose to the models as covariates,
 for example a correlated trait for a conditional GWAS. TRACE uses their values as
@@ -173,8 +175,8 @@ phenotype between the block's haplotype groups, with Tukey letters, a box plot a
 For a single SNP, the box plot under "Lead SNP genotype effect" shows the phenotype per genotype.
 Check that each group is big enough and that no outliers drive the p-value.
 
-On the example, the block's samples form two tested haplotype groups (67 and 21 lines, with 12 lines
-in rare haplotypes are left out of the test). The test's p-value is at its floor for 1,000
+On the example, the block's samples form two tested haplotype groups, of 67 and 21 lines. The 12
+lines in rare haplotypes are left out of the test. The test's p-value is at its floor for 1,000
 permutations (0.001), and the groups explain 27% of the variance (η² 0.27).
 
 ![LD blocks and haplotype tests](screenshot_ld.png)
@@ -189,18 +191,13 @@ On the example, the region is 950,000 to 1,080,000 bp on chromosome 2. Its posit
 simulated, so the bundled tomato gene model has no gene there. With your own data and gene model,
 the genes of the region appear in this table.
 
-### Screenshots still to take
-
-Steps 1 (the Cross-model consensus table), 3 (the box plot under Lead SNP genotype effect) and 4
-(the Gene Annotation tab) have no screenshot yet. The screenshots above show the tomato data, not
-the example.
-
 ## Real datasets
 
 TRACE was tested on:
 
 1. **The tomato Varitome panel**: 165 accessions, about 44,000 SNPs (Pereira et al., 2021).
 2. **The pepper G2P-SOL panel**: 350 accessions, about 5,000 SNPs (Tripodi et al., 2021).
+3. **The rice 3K-RG panel**: 2,260 accessions, about 186,000 SNPs (Wang et al., 2018).
 
 ## Docker
 

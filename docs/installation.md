@@ -1,7 +1,7 @@
 # Installation
 
 TRACE runs on Linux, macOS and Windows. There are three routes. Pick the one whose requirement
-you already meet: Docker, [uv](https://docs.astral.sh/uv/), or Python 3.11 or newer with pip.
+you already meet: Docker, [uv](https://docs.astral.sh/uv/), or Python 3.11 to 3.13 with pip.
 
 ## Docker (nothing else to install)
 
@@ -19,6 +19,9 @@ yourself:
 ```bash
 docker pull ghcr.io/ioannisperachoritis-hub/trace:latest
 ```
+
+On a Mac with an Apple chip, add `--platform linux/amd64` to `docker pull` and `docker run`. The
+image is built for Intel and AMD processors only, so Docker runs it under emulation, more slowly.
 
 For the CLI in the container, mount a working folder at `/data` and run the container as your own
 user, so that the container can write there and the results belong to you:
@@ -62,9 +65,11 @@ uv pip install -e .
 streamlit run app.py
 ```
 
-## pip (Python 3.11 or newer)
+## pip (Python 3.11 to 3.13)
 
 TRACE is tested on Python 3.11 and 3.12.
+It also installs and runs on 3.13. It does not install on 3.14 yet, because two of its libraries
+(pyarrow and scikit-allel) have no ready-made packages for it.
 
 ```bash
 git clone https://github.com/IoannisPerachoritis-hub/TRACE.git
@@ -81,7 +86,8 @@ streamlit run app.py
 ```
 
 `requirements.txt` holds the full list of dependencies as lowest versions. For an install that
-matches the versions behind the paper's benchmarks, add the exact versions CI uses:
+matches the versions behind the paper's benchmarks, add the exact versions CI uses (Python 3.11
+or 3.12):
 
 ```bash
 pip install -e . -c constraints.txt

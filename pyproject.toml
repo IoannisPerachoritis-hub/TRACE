@@ -7,7 +7,7 @@ name = "trace-gwas"
 version = "1.2.0"
 description = "TRACE: Integrated GWAS, LD analysis, and candidate gene evaluation for crop breeding panels"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = {text = "MIT"}
 authors = [
     {name = "Ioannis Perachoritis"},

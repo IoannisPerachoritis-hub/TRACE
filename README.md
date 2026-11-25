@@ -10,23 +10,29 @@ stability. It was built around tomato diversity panels and works with any diploi
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19678860.svg)](https://doi.org/10.5281/zenodo.19678860)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11 to 3.13](https://img.shields.io/badge/python-3.11_to_3.13-blue.svg)](https://www.python.org/downloads/)
 
 ## Getting started
 
 With Docker, the GUI needs no other install:
 
 ```bash
+docker pull ghcr.io/ioannisperachoritis-hub/trace:latest
 docker run -p 8501:8501 ghcr.io/ioannisperachoritis-hub/trace:latest
 ```
 
+The pull gets the newest version. Without it, Docker reuses a copy it downloaded before. To reproduce the paper, use the tag `1.2.0` in place of `latest`. On a Mac with an Apple chip, add `--platform linux/amd64` to both commands.
+
 Then open <http://localhost:8501>. Without Docker, install TRACE with
-[uv](https://docs.astral.sh/uv/) or with pip (Python 3.11 or newer):
+[uv](https://docs.astral.sh/uv/) or with pip (Python 3.11 to 3.13):
 
 ```bash
 git clone https://github.com/IoannisPerachoritis-hub/TRACE.git && cd TRACE
 pip install -e .        # or: uv venv --python 3.11, activate it, then uv pip install -e .
 ```
+
+If pip stops because of your Python version (for example Python 3.14), use the uv line instead.
+uv downloads Python 3.11 by itself if your computer does not have it.
 
 Try the bundled example (100 lines, 600 SNPs, a QTL on chromosome 2). In the GUI, start it,
 upload `examples/example.vcf.gz` and `examples/example_pheno.csv`, pick `Trait1` and run
