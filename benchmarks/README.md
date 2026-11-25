@@ -32,19 +32,10 @@ bash benchmarks/make_qc_data.sh pepper_BX G2P-SOL_Pepper_CC_Geno_data_2023.vcf p
 The folder `benchmarks/qc_data` and the run outputs in `benchmarks/results` are not in the
 repository. The R scripts read and write them under the folder they run from.
 
-## The data root and the side analyses
+## The data root
 
 The Python scripts take `--data-root DIR`: the folder that holds `benchmarks/qc_data` and
-`benchmarks/results`. It is this repository by default. Three side analyses run in a folder of
-their own, so their outputs do not replace the main ones:
-
-- the pepper rows at the strict band rule's PC counts (FWe 3, BX 3): a folder with copies of
-  `qc_data/pepper_FWe` and `qc_data/pepper_BX`, run with `--k-set band` and k = 3 in the R scripts.
-- the second set of Table S10 (GAPIT FarmCPU at 2, 0, 0, 0 PCs): a folder with the four QC folders.
-- the null calibration on the corrected template: a folder with copies of the QC data.
-
-Copy each side analysis's result file into the repository under the name given below. The R
-scripts work the same way: run them from the side analysis's folder.
+`benchmarks/results`. It is this repository by default.
 
 ## Table S4: TRACE, GAPIT3 and rMVP on the real data
 
@@ -58,15 +49,6 @@ MLM scans, at the published PC counts (FWe 2, the others 0).
 
 Result: `benchmarks/table_s4_comparison.csv`. Each statistic has an `_unrounded` column beside it:
 the table rounds once from it to three decimals.
-
-The values the table gives in brackets come from rMVP with the PCs passed twice, as in the
-published runs: run `Rscript benchmarks/run_rmvp.R pepper_FWe 2 pcs_twice` (and the same for the
-other runs), then `python benchmarks/compare_results.py --rmvp-pcs-twice`. Result:
-`benchmarks/table_s4_comparison_pcs_twice.csv`.
-
-The side rows at the strict band rule's counts: in the side folder, steps 1 to 3 with
-`--k-set band` and k = 3 for both pepper runs. Result, copied in:
-`benchmarks/table_s4_comparison_band_k.csv` and `benchmarks/table_s4_comparison_band_k_pcs_twice.csv`.
 
 ## Table S8: the haplotype tests of the four tomato LD blocks
 
@@ -97,14 +79,7 @@ In the tail recovery file, `variant` names the definition: `std` is GAPIT's stan
 share of GAPIT3's top 1% in TRACE's top 5%, `trace_to_gapit` the other way.
 
 The PCs of step 1 come from an exact SVD, so a rebuild gives the same table. The paper's Table
-S10 prints these exact SVD values. The first submission used a randomized SVD with no seed. That
-draw, on the corrected data, is in `benchmarks/table_s10_farmcpu_comparison_randomized_pca.csv`
-and `benchmarks/table_s10_tail_recovery_randomized_pca.csv`.
-
-The second set: in its side folder, step 2 with k = 2, 0, 0, 0, then steps 1, 3 and 4. Results,
-copied in: `benchmarks/table_s10_farmcpu_comparison_second_set.csv` and
-`benchmarks/table_s10_tail_recovery_second_set.csv` (and `_second_set_randomized_pca` for the
-first submission's draw).
+S10 prints these exact SVD values.
 
 ## Table S11: LOCO against global kinship, and an unpruned GRM
 
@@ -117,10 +92,8 @@ agree with GAPIT3 and rMVP: Spearman rho on -log10 p and lambda_GC.
 4. `python benchmarks/prune_ablation.py --write` (63 s)
 
 Results: `benchmarks/loco_sensitivity/table_s11_loco_global.csv` (the LOCO and Global rows) and
-`benchmarks/loco_sensitivity/table_s11_unpruned.csv` (the unpruned rows). With `--rmvp-pcs-twice`,
-the `_pcs_twice` files. The side rows: `table_s11_loco_global_band_k.csv` and
-`table_s11_unpruned_band_k.csv` (and `_pcs_twice`). The older `loco_comparison.csv` holds the
-published values on the earlier QC data, which a test checks.
+`benchmarks/loco_sensitivity/table_s11_unpruned.csv` (the unpruned rows). The older
+`loco_comparison.csv` holds the published values on the earlier QC data, which a test checks.
 
 ## Table S14 and Figure S9: the subsampling filter on the simulated LD blocks
 
@@ -273,36 +246,11 @@ rice, at h2 0, 0.3 and 0.6.
 
 Results: `benchmarks/haplotype_null/tomato_rates.csv` and `rice_rates.csv` (the rejection rates
 with Clopper-Pearson 95% intervals, and `interval_entirely_above_alpha` as the check), the blocks
-tested (`tomato_blocks.csv`, `rice_blocks.csv`), the null phenotypes' seeds and causal SNPs
-(`tomato_phenotypes.csv`, `rice_phenotypes.csv`) and the band rule's lambda_GC scans
+tested (`tomato_blocks.csv`, `rice_blocks.csv`) and the band rule's lambda_GC scans
 (`tomato_band_rule.csv`, and `rice_band_rule.csv` from a first rice run whose result the run
 above passes with `--band-k 0`). The rice inputs are the 3K Rice Genomes Core SNPs of the 2,261
 accessions with grain length (SNP-Seek, Core v0.7) and the phenotypes of Wang et al. 2018
 (Mendeley Data, doi 10.17632/sr8zzsrpcs.1).
-
-## The PC counts of the strict band rule on the corrected data
-
-The strict band rule behind the paper's PC counts (smallest k with 0.95 <= lambda_GC <= 1.05,
-commit 03095b7), run on the corrected QC data. It gives FWe 3, BX 3, weight 0, locule 0.
-
-1. `python benchmarks/band_rule_pc_counts.py` (2.5 minutes)
-
-Result: `benchmarks/band_rule_pc_counts.csv`, the lambda_GC scan for k = 0 to 10 with each rule's
-pick (`strict_pick`, and `edge_tolerant_pick` for the later variant with a wider band in
-`_pc_band_select.py`).
-
-## The null calibration on the corrected template, beside Table S6
-
-Table S6 and Figure S1 stay as published (the earlier 165 x 43,974 template). These values repeat
-the null calibration on the corrected template.
-
-1. In the side folder: `python benchmarks/simulation/simulate_phenotypes.py --data-root DIR --mode template`,
-   then `--mode null --n-perms 100 --seed 2026` (4.3 and 4.8 s)
-2. `python benchmarks/simulation/run_simulation_platform.py --data-root DIR --mode null --n-pcs 2` (7.6 minutes)
-3. `python benchmarks/simulation/evaluate_simulation.py --data-root DIR --mode null`
-
-Results, copied in: `benchmarks/simulation/sim_summary/null_type1_error_corrected_template.csv` and
-`null_lambda_gc_corrected_template.csv`.
 
 ## The other tables and figures
 

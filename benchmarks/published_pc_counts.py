@@ -15,9 +15,8 @@ takes a fixed --n-pcs; these values are kept as the provenance of the published 
       The rule selects k = 2. Replicating the published run at k = 2 reproduces its Platform-LOCO
       and Platform-Global p-values at Spearman rho = 1.000; k = 0 does not.
 
-BAND_RULE_K: the same strict band rule run again on the corrected QC data (band_rule_pc_counts.py,
-its scan in band_rule_pc_counts.csv): FWe 3, BX 3, weight 0, locule 0. The pepper rows at these
-counts are the side rows of Tables S4 and S11 (--k-set band).
+BAND_RULE_K: the same strict band rule run again on the corrected QC data: FWe 3, BX 3, weight 0,
+locule 0. --k-set band runs the scripts at these counts.
 
 GAPIT_FARMCPU_K_AS_RUN: GAPIT FarmCPU's PC counts as run for Table S10 (its 12 Mar 2026
 timing.csv files): FWe 3, BX 0, weight 0, locule 2. The second set of Table S10 uses PUBLISHED_K.
@@ -34,7 +33,7 @@ PUBLISHED_K = {
     "pepper_FWe": 2,
 }
 
-# The strict band rule on the corrected QC data (band_rule_pc_counts.py): the k of the side rows
+# The strict band rule on the corrected QC data: the k of --k-set band
 BAND_RULE_K = {
     "tomato_locule_number": 0,
     "tomato_weight_g": 0,

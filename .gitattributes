@@ -3,10 +3,8 @@
 # The benchmark summary files keep the exact bytes of the runs behind the paper (written on
 # Windows, with CRLF line ends), so their sha256 matches those runs.
 benchmarks/table_s*.csv -text
-benchmarks/band_rule_pc_counts.csv -text
 benchmarks/loco_sensitivity/table_s11_*.csv -text
 benchmarks/haplotype_null/*.csv -text
-benchmarks/simulation/sim_summary/*_corrected_template.csv -text
 benchmarks/simulation/sim_summary/table_s14_columns.csv -text
 benchmarks/simulation/sim_summary/ld_blocks_vs_plink*.csv -text
 benchmarks/simulation/sim_summary/fdr_reduction_blocks_*.csv -text

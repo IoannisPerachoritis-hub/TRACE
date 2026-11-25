@@ -5,13 +5,13 @@ only (gwas/pc_diagnostics.py). This module keeps two rules for the benchmark scr
 
 - select_k_strict_band: the strict band rule behind the paper's PC counts (smallest k with
   0.95 <= lambda_GC <= 1.05; commit 03095b7), with its fallback and deflation guard. It gave the
-  published counts (published_pc_counts.PUBLISHED_K); band_rule_pc_counts.py runs it on the
-  corrected QC data (published_pc_counts.BAND_RULE_K).
+  published counts (published_pc_counts.PUBLISHED_K), and on the corrected QC data
+  published_pc_counts.BAND_RULE_K.
 - auto_select_pcs and select_best_pc_from_lambdas: the selector as it was before its removal from
   TRACE (commit 6be44c0), with the edge-tolerant band that commit 5227ab5 brought in (a k counts
   as in the band when lambda_GC is in [0.93, 1.07]). It is a later variant, not the rule behind
-  the paper's counts. auto_select_pcs also runs the lambda_GC scan both rules read
-  (band_rule_pc_counts.py, check_pc_threshold.py). select_best_pc_from_lambdas is not used for
+  the paper's counts. auto_select_pcs also runs the lambda_GC scan both rules read.
+  select_best_pc_from_lambdas is not used for
   the TRACE-FarmCPU benchmark any more: its PC counts are fixed at the published Table S10 run's
   4/5/10/10 (rerun_trace_farmcpu.py).
 
@@ -367,7 +367,7 @@ def select_k_strict_band(lambdas, band_lo=0.95, band_hi=1.05, parsimony_toleranc
     band, the smallest k whose |lambda_GC - 1| is within max(parsimony_tolerance, 0.15 x the best)
     of the best; then the deflation guard: lambda_GC at k = 0 below band_lo gives k = 0.
     It gave the published counts (published_pc_counts.PUBLISHED_K) and, on the corrected QC data,
-    published_pc_counts.BAND_RULE_K (band_rule_pc_counts.py). Returns (k, how the rule chose it).
+    published_pc_counts.BAND_RULE_K. Returns (k, how the rule chose it).
     """
     lam = [float(v) for v in lambdas]
     valid = [i for i, v in enumerate(lam) if np.isfinite(v)]
