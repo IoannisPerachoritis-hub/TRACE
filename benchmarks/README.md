@@ -122,14 +122,111 @@ the `_pcs_twice` files. The side rows: `table_s11_loco_global_band_k.csv` and
 `table_s11_unpruned_band_k.csv` (and `_pcs_twice`). The older `loco_comparison.csv` holds the
 published values on the earlier QC data, which a test checks.
 
-## Table S14: three added columns
+## Table S14 and Figure S9: the subsampling filter on the simulated LD blocks
 
-The pass counts behind Table S14's rates, the precision with and without the subsampling filter,
-and the share of true blocks kept, computed from the published table.
+TRACE's LD blocks in four simulation scenarios (h2 0.5 with 5 QTNs; h2 0.8 with 5, 15 and 50
+QTNs; 100 replicates each), each block's subsampling discovery frequency (50 resamples of 80%
+without replacement), and whether a causal QTN lies within 500 kb of the block.
 
-1. `python benchmarks/simulation/table_s14_columns.py` (0.6 s)
+1. `python benchmarks/simulation/evaluate_fdr_reduction.py --scenario all --n-reps 100 --n-sub 50 --n-pcs 2 --n-jobs 2`
+   (about 7.8 hours, on 8 and 9 September 2026, with a development version before 1.2.0)
+2. `python benchmarks/simulation/evaluate_fdr_reduction.py --plot-only`
+3. `python benchmarks/simulation/table_s14_columns.py` (0.6 s)
 
-Result: `benchmarks/simulation/sim_summary/table_s14_columns.csv`.
+Results: step 1 writes one block file per scenario, `benchmarks/simulation/sim_summary/fdr_reduction_blocks_<scenario>.csv`;
+the four files of the paper are committed. Table S14's TP and FP block counts, median frequencies,
+pass rates and Mann-Whitney p are those of these files, pooled over the replicates. Step 2 draws
+Figure S9 from them, as `figure_s7_fdr_reduction_combined.png` and `.pdf` (the name keeps the
+earlier figure number). Step 3 writes `benchmarks/simulation/sim_summary/table_s14_columns.csv`:
+the pass counts behind the rates, the precision with and without the filter, and the share of
+true blocks kept, computed from the published table. Input: the simulation data in
+`benchmarks/simulation/sim_data/` (not in the repository).
+
+## Table S15: candidate regions around true signals, TRACE and PLINK
+
+For each true signal (a causal SNP with a Bonferroni-significant SNP within 500 kb), the region
+that each method's intervals highlight: TRACE's candidate intervals at 1.2.0's default window
+(4 x the LD decay) and at the earlier one (2 x), PLINK 1.9's haplotype blocks (200 and 600 kb)
+and PLINK's clumps (its defaults, and r2 0.6 with 300 kb), in the 900 simulated datasets and at
+the rice *GS3* locus. Six scripts in `benchmarks/simulation/`, run in this order; each writes a work
+folder (P2, P2B, P2C, P2D, P2E) that the later ones read.
+
+```bash
+S=benchmarks/simulation
+# PLINK's haplotype blocks
+python $S/ld_blocks_vs_plink.py vcf --vcf varitome_filtered.vcf --out P2
+python $S/ld_blocks_vs_plink.py plink --plink plink --out P2
+python $S/ld_blocks_vs_plink.py compare --jobs 4 --out P2
+python $S/ld_blocks_vs_plink.py loci --plink plink --out P2 --vcf varitome_filtered.vcf \
+    --tomato-zip TOMATO.zip --rice-zip RICE.zip --rice-bfile vcf2_matched_ref --rice-gene-model locus.gff
+# PLINK's clumps
+python $S/ld_blocks_vs_plink_clump.py prepare --vcf varitome_filtered.vcf --plink plink --out P2B
+python $S/ld_blocks_vs_plink_clump.py sim --plink plink --out P2B --jobs 4
+python $S/ld_blocks_vs_plink_clump.py loci --plink plink --out P2B --vcf varitome_filtered.vcf \
+    --tomato-zip TOMATO.zip --rice-zip RICE.zip --rice-bfile vcf2_matched_ref --rice-gene-model locus.gff
+# TRACE at the earlier default window (2 x the LD decay)
+python $S/ld_blocks_vs_plink_trace_default.py sim --out P2C --jobs 4
+python $S/ld_blocks_vs_plink_trace_default.py loci --out P2C --name tomato --vcf varitome_filtered.vcf \
+    --pheno varitome_phenotypes.csv --trait locule_number --zip TOMATO.zip
+python $S/ld_blocks_vs_plink_trace_default.py loci --out P2C --name rice --vcf rice_core_filtered_windows.vcf.gz \
+    --pheno rice_pheno.csv --trait GRLT --zip RICE.zip --geno-store-dir P2C/store
+# the per signal scoring
+python $S/ld_blocks_vs_plink_per_signal.py --out P2D --p2 P2 --p2b P2B --p2c P2C \
+    --tomato-zip TOMATO.zip --rice-zip RICE.zip --rice-gene-model locus.gff
+# TRACE at 1.2.0's default window (4 x the LD decay), scored by the same script
+python $S/ld_blocks_vs_plink_trace_wide.py sim --p2c P2C --out P2E --jobs 4
+python $S/ld_blocks_vs_plink_trace_wide.py loci --p2c P2C --out P2E --name tomato --vcf varitome_filtered.vcf \
+    --pheno varitome_phenotypes.csv --trait locule_number --zip TOMATO.zip
+python $S/ld_blocks_vs_plink_trace_wide.py loci --p2c P2C --out P2E --name rice --vcf rice_core_filtered_windows.vcf.gz \
+    --pheno rice_pheno.csv --trait GRLT --zip RICE.zip --geno-store-dir P2E/store
+python $S/ld_blocks_vs_plink_per_signal.py --out P2E/score_p2d --p2 P2 --p2b P2B --p2c P2C \
+    --tomato-zip TOMATO.zip --rice-zip RICE.zip --rice-gene-model locus.gff
+python $S/ld_blocks_vs_plink_per_signal.py --out P2E/score_wide --p2 P2 --p2b P2B --p2c P2E \
+    --tomato-zip TOMATO.zip --rice-zip RICE.zip --rice-gene-model locus.gff
+python $S/ld_blocks_vs_plink_trace_wide.py tables --out P2E/tables --wide P2E/score_wide \
+    --repro P2E/score_p2d --p2d-regions P2D/regions.csv
+```
+
+Results, in `benchmarks/simulation/sim_summary/`: the scoring step writes
+`ld_blocks_vs_plink_per_signal.csv` (per scenario), `_5qtn.csv`, `_loci.csv` and `_main.csv`, with
+TRACE at the earlier window. The tables step adds TRACE at 1.2.0's window and writes the four
+`ld_blocks_vs_plink_per_signal_wide*.csv` files. Table S15a prints `_wide_main.csv` (all 9
+scenarios) and `_wide_5qtn.csv` (the three 5-QTN scenarios), and Table S15b the rice_GS3 rows of
+`_wide_loci.csv`. In these files `trace_wide_bonferroni` is TRACE 1.2.0's default window and
+`trace_default_bonferroni` the earlier one.
+
+Inputs: the simulation data in `benchmarks/simulation/sim_data/` (not in the repository); PLINK
+1.9; the Varitome VCF and phenotypes; `TOMATO.zip`, the results ZIP of
+`trace-gwas --vcf varitome_filtered.vcf --pheno varitome_phenotypes.csv --trait locule_number`;
+`RICE.zip`, the results ZIP of the rice run in row 3 of Table S9d; the rice VCF, its PLINK files
+`vcf2_matched_ref` and RAP-DB's `locus.gff`. The runs behind the committed files took, with a
+development version before 1.2.0 (18 to 23 November 2026, 4 processes for the simulations):
+the block comparison 106 min, the clumps 118 min, TRACE on the simulations 53 min (2 x) and
+66 min (4 x), TRACE on rice 72 and 84 min, and each other step under 4 minutes.
+
+## Table S16: agreement between MLM and TRACE-FarmCPU in the simulations
+
+How often TRACE-LOCO's MLM (Table S2) and TRACE-FarmCPU (Table S12) agree in the 9 x 100
+simulated datasets, and the precision of each group. Counting only: no GWAS is run.
+
+1. `python benchmarks/simulation/consensus_precision.py --out DIR` (100.6 s, on 24 November 2026)
+
+The rules: a SNP is significant at p < 0.05 / 43,974 in its model. Each model's significant SNPs
+are grouped into signals: the most significant SNP not yet used leads a signal, and every unused
+significant SNP on the same chromosome within 500 kb of it joins. A signal is true when a causal
+QTN lies within 500 kb of its lead SNP. An MLM signal and a TRACE-FarmCPU signal agree when their
+lead SNPs lie within 500 kb. The second analysis uses TRACE's own consensus rule: the same SNP
+significant in both models.
+
+Results: `benchmarks/simulation/sim_summary/consensus_signals.csv` (the signals, Table S16) and
+`consensus_snps.csv` (the exact SNPs, not printed), with one row per scenario and one for all nine.
+DIR also gets the counts per replicate and `consensus_tables.md`. Before it writes them, the script
+checks MLM's power, FDR and number of significant SNPs in every replicate against
+`sim_summary/bonferroni_results.csv`, and their summary against the Table S2 rows of
+`sim_summary/power_fdr_summary_ci.csv`. Input: the simulation data in
+`benchmarks/simulation/sim_data/` (not in the repository): for each replicate
+`platform_loco/results.csv`, `farmcpu_2x2_E_F_nogate2_ols/results.csv` and `truth.json`, and
+`snp_map.csv`.
 
 ## Figure S5: the p-value concordance of the three tools
 

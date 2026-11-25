@@ -1,0 +1,7 @@
+scenario,method,n_signals,n_causal_distinct,n_causal_significant,causal_significant,n_causal_inside,causal_inside,n_not_significant,n_causal_inside_not_significant,causal_inside_not_significant,width_kb_q1,width_kb_median,width_kb_q3,genes_q1,genes_median,genes_q3,genes_inside_q1,genes_inside_median,genes_inside_q3
+pooled_all,trace_default_bonferroni,829,116,637,0.7684,719,0.8673,192,82,0.4271,174.0,435.5,832.1,5.0,8.0,15.0,5.0,9.0,16.0
+pooled_all,trace_wide_bonferroni,829,116,637,0.7684,772,0.9312,192,135,0.7031,367.8,720.0,1194.8,8.0,13.0,23.0,8.0,14.0,23.0
+pooled_all,plink_200kb,829,116,637,0.7684,734,0.8854,192,97,0.5052,197.5,573.5,792.1,3.0,8.0,13.0,3.0,9.0,14.0
+pooled_all,plink_600kb,829,116,637,0.7684,772,0.9312,192,135,0.7031,470.1,962.4,1266.9,7.0,16.0,19.0,8.0,16.0,20.0
+pooled_all,plink_clump_c1,829,116,637,0.7684,763,0.9204,192,126,0.6562,246.7,545.0,951.0,5.0,10.0,17.0,5.0,11.0,17.0
+pooled_all,plink_clump_c2,829,116,637,0.7684,759,0.9156,192,122,0.6354,289.4,572.3,1057.4,5.0,12.0,20.0,5.0,13.0,21.0

@@ -1,0 +1,19 @@
+locus,anchor,anchor_type,n_tp_snps,method,width_kb,genes,gene_inside,causal_inside,note
+tomato_locule_chr2,SL25ch02p47301921,lead,7,trace_default_bonferroni,696.259,105,,,
+tomato_locule_chr2,SL25ch02p47301921,lead,7,trace_wide_bonferroni,751.277,112,,,
+tomato_locule_chr2,SL25ch02p47301921,lead,7,plink_200kb,234.05,42,,,
+tomato_locule_chr2,SL25ch02p47301921,lead,7,plink_600kb,295.084,56,,,
+tomato_locule_chr2,SL25ch02p47301921,lead,7,plink_clump_c1,905.0,140,,,
+tomato_locule_chr2,SL25ch02p47301921,lead,7,plink_clump_c2,715.152,103,,,
+rice_GS3,3:16733441,causal,2885,trace_default_bonferroni,637.469,50,True,True,
+rice_GS3,3:16733441,causal,2885,trace_wide_bonferroni,629.622,50,True,True,
+rice_GS3,3:16733441,causal,2885,plink_200kb,714.239,58,True,True,
+rice_GS3,3:16733441,causal,2885,plink_600kb,714.239,58,True,True,
+rice_GS3,3:16733441,causal,2885,plink_clump_c1,921.004,70,True,True,
+rice_GS3,3:16733441,causal,2885,plink_clump_c2,931.238,68,True,True,
+rice_GL7,7:24558720,lead,0,trace_default_bonferroni,,,,,no signal
+rice_GL7,7:24558720,lead,0,trace_wide_bonferroni,,,,,no signal
+rice_GL7,7:24558720,lead,0,plink_200kb,,,,,no signal
+rice_GL7,7:24558720,lead,0,plink_600kb,,,,,no signal
+rice_GL7,7:24558720,lead,0,plink_clump_c1,,,,,no signal
+rice_GL7,7:24558720,lead,0,plink_clump_c2,,,,,no signal

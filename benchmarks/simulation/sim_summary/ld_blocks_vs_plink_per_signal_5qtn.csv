@@ -1,0 +1,6 @@
+scenario,method,n_signals,n_causal_distinct,n_causal_significant,causal_significant,n_causal_inside,causal_inside,n_not_significant,n_causal_inside_not_significant,causal_inside_not_significant,width_kb_q1,width_kb_median,width_kb_q3,genes_q1,genes_median,genes_q3,genes_inside_q1,genes_inside_median,genes_inside_q3
+pooled_5qtn,trace_default_bonferroni,328,15,311,0.9482,317,0.9665,17,6,0.3529,218.8,471.2,884.0,7.0,11.0,17.0,7.0,11.0,17.0
+pooled_5qtn,plink_200kb,328,15,311,0.9482,315,0.9604,17,4,0.2353,198.7,691.3,788.8,4.0,9.0,14.0,4.0,9.0,14.0
+pooled_5qtn,plink_600kb,328,15,311,0.9482,321,0.9787,17,10,0.5882,510.3,1196.6,1326.8,11.0,16.0,23.25,11.0,16.0,24.0
+pooled_5qtn,plink_clump_c1,328,15,311,0.9482,318,0.9695,17,7,0.4118,246.7,649.3,1047.8,8.0,12.0,17.0,8.0,12.0,17.0
+pooled_5qtn,plink_clump_c2,328,15,311,0.9482,319,0.9726,17,8,0.4706,425.5,635.7,1192.1,8.0,14.0,23.0,8.0,14.0,23.0

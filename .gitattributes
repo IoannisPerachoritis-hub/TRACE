@@ -8,4 +8,6 @@ benchmarks/loco_sensitivity/table_s11_*.csv -text
 benchmarks/haplotype_null/*.csv -text
 benchmarks/simulation/sim_summary/*_corrected_template.csv -text
 benchmarks/simulation/sim_summary/table_s14_columns.csv -text
+benchmarks/simulation/sim_summary/ld_blocks_vs_plink*.csv -text
+benchmarks/simulation/sim_summary/fdr_reduction_blocks_*.csv -text
 benchmarks/plots/figure_s8_subsampling_summary.json -text
