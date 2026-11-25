@@ -134,7 +134,7 @@ Append-only. One entry per deliberate regeneration of a pinned golden.
   a relative 1e-6: the kinship-aware test's F, parametric p, eta2 and h2_null depend on the BLAS thread count in
   their last digits (measured on this golden: at most 2.3e-7 relative between 1 and 12 threads). The golden tests
   pass at 12 and at 1 thread.
-- provenance: produced in TRACE-scaling/batch14/tree (b14/work) by benchmarks/capture_golden.py with this manifest's
+- provenance: produced in a worktree of b14/work by benchmarks/capture_golden.py with this manifest's
   settings, 12 threads, from the corrected 164x43749 QC copy in benchmarks/qc_data/tomato_locule_number; gwas
   imported from the tree (logged). The same cells come from the CLI at its defaults on the Varitome VCF and
   phenotype file (to a relative 3.5e-7 at most, the report's 4-digit columns at their 4 digits, P_perm as counts), and the
