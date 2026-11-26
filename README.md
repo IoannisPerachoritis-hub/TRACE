@@ -136,8 +136,8 @@ MIT. See [LICENSE](LICENSE).
 <details>
 <summary>Screenshots</summary>
 
-**GWAS Analysis**: the One-Click pipeline with QC, Manhattan and QQ plots, subsampling stability
-and the models compared.
+**GWAS Analysis**: the data checks (QC, relatedness, trait distribution) and the MLM scan with its
+Manhattan and QQ plots.
 
 ![GWAS Analysis](docs/screenshot_gwas.png)
 
@@ -146,13 +146,19 @@ test.
 
 ![TRACE-FarmCPU](docs/screenshot_farmcpu.png)
 
+**Significant SNPs**: every significant SNP with its effect sizes, and whether it lies in an LD
+block.
+
+![Significant SNPs](docs/screenshot_significant_snps.png)
+
 **Post-GWAS Analysis**: LD blocks around the significant SNPs, haplotype tests (Tukey HSD with
 compact letters, raincloud and forest plots) and a PCA coloured by haplotype.
 
 ![Post-GWAS Analysis](docs/screenshot_ld.png)
 
 **Regional plot**: position against the association statistic, coloured by r² to the lead marker
-from the analysed genotypes, with the LD block shaded and a gene track below.
+from the analysed genotypes, with the candidate interval shaded. The static figure adds a gene
+track.
 
 ![Regional association](docs/screenshot_regional.png)
 
@@ -160,5 +166,10 @@ from the analysed genotypes, with the LD block shaded and a gene track below.
 to see the block with its neighbouring SNPs.
 
 ![Local LD](docs/screenshot_local_ld.png)
+
+**Gene annotation**: the genes in each candidate interval, from the bundled tomato gene model or
+your own gene file.
+
+![Gene annotation](docs/screenshot_gene_annotation.png)
 
 </details>

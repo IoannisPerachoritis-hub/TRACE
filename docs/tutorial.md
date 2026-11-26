@@ -191,6 +191,8 @@ On the example, the region is 950,000 to 1,080,000 bp on chromosome 2. Its posit
 simulated, so the bundled tomato gene model has no gene there. With your own data and gene model,
 the genes of the region appear in this table.
 
+![Gene Annotation](screenshot_gene_annotation.png)
+
 ## Real datasets
 
 TRACE was tested on:
