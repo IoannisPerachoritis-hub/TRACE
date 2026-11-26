@@ -13,7 +13,7 @@ changes.
    cd TRACE
    ```
 
-2. **Create a virtual environment (Python >= 3.11):**
+2. **Create a virtual environment (Python 3.11 to 3.13):**
 
    ```bash
    python -m venv .venv

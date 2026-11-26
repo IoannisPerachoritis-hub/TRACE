@@ -2,7 +2,7 @@
 
 All notable changes to TRACE are documented in this file.
 
-## [1.2.0] - 2026-11-25
+## [1.2.0] - 2026-11-26
 
 ### Added
 - Large panels: the genotype table can be kept on disk (`--geno-store`). The results are
